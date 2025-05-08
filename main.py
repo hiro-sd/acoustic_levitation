@@ -1,7 +1,7 @@
 import os
 import numpy as np, os, keyboard
 from pyautd3 import (
-    AUTD3, Controller, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Silencer, Static,
+    AUTD3, Controller, ControlPoint, ControlPoints, EmitIntensity, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Phase, Silencer, Static,
 )
 from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
 from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
@@ -25,6 +25,28 @@ def err_handler(slave: int, status: Status) -> None:
     print(f"slave [{slave}]: {status}")
     if status == Status.Lost():
         os._exit(-1)
+
+# 多焦点のFociSTMを作成する関数
+def multiple_foci_stm(n):
+    FociSTM(
+                    foci=(
+                        ControlPoints(
+                            points=[
+                                ControlPoint(
+                                    point=center + radius * np.array([
+                                        np.cos(theta + 2.0*np.pi*k/n),
+                                        np.sin(theta + 2.0*np.pi*k/n),
+                                        0.0]),
+                                    phase_offset=Phase.ZERO,
+                                )
+                                for k in range(n) 
+                            ],
+                            intensity=EmitIntensity.MAX, 
+                        )
+                        for theta in (2.0*np.pi*i/point_num for i in range(point_num))
+                    ),
+                    config=100 * Hz,
+                ).into_nearest()
 
 if __name__ == "__main__":
     with Controller.open(
@@ -81,36 +103,42 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                # 円軌道上に焦点を配置するための時空間変調 (鉛直方向への移動のみならこれでよい)
-                # stm = FociSTM(
-                #     foci = (
-                #         center + radius * np.array([np.cos(theta), np.sin(theta), 0])
-                #         for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
-                #         ),
-                #     config = 100 * Hz, # 100Hzで更新(1秒間に円周上を100周する)
-                # ).into_nearest() # point_num = 40kHz/Nを満たすNが存在しない場合、エラーになる
-
-                gains = [] # gainsにGroupのりすとを格納する
-                for theta in (2.0 * np.pi * i / point_num for i in range(point_num)):
-                    focus = Focus(
-                        pos = center + radius * np.array([np.cos(theta), np.sin(theta), 0]),
-                        option = FocusOption(),
-                    )
-
-                    gain = Group(
-                        key_map = lambda _: lambda tr: "in" if np.linalg.norm(tr.position()[:2] - center[:2]) <= 150.0 else "out",
-                        gain_map={"in": focus, "out": Null()},
-                    )
-
-                    gains.append(gain)
-
-                stm = GainSTM(
-                    gains, # gainsをグループ化して、円軌道上のトランスデューサにのみSTMを適用する
+                # 円軌道上に焦点を配置するための時空間変調 (鉛直方向への移動のみならこれでよい) (単焦点)
+                stm = FociSTM(
+                    foci = (
+                        center + radius * np.array([np.cos(theta), np.sin(theta), 0])
+                        for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
+                        ),
                     config = 100 * Hz, # 100Hzで更新(1秒間に円周上を100周する)
-                    option = GainSTMOption(
-                        mode = GainSTMMode.PhaseIntensityFull,
-                    ),
-                ).into_nearest()
+                ).into_nearest() # point_num = 40kHz/Nを満たすNが存在しない場合、エラーになる
+
+                # 円軌道上に焦点を配置するための時空間変調 (鉛直方向への移動のみならこれでよい) (2焦点)
+                # stm = multiple_foci_stm(2)
+
+                # 円軌道上に焦点を配置するための時空間変調 (鉛直方向への移動のみならこれでよい) (3焦点)
+                # stm = multiple_foci_stm(3)
+
+                # gains = [] # gainsにGroupのリストを格納する
+                # for theta in (2.0 * np.pi * i / point_num for i in range(point_num)):
+                #     focus = Focus(
+                #         pos = center + radius * np.array([np.cos(theta), np.sin(theta), 0]),
+                #         option = FocusOption(),
+                #     )
+
+                #     gain = Group(
+                #         key_map = lambda _: lambda tr: "in" if np.linalg.norm(tr.position()[:2] - center[:2]) <= 150.0 else "out",
+                #         gain_map={"in": focus, "out": Null()},
+                #     )
+
+                #     gains.append(gain)
+
+                # stm = GainSTM(
+                #     gains, # gainsをグループ化して、円軌道上のトランスデューサにのみSTMを適用する
+                #     config = 100 * Hz, # 100Hzで更新(1秒間に円周上を100周する)
+                #     option = GainSTMOption(
+                #         mode = GainSTMMode.PhaseIntensityFull,
+                #     ),
+                # ).into_nearest()
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
