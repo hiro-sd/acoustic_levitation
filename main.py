@@ -3,6 +3,7 @@ import numpy as np, os, keyboard
 from pyautd3 import (
     AUTD3, Controller, ControlPoint, ControlPoints, EmitIntensity, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Phase, Silencer, Static,
 )
+from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, NalgebraBackend, Pa
 from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
 from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
 from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
@@ -27,26 +28,40 @@ def err_handler(slave: int, status: Status) -> None:
         os._exit(-1)
 
 # 多焦点のFociSTMを作成する関数
-def multiple_foci_stm(n):
-    FociSTM(
-                    foci=(
-                        ControlPoints(
-                            points=[
-                                ControlPoint(
-                                    point=center + radius * np.array([
-                                        np.cos(theta + 2.0*np.pi*k/n),
-                                        np.sin(theta + 2.0*np.pi*k/n),
-                                        0.0]),
-                                    phase_offset=Phase.ZERO,
-                                )
-                                for k in range(n) 
-                            ],
-                            intensity=EmitIntensity.MAX, 
-                        )
-                        for theta in (2.0*np.pi*i/point_num for i in range(point_num))
-                    ),
-                    config=100 * Hz,
-                ).into_nearest()
+# def multiple_foci_stm(n):
+#     FociSTM(
+#                     foci=(
+#                         ControlPoints(
+#                             points=[
+#                                 ControlPoint(
+#                                     point=center + radius * np.array([
+#                                         np.cos(theta + 2.0*np.pi*k/n),
+#                                         np.sin(theta + 2.0*np.pi*k/n),
+#                                         0.0]),
+#                                     phase_offset=Phase.ZERO,
+#                                 )
+#                                 for k in range(n) 
+#                             ],
+#                             intensity=EmitIntensity.MAX, 
+#                         )
+#                         for theta in (2.0*np.pi*i/point_num for i in range(point_num))
+#                     ),
+#                     config=100 * Hz,
+#                 ).into_nearest()
+
+# GSPATの設定
+# def gspat_func(center, theta, radius, point_num):
+#     p1 = center + radius * np.array([np.cos(theta), np.sin(theta), 0])
+#     p2 = center + radius * np.array([np.cos(theta + 2.0*np.pi/point_num), np.sin(theta + 2.0*np.pi/point_num), 0])
+#     return GSPAT(
+#         foci=
+#             [(p1, 5e4 * Pa), (p2, 5e4 * Pa)],
+#             option = GSPATOption(
+#                 repeat = 100,
+#                 contraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
+#             ),
+#             backed = NalgebraBackend(),
+#         )
 
 if __name__ == "__main__":
     with Controller.open(
@@ -66,7 +81,7 @@ if __name__ == "__main__":
         m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 7 # 円周上の点の数
-        radius = 50.0 # 円の半径
+        radius = 45.0 # 円の半径
         x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
         y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
@@ -131,6 +146,12 @@ if __name__ == "__main__":
                 #     )
 
                 #     gains.append(gain)
+
+                # GSPATで多焦点を作成する場合
+                # gains = [
+                #     gspat_func(center, 2.0 * np.pi * i / point_num, radius, point_num)
+                #     for i in range(point_num)
+                # ]
 
                 # stm = GainSTM(
                 #     gains, # gainsをグループ化して、円軌道上のトランスデューサにのみSTMを適用する
