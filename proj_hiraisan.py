@@ -16,7 +16,7 @@ def err_handler(slave: int, status: Status) -> None:
 
 if __name__ == "__main__":
     with Controller.open(
-        AutdArrangement,
+        AutdArrangement.autd_arrangement, # AUTDの配列を定義する
         # Simulator("127.0.0.1:8080"), # シミュレータを使用する際
         SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する際
     ) as autd:

@@ -1,13 +1,27 @@
 import os
 import numpy as np, os, keyboard
 from pyautd3 import (
-    Controller, ControlPoint, ControlPoints, EmitIntensity, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Phase, Silencer, Static,
+    AUTD3, Controller, ControlPoint, ControlPoints, EmitIntensity, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Phase, Silencer, Static,
 )
 from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, NalgebraBackend, Pa
 from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
 from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
 from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
 from autd_arrangement import AutdArrangement
+
+# 6台のAUTD3を3行2列の配置で使用する
+# 05
+# 14
+# 23
+autd_arrangement = [
+    AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]), 
+    AUTD3(pos=[0.0, -(AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[0.0, -2*(AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, -2*(AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, -(AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
+]
+
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
@@ -26,7 +40,7 @@ def multiple_foci_stm(n):
                         phase_offset=Phase.ZERO,
                         )
                              for k in range(n) 
-                        ],  
+                        ],
                 
                         intensity=EmitIntensity.MAX, 
                         )
@@ -38,20 +52,21 @@ def multiple_foci_stm(n):
 # GSPATで2焦点STMの設定
 def gspat_func(center, theta, radius, point_num):
     p1 = center + radius * np.array([np.cos(theta), np.sin(theta), 0])
-    p2 = center + radius * np.array([np.cos(theta + 2.0 * np.pi * 2.0 / point_num), np.sin(theta + 2.0 * np.pi * 2.0 / point_num), 0])
+    p2 = center + radius * np.array([np.cos(theta + 2.0 * np.pi / point_num), np.sin(theta + 2.0 * np.pi / point_num), 0])
+    # p3 = center + radius * np.array([np.cos(theta + 4.0 * np.pi / point_num), np.sin(theta + 4.0 * np.pi / point_num), 0])
     return GSPAT(
         foci=
             [(p1, 5e4 * Pa), (p2, 5e4 * Pa)],
             option = GSPATOption(
                 repeat = 100,
-                contraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
+                constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
             ),
-            backed = NalgebraBackend(),
+            backend = NalgebraBackend(),
         )
 
 if __name__ == "__main__":
     with Controller.open(
-        AutdArrangement,
+        autd_arrangement,
         # Simulator("127.0.0.1:8080"), # シミュレータを使用するために追加した
         SOEM(err_handler=err_handler, option=SOEMOption()),
     ) as autd:
@@ -64,7 +79,7 @@ if __name__ == "__main__":
 
         autd.send(Silencer())
 
-        m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 7 # 円周上の点の数
         radius = 45.0 # 円の半径
@@ -105,13 +120,6 @@ if __name__ == "__main__":
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
                 # 円軌道上に焦点を配置するための時空間変調 (鉛直方向への移動のみならこれでよい) (単焦点)
-                # stm = FociSTM(
-                #     foci = (
-                #         center + radius * np.array([np.cos(theta), np.sin(theta), 0])
-                #         for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
-                #         ),
-                #     config = 100 * Hz, # 100Hzで更新(1秒間に円周上を100周する)
-                # ).into_nearest() # point_num = 40kHz/Nを満たすNが存在しない場合、エラーになる
 
                 # 円軌道上に焦点を配置するための時空間変調 (FociSTMを使用する場合) 
                 # stm = multiple_foci_stm(2)
