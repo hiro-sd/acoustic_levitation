@@ -1,13 +1,21 @@
 import os
 import numpy as np, os, keyboard
 from pyautd3 import (
-    Controller, ControlPoint, ControlPoints, EmitIntensity, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Phase, Silencer, Static,
+    AUTD3, Controller, ControlPoint, ControlPoints, EmitIntensity, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Phase, Silencer, Static,
 )
 from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, NalgebraBackend, Pa
 from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
 from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
 from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
-from autd_arrangement import AutdArrangement
+
+autd_arrangement = [
+    AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]), 
+    AUTD3(pos=[0.0, -(AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[0.0, -2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, -2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, -(AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
+    ]
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
@@ -36,22 +44,22 @@ def multiple_foci_stm(n):
                     ).into_nearest()
 
 # GSPATで2焦点STMの設定
-def gspat_func(center, theta, radius, point_num):
+def gspat_func(center, theta, radius):
     p1 = center + radius * np.array([np.cos(theta), np.sin(theta), 0])
-    p2 = center + radius * np.array([np.cos(theta + 2.0 * np.pi * 2.0 / point_num), np.sin(theta + 2.0 * np.pi * 2.0 / point_num), 0])
+    p2 = center + 2 * radius / 3 * np.array([np.cos(theta), np.sin(theta), -30.0]) 
     return GSPAT(
         foci=
             [(p1, 5e4 * Pa), (p2, 5e4 * Pa)],
             option = GSPATOption(
                 repeat = 100,
-                contraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
+                constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
             ),
-            backed = NalgebraBackend(),
+            backend = NalgebraBackend(),
         )
 
 if __name__ == "__main__":
     with Controller.open(
-        AutdArrangement,
+        autd_arrangement,
         # Simulator("127.0.0.1:8080"), # シミュレータを使用するために追加した
         SOEM(err_handler=err_handler, option=SOEMOption()),
     ) as autd:
@@ -133,7 +141,7 @@ if __name__ == "__main__":
 
                 # GSPATで多焦点を作成する場合
                 gains = [
-                    gspat_func(center, 2.0 * np.pi * i / point_num, radius, point_num)
+                    gspat_func(center, 2.0 * np.pi * i / point_num, radius)
                     for i in range(point_num)
                 ]
 
