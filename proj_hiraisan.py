@@ -6,7 +6,15 @@ from pyautd3 import (
 from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
 from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
 from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
-from autd_arrangement import AutdArrangement 
+
+autd_arrangement = [
+    AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]), 
+    AUTD3(pos=[0.0, -(AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[0.0, -2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, -2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, -(AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
+    ]
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
@@ -16,7 +24,11 @@ def err_handler(slave: int, status: Status) -> None:
 
 if __name__ == "__main__":
     with Controller.open(
+<<<<<<< HEAD
         AutdArrangement.autd_arrangement, # AUTDの配列を定義する
+=======
+        autd_arrangement,
+>>>>>>> 2886679309c9061f745d25d1ace4460abc487c1b
         # Simulator("127.0.0.1:8080"), # シミュレータを使用する際
         SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する際
     ) as autd:
@@ -28,7 +40,6 @@ if __name__ == "__main__":
         )
 
         autd.send(Silencer())
-
         m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 7 # 円周上の点の数

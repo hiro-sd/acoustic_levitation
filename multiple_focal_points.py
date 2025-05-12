@@ -1,4 +1,3 @@
-import os
 import numpy as np, os, keyboard
 from pyautd3 import (
     AUTD3, Controller, ControlPoint, ControlPoints, EmitIntensity, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Phase, Silencer, Static,
@@ -7,7 +6,15 @@ from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, NalgebraBa
 from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
 from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
 from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
-from autd_arrangement import AutdArrangement
+
+autd_arrangement = [
+    AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]), 
+    AUTD3(pos=[0.0, -(AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[0.0, -2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, -2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, -(AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
+    ]
 
 # 6台のAUTD3を3行2列の配置で使用する
 # 05
@@ -50,10 +57,14 @@ def multiple_foci_stm(n):
                     ).into_nearest()
 
 # GSPATで2焦点STMの設定
-def gspat_func(center, theta, radius, point_num):
+def make_gspat_gain(center, theta, radius):
     p1 = center + radius * np.array([np.cos(theta), np.sin(theta), 0])
+<<<<<<< HEAD
     p2 = center + radius * np.array([np.cos(theta + 2.0 * np.pi / point_num), np.sin(theta + 2.0 * np.pi / point_num), 0])
     # p3 = center + radius * np.array([np.cos(theta + 4.0 * np.pi / point_num), np.sin(theta + 4.0 * np.pi / point_num), 0])
+=======
+    p2 = center + 2 * radius / 3 * np.array([np.cos(theta), np.sin(theta), -15.0]) 
+>>>>>>> 2886679309c9061f745d25d1ace4460abc487c1b
     return GSPAT(
         foci=
             [(p1, 5e4 * Pa), (p2, 5e4 * Pa)],
@@ -78,8 +89,12 @@ if __name__ == "__main__":
         )
 
         autd.send(Silencer())
+<<<<<<< HEAD
 
         m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
+=======
+        m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅を出力する
+>>>>>>> 2886679309c9061f745d25d1ace4460abc487c1b
 
         point_num = 7 # 円周上の点の数
         radius = 45.0 # 円の半径
@@ -119,34 +134,22 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
+<<<<<<< HEAD
                 # 円軌道上に焦点を配置するための時空間変調 (鉛直方向への移動のみならこれでよい) (単焦点)
 
+=======
+>>>>>>> 2886679309c9061f745d25d1ace4460abc487c1b
                 # 円軌道上に焦点を配置するための時空間変調 (FociSTMを使用する場合) 
                 # stm = multiple_foci_stm(2)
 
-                # 円軌道上に焦点を配置するための時空間変調 
-                # gains = [] # gainsにGroupのリストを格納する
-                # for theta in (2.0 * np.pi * i / point_num for i in range(point_num)):
-                #     focus = Focus(
-                #         pos = center + radius * np.array([np.cos(theta), np.sin(theta), 0]),
-                #         option = FocusOption(),
-                #     )
-
-                #     gain = Group(
-                #         key_map = lambda _: lambda tr: "in" if np.linalg.norm(tr.position()[:2] - center[:2]) <= 150.0 else "out",
-                #         gain_map={"in": focus, "out": Null()},
-                #     )
-
-                #     gains.append(gain)
-
                 # GSPATで多焦点を作成する場合
                 gains = [
-                    gspat_func(center, 2.0 * np.pi * i / point_num, radius, point_num)
+                    make_gspat_gain(center, 2.0 * np.pi * i / point_num, radius)
                     for i in range(point_num)
                 ]
 
                 stm = GainSTM(
-                    gains, # gainsをグループ化して、円軌道上のトランスデューサにのみSTMを適用する
+                    gains,
                     config = 100 * Hz, # 100Hzで更新(1秒間に円周上を100周する)
                     option = GainSTMOption(
                         mode = GainSTMMode.PhaseIntensityFull,
