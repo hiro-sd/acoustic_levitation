@@ -59,12 +59,7 @@ def multiple_foci_stm(n):
 # GSPATで2焦点STMの設定
 def make_gspat_gain(center, theta, radius):
     p1 = center + radius * np.array([np.cos(theta), np.sin(theta), 0])
-<<<<<<< HEAD
-    p2 = center + radius * np.array([np.cos(theta + 2.0 * np.pi / point_num), np.sin(theta + 2.0 * np.pi / point_num), 0])
-    # p3 = center + radius * np.array([np.cos(theta + 4.0 * np.pi / point_num), np.sin(theta + 4.0 * np.pi / point_num), 0])
-=======
     p2 = center + 2 * radius / 3 * np.array([np.cos(theta), np.sin(theta), -15.0]) 
->>>>>>> 2886679309c9061f745d25d1ace4460abc487c1b
     return GSPAT(
         foci=
             [(p1, 5e4 * Pa), (p2, 5e4 * Pa)],
@@ -89,12 +84,7 @@ if __name__ == "__main__":
         )
 
         autd.send(Silencer())
-<<<<<<< HEAD
-
-        m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
-=======
         m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅を出力する
->>>>>>> 2886679309c9061f745d25d1ace4460abc487c1b
 
         point_num = 7 # 円周上の点の数
         radius = 45.0 # 円の半径
@@ -134,11 +124,6 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-<<<<<<< HEAD
-                # 円軌道上に焦点を配置するための時空間変調 (鉛直方向への移動のみならこれでよい) (単焦点)
-
-=======
->>>>>>> 2886679309c9061f745d25d1ace4460abc487c1b
                 # 円軌道上に焦点を配置するための時空間変調 (FociSTMを使用する場合) 
                 # stm = multiple_foci_stm(2)
 
