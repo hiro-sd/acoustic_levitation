@@ -44,8 +44,8 @@ def multiple_foci_stm(n):
 
 # GSPATで2焦点STMの設定
 def make_gspat_gain(center, theta, radius):
-    p1 = center + radius * np.array([np.cos(theta), np.sin(theta), 0])
-    p2 = center + 2 * radius / 3 * np.array([np.cos(theta), np.sin(theta), -15.0]) 
+    p1 = center + radius * np.array([np.cos(theta), np.sin(theta), 0.0])
+    p2 = center + (2 * radius / 3) * np.array([np.cos(theta), np.sin(theta), -25.0]) 
     return GSPAT(
         foci=
             [(p1, 5e4 * Pa), (p2, 5e4 * Pa)],
