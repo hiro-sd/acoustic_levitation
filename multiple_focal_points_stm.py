@@ -1,8 +1,8 @@
-import os
 import numpy as np, os, keyboard
 from pyautd3 import (
-    AUTD3, Controller, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Silencer, Static,
+    AUTD3, Controller, ControlPoint, ControlPoints, EmitIntensity, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Phase, Silencer, Static,
 )
+from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, NalgebraBackend, Pa
 from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
 from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
 from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
@@ -22,11 +22,59 @@ def err_handler(slave: int, status: Status) -> None:
     if status == Status.Lost():
         os._exit(-1)
 
+# FociSTMでn焦点を作成する関数
+def multiple_foci_stm(n):
+    FociSTM(
+        foci=(
+            ControlPoints(
+                points=[
+                    ControlPoint(
+                        point=center + radius * np.array([np.cos(theta + 2.0 * np.pi * k / n), np.sin(theta + 2.0 * np.pi * k / n), 0.0]), 
+                        phase_offset=Phase.ZERO,
+                        )
+                             for k in range(n) 
+                        ],
+                
+                        intensity=EmitIntensity.MAX, 
+                        )
+                        for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
+                    ),
+                    config=100 * Hz,
+                    ).into_nearest()
+
+# GSPATアルゴリズムで2つの焦点を生成する関数 (対角線上に2焦点を生成する)
+def make_gspat_gain(center, theta, radius):
+    p1 = center + radius * np.array([np.cos(theta), np.sin(theta), 0.0])
+    p2 = center + radius * np.array([np.cos(theta + np.pi), np.sin(theta + np.pi), 0.0])
+    return GSPAT(
+        foci=
+            [(p1, 5e4 * Pa), (p2, 5e4 * Pa)],
+            option = GSPATOption(
+                repeat = 100,
+                constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
+            ),
+            backend = NalgebraBackend(),
+        )
+
+# GSPATアルゴリズムで2つの焦点を生成する関数 (高度と半径の異なる２つの円軌道を生成する)
+def make_gspat_gain(center, theta, radius):
+    p1 = center + radius * np.array([np.cos(theta), np.sin(theta), 0.0])
+    p2 = center + (2 * radius / 3) * np.array([np.cos(theta), np.sin(theta), -25.0]) 
+    return GSPAT(
+        foci=
+            [(p1, 5e4 * Pa), (p2, 5e4 * Pa)],
+            option = GSPATOption(
+                repeat = 100,
+                constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
+            ),
+            backend = NalgebraBackend(),
+        )
+
 if __name__ == "__main__":
     with Controller.open(
         autd_arrangement,
-        # Simulator("127.0.0.1:8080"), # シミュレータを使用する際
-        SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する際
+        # Simulator("127.0.0.1:8080"), # シミュレータを使用するために追加した
+        SOEM(err_handler=err_handler, option=SOEMOption()),
     ) as autd:
         firmware_version = autd.firmware_version()
         print(
@@ -45,7 +93,7 @@ if __name__ == "__main__":
         y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
         z_min, z_max = 200.0, 700.0 # 244.0, 642.0 # z座標の最小値と最大値
         prev_x, prev_y, prev_z = None, None, None # 前回のx,y,z座標を保存するための変数
-        step = 2.0 # 1回の操作で移動する距離
+        step = 5.0 # 1回の操作で移動する距離
 
         while True:
             if keyboard.is_pressed("esc"):
@@ -76,37 +124,22 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                # 円軌道上に焦点を配置するための時空間変調 (鉛直方向への移動のみならこれでよい) (単焦点)
-                stm = FociSTM(
-                    foci = (
-                        center + radius * np.array([np.cos(theta), np.sin(theta), 0])
-                        for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
-                        ),
+                # 円軌道上に焦点を配置するための時空間変調 (FociSTMを使用する場合) 
+                # stm = multiple_foci_stm(2)
+
+                # GSPATで多焦点を作成する場合
+                gains = [
+                    make_gspat_gain(center, 2.0 * np.pi * i / point_num, radius)
+                    for i in range(point_num)
+                ]
+
+                stm = GainSTM(
+                    gains,
                     config = 100 * Hz, # 100Hzで更新(1秒間に円周上を100周する)
-                ).into_nearest() # point_num = 40kHz/Nを満たすNが存在しない場合、エラーになる
-
-                # 円軌道上に焦点を配置するための時空間変調 (水平方向へも移動したい時)
-                # gains = [] # gainsにGroupのリストを格納する
-                # for theta in (2.0 * np.pi * i / point_num for i in range(point_num)):
-                #     focus = Focus(
-                #         pos = center + radius * np.array([np.cos(theta), np.sin(theta), 0]),
-                #         option = FocusOption(),
-                #     )
-
-                #     gain = Group(
-                #         key_map = lambda _: lambda tr: "in" if np.linalg.norm(tr.position()[:2] - center[:2]) <= 150.0 else "out",
-                #         gain_map={"in": focus, "out": Null()},
-                #     )
-
-                #     gains.append(gain)
-
-                # stm = GainSTM(
-                #     gains, # gainsをグループ化して、円軌道上のトランスデューサにのみSTMを適用する
-                #     config = 100 * Hz, # 100Hzで更新(1秒間に円周上を100周する)
-                #     option = GainSTMOption(
-                #         mode = GainSTMMode.PhaseIntensityFull,
-                #     ),
-                # ).into_nearest()
+                    option = GainSTMOption(
+                        mode = GainSTMMode.PhaseIntensityFull,
+                    ),
+                ).into_nearest()
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")

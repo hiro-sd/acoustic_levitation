@@ -22,40 +22,6 @@ def err_handler(slave: int, status: Status) -> None:
     if status == Status.Lost():
         os._exit(-1)
 
-# FociSTMでn焦点を作成する関数
-def multiple_foci_stm(n):
-    FociSTM(
-        foci=(
-            ControlPoints(
-                points=[
-                    ControlPoint(
-                        point=center + radius * np.array([np.cos(theta + 2.0 * np.pi * k / n), np.sin(theta + 2.0 * np.pi * k / n), 0.0]), 
-                        phase_offset=Phase.ZERO,
-                        )
-                             for k in range(n) 
-                        ],
-                
-                        intensity=EmitIntensity.MAX, 
-                        )
-                        for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
-                    ),
-                    config=100 * Hz,
-                    ).into_nearest()
-
-# GSPATで2焦点STMの設定
-def make_gspat_gain(center, theta, radius):
-    p1 = center + radius * np.array([np.cos(theta), np.sin(theta), 0.0])
-    p2 = center + (2 * radius / 3) * np.array([np.cos(theta), np.sin(theta), -25.0]) 
-    return GSPAT(
-        foci=
-            [(p1, 5e4 * Pa), (p2, 5e4 * Pa)],
-            option = GSPATOption(
-                repeat = 100,
-                constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
-            ),
-            backend = NalgebraBackend(),
-        )
-
 if __name__ == "__main__":
     with Controller.open(
         autd_arrangement,
@@ -110,22 +76,20 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                # 円軌道上に焦点を配置するための時空間変調 (FociSTMを使用する場合) 
-                # stm = multiple_foci_stm(2)
+                # GSPATで7焦点を作成する
+                points = [
+                    center + radius * np.array([np.cos(theta), np.sin(theta), 0.0])
+                    for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
+                ] 
 
-                # GSPATで多焦点を作成する場合
-                gains = [
-                    make_gspat_gain(center, 2.0 * np.pi * i / point_num, radius)
-                    for i in range(point_num)
-                ]
+                g = GSPAT(
+                    foci= [(p, 5e3 * Pa) for p in points],
+                    option = GSPATOption(
+                        repeat = 100,
+                        constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
+                        ),
+                    backend = NalgebraBackend(),
+                    )
 
-                stm = GainSTM(
-                    gains,
-                    config = 100 * Hz, # 100Hzで更新(1秒間に円周上を100周する)
-                    option = GainSTMOption(
-                        mode = GainSTMMode.PhaseIntensityFull,
-                    ),
-                ).into_nearest()
-
-                autd.send((m, stm))
+                autd.send((m, g))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
