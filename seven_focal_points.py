@@ -25,8 +25,8 @@ def err_handler(slave: int, status: Status) -> None:
 if __name__ == "__main__":
     with Controller.open(
         autd_arrangement,
-        # Simulator("127.0.0.1:8080"), # シミュレータを使用するために追加した
-        SOEM(err_handler=err_handler, option=SOEMOption()),
+        Simulator("127.0.0.1:8080"), # シミュレータを使用するために追加した
+        # SOEM(err_handler=err_handler, option=SOEMOption()),
     ) as autd:
         firmware_version = autd.firmware_version()
         print(
