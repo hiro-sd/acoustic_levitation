@@ -47,6 +47,7 @@ if __name__ == "__main__":
         prev_x, prev_y, prev_z = None, None, None # 前回のx,y,z座標を保存するための変数
         step = 1.0 # 1回の操作で移動する距離
         rotation = False # 回転フラグ
+        prev_rotation = None # 前回の回転フラグを保存するための変数
 
         while True:
             if keyboard.is_pressed("esc"):
@@ -80,8 +81,9 @@ if __name__ == "__main__":
                 z = max(z - step, z_min)
 
             # キーボード操作があった場合に処理を実行
-            if (x != prev_x or y != prev_y or z != prev_z):
+            if (x != prev_x or y != prev_y or z != prev_z or rotation != prev_rotation):
                 prev_x, prev_y, prev_z = x, y, z # 前回の座標を更新
+                prev_rotation = rotation # 前回の回転フラグを更新
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
