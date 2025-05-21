@@ -36,10 +36,23 @@ if __name__ == "__main__":
         )
 
         autd.send(Silencer())
-        m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅を出力する
+
+        # 直径4cm半球のパラメータ
+        # m = Static(intensity=int(0xFF * 0.65)) # 振幅変調を行わず、常に同じ振幅を出力する
+
+        # point_num = 7 # 円周上の点の数
+        # radius = 23.0 # 円の半径
+        # x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
+        # x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
+        # y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
+        # z_min, z_max = 200.0, 700.0 # 244.0, 642.0 # z座標の最小値と最大値
+        # prev_x, prev_y, prev_z = None, None, None # 前回のx,y,z座標を保存するための変数
+        # step = 2.0 # 1回の操作で移動する距離
+
+        m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 7 # 円周上の点の数
-        radius = 45.0 # 円の半径
+        radius = 24.5 # 円の半径
         x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
         y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
