@@ -37,7 +37,7 @@ if __name__ == "__main__":
 
         autd.send(Silencer())
 
-        # 直径4cm半球のパラメータ
+        # 直径4cm半球の浮揚パラメータ
         # m = Static(intensity=int(0xFF * 0.65)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         # point_num = 7 # 円周上の点の数
@@ -49,6 +49,7 @@ if __name__ == "__main__":
         # prev_x, prev_y, prev_z = None, None, None # 前回のx,y,z座標を保存するための変数
         # step = 2.0 # 1回の操作で移動する距離
 
+        # 直径4.5cm球の浮揚パラメータ
         m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 7 # 円周上の点の数
