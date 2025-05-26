@@ -39,7 +39,7 @@ if __name__ == "__main__":
         m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 7
-        radius = 45.0 # 円の半径
+        radius = 24.5 # 円の半径
         x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
         y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
@@ -95,9 +95,9 @@ if __name__ == "__main__":
                     ] 
 
                     g = GSPAT(
-                        foci= [(p, 5e4 * Pa) for p in points],
+                        foci= [(p, 5e5 * Pa) for p in points],
                         option = GSPATOption(
-                            repeat = 50,
+                            repeat = 100,
                             constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
                             ),
                         backend = NalgebraBackend(),
