@@ -16,6 +16,21 @@ autd_arrangement = [
     AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
     ]
 
+# FociSTMで円軌道を交互に回す
+def build_stm_alternate(center: np.ndarray) -> FociSTM:
+    # 正方向角リスト
+    angles_fwd = [2.0 * np.pi * i / 7 for i in range(7)]
+    # 逆方向角リスト（終点をダブらせないよう [::-1][1:]）
+    angles_rev = angles_fwd[::-1][1:] + [angles_fwd[0]] 
+    # forward + reverse の 2 周分を連結
+    angles = angles_fwd + angles_rev
+
+    foci = (
+        center + radius *np.array([np.cos(a), np.sin(a), 0.0])
+        for a in angles
+    )
+    return FociSTM(foci=foci, config=100 * Hz).into_nearest()
+
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
     print(f"slave [{slave}]: {status}")
@@ -39,27 +54,19 @@ if __name__ == "__main__":
 
         # 直径4cm半球のパラメータ(いまのところ)
         # m = Static(intensity=int(0xFF * 0.65)) # 振幅変調を行わず、常に同じ振幅を出力する
-
-        # point_num = 7 # 円周上の点の数
         # radius = 23.0 # 円の半径
-        # x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
-        # x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
-        # y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
-        # z_min, z_max = 200.0, 700.0 # 244.0, 642.0 # z座標の最小値と最大値
-        # prev_x, prev_y, prev_z = None, None, None # 前回のx,y,z座標を保存するための変数
-        # step = 2.0 # 1回の操作で移動する距離
 
         # 直径4.5cm球?のパラメータ(いまのところ)
         m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
 
-        point_num = 8 # 円周上の点の数
+        point_num = 7 # 円周上の点の数
         radius = 23.0 # 円の半径
         x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
         y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
         z_min, z_max = 200.0, 700.0 # 244.0, 642.0 # z座標の最小値と最大値
         prev_x, prev_y, prev_z = None, None, None # 前回のx,y,z座標を保存するための変数
-        step = 50 # 1回の操作で移動する距離
+        step = 1.0 # 1回の操作で移動する距離
 
         while True:
             if keyboard.is_pressed("esc"):
@@ -98,6 +105,8 @@ if __name__ == "__main__":
                         ),
                     config = 100 * Hz, # 100Hzで更新(1秒間に円周上を100周する)
                 ).into_nearest() # point_num = 40kHz/Nを満たすNが存在しない場合、エラーになる
+
+                # stm = build_stm_alternate(center)
 
                 # 円軌道上に焦点を配置するための時空間変調 (水平方向へも移動したい時)
                 # gains = [] # gainsにGroupのリストを格納する
