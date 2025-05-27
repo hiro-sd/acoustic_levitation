@@ -36,9 +36,9 @@ if __name__ == "__main__":
         )
 
         autd.send(Silencer())
-        m = Static(intensity=0xF7) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=0xFD) # 振幅変調を行わず、常に同じ振幅を出力する
 
-        point_num = 8
+        point_num = 7
         radius = 24.5 # 円の半径
         x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
@@ -95,7 +95,7 @@ if __name__ == "__main__":
                     ] 
 
                     g = GSPAT(
-                        foci= [(p, 5e4 * Pa) for p in points],
+                        foci= [(p, 5e5 * Pa) for p in points],
                         option = GSPATOption(
                             repeat = 100,
                             constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
