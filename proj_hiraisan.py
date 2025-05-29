@@ -106,6 +106,21 @@ if __name__ == "__main__":
                     config = 100 * Hz, # 100Hzで更新(1秒間に円周上を100周する)
                 ).into_nearest() # point_num = 40kHz/Nを満たすNが存在しない場合、エラーになる
 
+                # # 斜めの円軌道上に焦点を配置するための時空間変調
+                # tilt_angle = np.pi / 6  # 30度の傾き
+                # rotation_matrix = np.array([
+                #     [1, 0, 0],
+                #     [0, np.cos(tilt_angle), -np.sin(tilt_angle)],
+                #     [0, np.sin(tilt_angle), np.cos(tilt_angle)]
+                # ])
+                # stm = FociSTM(
+                #     foci = (
+                #         center + rotation_matrix @ (radius * np.array([np.cos(theta), np.sin(theta), 0]))
+                #         for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
+                #         ),
+                #     config = 100 * Hz,
+                # ).into_nearest()
+
                 # stm = build_stm_alternate(center)
 
                 # 円軌道上に焦点を配置するための時空間変調 (水平方向へも移動したい時)
