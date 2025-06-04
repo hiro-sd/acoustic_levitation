@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+# AUTDの配置を描画して可視化するファイル
+
 # 各AUTD3ユニットの定数（単位: mm）
 TRANSDUCER_PITCH = 10.16  # トランスデューサ間のピッチ
 NUM_COLS = 18 # 列数

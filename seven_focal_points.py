@@ -22,6 +22,7 @@ def err_handler(slave: int, status: Status) -> None:
     if status == Status.Lost():
         os._exit(-1)
 
+# 円形の静的多焦点音場を形成するファイル
 if __name__ == "__main__":
     with Controller.open(
         autd_arrangement,
