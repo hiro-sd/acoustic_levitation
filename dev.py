@@ -74,7 +74,7 @@ if __name__ == "__main__":
         current_tilt = 0.0  # 現在の傾き（ラジアン）
         max_tilt = np.pi / 6  # 最大傾き（30度）
         tilt_step = 0.001  # 1回あたりの傾き変化量（ラジアン）
-        target_tilt = 0.0  # 目標とする傾き
+        target_tilt = None  # 目標とする傾き
         is_tilting = False  # 傾き変化中かどうかのフラグ
 
         while True:
@@ -103,13 +103,12 @@ if __name__ == "__main__":
             # 傾き方向の設定
             if keyboard.is_pressed("t"):
                 is_tilting = True
-                target_tilt = max_tilt  # 正の方向（+30度）に傾ける
+                target_tilt = max_tilt  # 目標とする傾きをmax_tiltに設定
                 print("正方向に傾き開始")
             elif keyboard.is_pressed("r"):
                 is_tilting = True
-                target_tilt = -max_tilt  # 負の方向（-30度）に傾ける
+                target_tilt = -max_tilt  # 目標とする傾きを-(max_tilt)に設定
                 print("負方向に傾き開始")
-
 
             # 傾きの更新
             if is_tilting:
@@ -148,4 +147,4 @@ if __name__ == "__main__":
                 # stm = stm_alternately(center=center, radius=radius, point_num=point_num)
 
                 autd.send((m, stm))
-                print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm, tilt: {np.degrees(current_tilt):.1f}度")
+                print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm, 傾斜: {np.degrees(current_tilt):.1f}度")
