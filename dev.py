@@ -68,7 +68,7 @@ if __name__ == "__main__":
         y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
         z_min, z_max = 200.0, 700.0 # 244.0, 642.0 # z座標の最小値と最大値
         prev_x, prev_y, prev_z = None, None, None # 前回のx,y,z座標を保存するための変数
-        step = 1.0 # 1回の操作で移動する距離
+        step = 0.01 # 1回の操作で移動する距離
 
         # 傾き角度の初期化
         current_tilt = 0.0  # 現在の傾き（ラジアン）
@@ -113,22 +113,22 @@ if __name__ == "__main__":
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
                 # 回転行列を作成（x軸周りの回転） (current_tiltだけ傾ける)
-                rotation_matrix = np.array([
-                    [1, 0, 0],
-                    [0, np.cos(current_tilt), -np.sin(current_tilt)],
-                    [0, np.sin(current_tilt), np.cos(current_tilt)]
-                ])
+                # rotation_matrix = np.array([
+                #     [1, 0, 0],
+                #     [0, np.cos(current_tilt), -np.sin(current_tilt)],
+                #     [0, np.sin(current_tilt), np.cos(current_tilt)]
+                # ])
 
-                stm = FociSTM(
-                    foci = (
-                        # 水平な円を回転行列で変換し、現在の傾きに応じた円にする (@は行列の積を表す)
-                        center + rotation_matrix @ (radius * np.array([np.cos(theta), np.sin(theta), 0]))
-                        for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
-                        ),
-                    config = 100 * Hz,
-                ).into_nearest()
+                # stm = FociSTM(
+                #     foci = (
+                #         # 水平な円を回転行列で変換し、現在の傾きに応じた円にする (@は行列の積を表す)
+                #         center + rotation_matrix @ (radius * np.array([np.cos(theta), np.sin(theta), 0]))
+                #         for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
+                #         ),
+                #     config = 100 * Hz,
+                # ).into_nearest()
 
-                # stm = stm_alternately(center=center, radius=radius, point_num=point_num)
+                stm = stm_alternately(center=center, radius=radius, point_num=point_num)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm, 傾斜: {np.degrees(current_tilt):.1f}度")
