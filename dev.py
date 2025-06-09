@@ -74,8 +74,6 @@ if __name__ == "__main__":
         current_tilt = 0.0  # 現在の傾き（ラジアン）
         max_tilt = np.pi / 6  # 最大傾き（30度）
         tilt_step = 0.001  # 1回あたりの傾き変化量（ラジアン）
-        target_tilt = None  # 目標とする傾き
-        is_tilting = False  # 傾き変化中かどうかのフラグ
 
         while True:
             if keyboard.is_pressed("esc"):
@@ -102,28 +100,16 @@ if __name__ == "__main__":
 
             # 傾き方向の設定
             if keyboard.is_pressed("t"):
-                is_tilting = True
-                target_tilt = max_tilt  # 目標とする傾きをmax_tiltに設定
-                print("正方向に傾き開始")
+                # 最大傾きを超えない範囲で傾きを増加
+                current_tilt = min(current_tilt + tilt_step, max_tilt)
+                print(f"現在の傾き: {current_tilt}")
             elif keyboard.is_pressed("r"):
-                is_tilting = True
-                target_tilt = -max_tilt  # 目標とする傾きを-(max_tilt)に設定
-                print("負方向に傾き開始")
-
-            # 傾きの更新
-            if is_tilting:
-                if current_tilt < target_tilt:
-                    # 現在の傾きが目標より小さい場合、徐々に増加
-                    current_tilt = min(current_tilt + tilt_step, target_tilt)
-                elif current_tilt > target_tilt:
-                    # 現在の傾きが目標より大きい場合、徐々に減少
-                    current_tilt = max(current_tilt - tilt_step, target_tilt)
-                # 目標に到達したら傾き変更を停止
-                if abs(current_tilt - target_tilt) < tilt_step:
-                    is_tilting = False
+                # 最小傾きを超えない範囲で傾きを減少
+                current_tilt = max(current_tilt - tilt_step, -max_tilt)
+                print(f"現在の傾き: {current_tilt}")
 
             # キーボード操作または傾き変化があった場合に処理を実行
-            if (x != prev_x or y != prev_y or z != prev_z or is_tilting):
+            if (x != prev_x or y != prev_y or z != prev_z or keyboard.is_pressed("t") or keyboard.is_pressed("r")):
                 prev_x, prev_y, prev_z = x, y, z # 前回の座標を更新
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
