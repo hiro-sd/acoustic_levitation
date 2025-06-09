@@ -42,8 +42,8 @@ def err_handler(slave: int, status: Status) -> None:
 if __name__ == "__main__":
     with Controller.open(
         autd_arrangement,
-        # Simulator("127.0.0.1:8080"), # シミュレータを使用する際
-        SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する際
+        Simulator("127.0.0.1:8080"), # シミュレータを使用する際
+        # SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する際
     ) as autd:
         firmware_version = autd.firmware_version()
         print(
@@ -102,11 +102,11 @@ if __name__ == "__main__":
             if keyboard.is_pressed("t"):
                 # 最大傾きを超えない範囲で傾きを増加
                 current_tilt = min(current_tilt + tilt_step, max_tilt)
-                print(f"現在の傾き: {current_tilt}")
+                #print(f"現在の傾き: {current_tilt}")
             elif keyboard.is_pressed("r"):
                 # 最小傾きを超えない範囲で傾きを減少
                 current_tilt = max(current_tilt - tilt_step, -max_tilt)
-                print(f"現在の傾き: {current_tilt}")
+                #print(f"現在の傾き: {current_tilt}")
 
             # キーボード操作または傾き変化があった場合に処理を実行
             if (x != prev_x or y != prev_y or z != prev_z or keyboard.is_pressed("t") or keyboard.is_pressed("r")):
