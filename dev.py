@@ -30,7 +30,7 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=100 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=80 * Hz).into_nearest()
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
@@ -42,8 +42,8 @@ def err_handler(slave: int, status: Status) -> None:
 if __name__ == "__main__":
     with Controller.open(
         autd_arrangement,
-        Simulator("127.0.0.1:8080"), # シミュレータを使用する際
-        # SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する際
+        # Simulator("127.0.0.1:8080"), # シミュレータを使用する際
+        SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する際
     ) as autd:
         firmware_version = autd.firmware_version()
         print(
@@ -72,7 +72,7 @@ if __name__ == "__main__":
 
         # 傾き角度の初期化
         current_tilt = 0.0  # 現在の傾き（ラジアン）
-        max_tilt = np.pi / 6  # 最大傾き（30度）
+        max_tilt = np.pi / 2  # 最大傾き（90度）
         tilt_step = 0.001  # 1回あたりの傾き変化量（ラジアン）
 
         while True:
