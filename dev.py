@@ -32,6 +32,20 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
     )
     return FociSTM(foci=foci, config=80 * Hz).into_nearest()
 
+# 円軌道上の焦点をランダムな順序で出力する関数
+def stm_random(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
+    # 基本の角度リストを生成 (0, 2pi/7, 4pi/7, 6pi/7, 8pi/7, 10pi/7, 12pi/7)
+    angles = [2.0 * np.pi * i / point_num for i in range(point_num)]
+    # 角度リストをランダムに並び替え
+    random_angles = np.random.permutation(angles)
+    
+    # ランダムな順序で円軌道上に焦点を配置するための時空間変調
+    foci = (
+        center + radius * np.array([np.cos(a), np.sin(a), 0.0])
+        for a in random_angles
+    )
+    return FociSTM(foci=foci, config=100 * Hz).into_nearest()
+
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
     print(f"slave [{slave}]: {status}")
