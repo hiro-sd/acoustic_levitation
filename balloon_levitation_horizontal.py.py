@@ -27,8 +27,8 @@ def err_handler(slave: int, status: Status) -> None:
 if __name__ == "__main__":
     with Controller.open(
         autd_arrangement,
-        # Simulator("127.0.0.1:8080"), # シミュレータを使用する際
-        SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する際
+        # Simulator("127.0.0.1:8080"), # シミュレータを使用する時
+        SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する時
     ) as autd:
         firmware_version = autd.firmware_version()
         print(
@@ -42,15 +42,13 @@ if __name__ == "__main__":
         m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 7 # 円周上の点の数
-        radius = 24.0 # 円軌道の半径
+        radius = 45.0 # 円軌道の半径
         x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
         y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
-        z_min, z_max = 200.0, 700.0 # 244.0, 642.0 # z座標の最小値と最大値
+        z_min, z_max = 200.0, 700.0 # z座標の最小値と最大値 (修論では、範囲は 244.0, 642.0)
         prev_x, prev_y, prev_z = None, None, None # 前回のx,y,z座標を保存するための変数
-        step = 1.0 # 1回の操作で移動する距離
-        switch = False # STMの切り替えを行うかどうかのフラグ
-        prev_switch = None # 前回のswitchの値を保存するための変数
+        step = 5.0 # 1回の操作で移動する距離
 
         while True:
             if keyboard.is_pressed("esc"):
@@ -74,51 +72,32 @@ if __name__ == "__main__":
                 z = min(z + step, z_max)
             elif keyboard.is_pressed("d"):
                 z = max(z - step, z_min)
-            
-            # STMの切り替え
-            if keyboard.is_pressed("enter"):
-                switch = not switch 
-                if not switch:
-                    print("FociSTMを使用します")
-                else:
-                    print("GainSTMを使用します")
 
             # キーボード操作があった場合に処理を実行
-            if (x != prev_x or y != prev_y or z != prev_z or switch != prev_switch):
-                prev_x, prev_y, prev_z, prev_switch = x, y, z, switch # 前回の座標とswitchの値を更新
+            if (x != prev_x or y != prev_y or z != prev_z):
+                prev_x, prev_y, prev_z, prev_switch = x, y, z
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                if not switch: 
-                    # 円軌道上に焦点を配置するための時空間変調 (鉛直方向への移動のみならこれでよい) (単焦点)
-                    stm = FociSTM(
-                        foci = (
-                            center + radius * np.array([np.cos(theta), np.sin(theta), 0])
-                            for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
-                            ),
-                        config = 100 * Hz, # 100Hzで更新(1秒間に円周上を100周する)
-                    ).into_nearest() # point_num = 40kHz/Nを満たすNが存在しない場合、エラーになる
+                # 円軌道上に焦点を配置するための時空間変調 (水平方向)
+                gains = [] # gainsにGroupのリストを格納する
+                for theta in (2.0 * np.pi * i / point_num for i in range(point_num)):
+                    focus = Focus( # 単焦点を形成するGain
+                        pos = center + radius * np.array([np.cos(theta), np.sin(theta), 0]),
+                        option = FocusOption(),
+                    )
 
-                else:
-                    # 円軌道上に焦点を配置するための時空間変調 (水平方向へも移動したい時)
-                    gains = [] # gainsにGroupのリストを格納する
-                    for theta in (2.0 * np.pi * i / point_num for i in range(point_num)):
-                        focus = Focus( # 単焦点を形成するGain
-                            pos = center + radius * np.array([np.cos(theta), np.sin(theta), 0]),
-                            option = FocusOption(),
-                        )
+                    gain = Group(
+                        # 円軌道中心から150mm以内のトランスデューサにのみSTMを適用する
+                        key_map = lambda _: lambda tr: "in" if np.linalg.norm(tr.position()[:2] - center[:2]) <= 150.0 else "out",
+                        gain_map={"in": focus, "out": Null()},
+                    )
 
-                        gain = Group(
-                            # 円軌道中心から150mm以内のトランスデューサにのみSTMを適用する
-                            key_map = lambda _: lambda tr: "in" if np.linalg.norm(tr.position()[:2] - center[:2]) <= 150.0 else "out",
-                            gain_map={"in": focus, "out": Null()},
-                        )
-
-                        gains.append(gain)
+                    gains.append(gain)
 
                     stm = GainSTM(
                         gains,
-                        config = 100 * Hz, # 100Hzで更新(1秒間に円周上を100周する)
+                        config = 100 * Hz, # 100Hzで更新
                         option = GainSTMOption(
                             mode = GainSTMMode.PhaseIntensityFull,
                         ),
