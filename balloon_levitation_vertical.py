@@ -75,7 +75,7 @@ if __name__ == "__main__":
 
             # キーボード操作があった場合に処理を実行
             if (x != prev_x or y != prev_y or z != prev_z):
-                prev_x, prev_y, prev_z, prev_switch = x, y, z
+                prev_x, prev_y, prev_z = x, y, z
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
