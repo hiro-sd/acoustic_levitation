@@ -79,7 +79,7 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                # 円軌道上に焦点を配置するための時空間変調 (水平方向)
+                # 円軌道上に焦点を配置するための時空間変調 (水平方向への移動)
                 gains = [] # gainsにGroupのリストを格納する
                 for theta in (2.0 * np.pi * i / point_num for i in range(point_num)):
                     focus = Focus( # 単焦点を形成するGain

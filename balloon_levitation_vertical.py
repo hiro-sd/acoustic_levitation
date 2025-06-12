@@ -79,7 +79,7 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                # 円軌道上に焦点を配置するための時空間変調 (鉛直方向)
+                # 円軌道上に焦点を配置するための時空間変調 (鉛直方向への移動)
                 stm = FociSTM(
                     foci = (
                         center + radius * np.array([np.cos(theta), np.sin(theta), 0])
