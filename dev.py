@@ -25,10 +25,11 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
     angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
     # forward + reverse の 2 周分を連結
     angles = angles_fwd + angles_rev # angles = [0, 2pi/7, 4pi/7, 6pi/7, 8pi/7, 10pi/7, 12pi/7, 10pi/7, 8pi/7, 6pi/7, 4pi/7, 2pi/7]
+    new_angles = angles[4:7] + angles[:4] + angles[::-1][9:] + angles[6:8] # new_angles = [8pi/7, 10pi/7, 12pi/7, 0, 2pi/7, 4pi/7, 6pi/7, 4pi/7, 2pi/7, 0, 12pi/7, 10pi/7]
     # 円軌道上に焦点を配置するための時空間変調
     foci = (
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
-        for a in angles
+        for a in new_angles
     )
     return FociSTM(foci=foci, config=80 * Hz).into_nearest()
 
