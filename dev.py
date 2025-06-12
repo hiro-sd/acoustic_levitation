@@ -25,11 +25,11 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
     angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
     # forward + reverse の 2 周分を連結
     angles = angles_fwd + angles_rev # angles = [0, 2pi/7, 4pi/7, 6pi/7, 8pi/7, 10pi/7, 12pi/7, 10pi/7, 8pi/7, 6pi/7, 4pi/7, 2pi/7]
-    new_angles = angles[4:7] + angles[:4] + angles[::-1][9:] + angles[6:8] # new_angles = [8pi/7, 10pi/7, 12pi/7, 0, 2pi/7, 4pi/7, 6pi/7, 4pi/7, 2pi/7, 0, 12pi/7, 10pi/7]
+    #new_angles = angles[4:7] + angles[:4] + angles[::-1][9:] + angles[6:8] # new_angles = [8pi/7, 10pi/7, 12pi/7, 0, 2pi/7, 4pi/7, 6pi/7, 4pi/7, 2pi/7, 0, 12pi/7, 10pi/7]
     # 円軌道上に焦点を配置するための時空間変調
     foci = (
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
-        for a in new_angles
+        for a in angles
     )
     return FociSTM(foci=foci, config=80 * Hz).into_nearest()
 
@@ -120,6 +120,35 @@ if __name__ == "__main__":
             elif keyboard.is_pressed("r"):
                 # 最小傾きを超えない範囲で傾きを減少
                 current_tilt = max(current_tilt - tilt_step, -max_tilt)
+            
+            # キーボード操作または傾き変化があった場合に処理を実行
+            if (x != prev_x or y != prev_y or z != prev_z or keyboard.is_pressed("t") or keyboard.is_pressed("r")):
+                prev_x, prev_y, prev_z = x, y, z # 前回の座標を更新
+
+                center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
+
+                # 回転行列を作成（x軸周りの回転） (current_tiltだけ傾ける)
+                # rotation_matrix = np.array([
+                #     [1, 0, 0],
+                #     [0, np.cos(current_tilt), -np.sin(current_tilt)],
+                #     [0, np.sin(current_tilt), np.cos(current_tilt)]
+                # ])
+
+                # stm = FociSTM(
+                #     foci = (
+                #         # 水平な円を回転行列で変換し、現在の傾きに応じた円にする (@は行列の積を表す)
+                #         center + rotation_matrix @ (radius * np.array([np.cos(theta), np.sin(theta), 0]))
+                #         for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
+                #         ),
+                #     config = 100 * Hz,
+                # ).into_nearest()
+
+                stm = stm_alternately(center=center, radius=radius, point_num=point_num)
+
+                # stm = stm_random(center=center, radius=radius, point_num=point_num)
+
+                autd.send((m, stm))
+                print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm, 傾斜: {np.degrees(current_tilt):.1f}度")
 
             # # 毎ループでランダムなSTMパターンを生成
             # center = autd.center() + np.array([x, y, z])
@@ -130,32 +159,3 @@ if __name__ == "__main__":
             # if (x != prev_x or y != prev_y or z != prev_z or keyboard.is_pressed("t") or keyboard.is_pressed("r")):
             #     prev_x, prev_y, prev_z = x, y, z
             #     print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm, 傾斜: {np.degrees(current_tilt):.1f}度")
-            
-            # キーボード操作または傾き変化があった場合に処理を実行
-            if (x != prev_x or y != prev_y or z != prev_z or keyboard.is_pressed("t") or keyboard.is_pressed("r")):
-                prev_x, prev_y, prev_z = x, y, z # 前回の座標を更新
-
-                center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
-
-                # 回転行列を作成（x軸周りの回転） (current_tiltだけ傾ける)
-                rotation_matrix = np.array([
-                    [1, 0, 0],
-                    [0, np.cos(current_tilt), -np.sin(current_tilt)],
-                    [0, np.sin(current_tilt), np.cos(current_tilt)]
-                ])
-
-                stm = FociSTM(
-                    foci = (
-                        # 水平な円を回転行列で変換し、現在の傾きに応じた円にする (@は行列の積を表す)
-                        center + rotation_matrix @ (radius * np.array([np.cos(theta), np.sin(theta), 0]))
-                        for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
-                        ),
-                    config = 100 * Hz,
-                ).into_nearest()
-
-                # stm = stm_alternately(center=center, radius=radius, point_num=point_num)
-
-                # stm = stm_random(center=center, radius=radius, point_num=point_num)
-
-                autd.send((m, stm))
-                print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm, 傾斜: {np.degrees(current_tilt):.1f}度")
