@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# ----- dev.py の円軌道（stm_alternately） -----
+# STMの軌道を可視化するためのコード
 dev_radius = 24.0
 point_num = 7
 
@@ -43,8 +43,6 @@ plt.xlim(-30, 30)
 plt.ylim(-30, 30)
 plt.grid(True)
 
-
-# ----- balloon_levitation_vertical.py の円軌道 -----
 balloon_radius = 24.0
 balloon_point_num = 7
 balloon_angles = [2.0 * np.pi * i / balloon_point_num for i in range(balloon_point_num)]
