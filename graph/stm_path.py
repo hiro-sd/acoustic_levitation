@@ -34,7 +34,7 @@ for i, (x, y) in enumerate(dev_xy):
         label_pos = (1.15 * x, 1.15 * y)
     plt.text(label_pos[0], label_pos[1], str(i + 1),
              ha='center', va='center', fontsize=10, fontweight='bold')
-    
+
 plt.gca().set_aspect('equal', adjustable='box')
 plt.title('STM path (12 points)') 
 plt.xlabel('X [mm]')
