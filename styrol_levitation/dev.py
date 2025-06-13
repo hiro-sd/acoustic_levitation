@@ -24,9 +24,13 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
     # 逆方向角リスト
     angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
     # forward + reverse の 2 周分を連結
-    angles = angles_fwd + angles_rev # angles = [0, 2pi/7, 4pi/7, 6pi/7, 8pi/7, 10pi/7, 12pi/7, 10pi/7, 8pi/7, 6pi/7, 4pi/7, 2pi/7]
+    angles = angles_fwd + angles_rev 
+    # angles = [0, 2 * np.pi / 6, 4 * np.pi / 6, np.pi, 8 * np.pi / 6, 10 * np.pi / 6, 8 * np.pi / 6, np.pi, 4 * np.pi / 6, 2 * np.pi / 6]
+    # angles = [2 * np.pi / 6, 4 * np.pi / 6, np.pi, 8 * np.pi / 6, 10 * np.pi / 6, 0, 10 * np.pi / 6, 8 * np.pi / 6, np.pi, 4 * np.pi / 6]
+    # angles = [4 * np.pi / 6, np.pi, 8 * np.pi / 6, 10 * np.pi / 6, 0, 2 * np.pi / 6, 0, 10 * np.pi / 6, 8 * np.pi / 6, np.pi]
     # angles = [np.pi, 8 * np.pi / 6, 10 * np.pi / 6, 0, 2 * np.pi / 6, 4 * np.pi / 6, 2 * np.pi / 6, 0, 10 * np.pi / 6, 8 * np.pi / 6]
     # angles = [8 * np.pi / 6, 10 * np.pi / 6, 0, 2 * np.pi / 6, 4 * np.pi / 6, np.pi, 4 * np.pi / 6, 2 * np.pi / 6, 0, 10 * np.pi / 6]
+    # angles = [10 * np.pi / 6, 0, 2 * np.pi / 6, 4 * np.pi / 6, np.pi, 8 * np.pi / 6, np.pi, 4 * np.pi / 6, 2 * np.pi / 6, 0]
 
     # 円軌道上に焦点を配置するための時空間変調
     foci = (
@@ -37,7 +41,7 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
 
 # 円軌道上の焦点をランダムな順序で出力する関数
 def stm_random(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
-    # 基本の角度リストを生成 (0, 2pi/7, 4pi/7, 6pi/7, 8pi/7, 10pi/7, 12pi/7)
+    # 基本の角度リストを生成 (0, 2pi/7, 4pi/7, 6pi/7, 8pi/7, 10pi/7, 12pi/7)s
     angles = [2.0 * np.pi * i / point_num for i in range(point_num)]
     # 角度リストをランダムに並び替え
     random_angles = np.random.permutation(angles)
