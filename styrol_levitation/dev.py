@@ -1,4 +1,5 @@
 import os
+import time
 import numpy as np, os, keyboard
 from pyautd3 import (
     AUTD3, Controller, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Silencer, Static,
@@ -37,48 +38,39 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
 
 # 時間経過に応じてC型パターンを切り替える関数
 def stm_graduate(center: np.ndarray, radius: float) -> FociSTM:
-    import time
-    
-    # グローバル変数として前回のパターンインデックスを保持
-    if not hasattr(stm_graduate, 'last_pattern_index'):
-        stm_graduate.last_pattern_index = -1  # 初期値
-    
-    # 開始時間を記録（静的変数として保持）
-    if not hasattr(stm_graduate, 'start_time'):
-        stm_graduate.start_time = time.time()
-    
-    # 現在の経過時間を計算
-    elapsed_time = time.time() - stm_graduate.start_time
-    # 各パターンの継続時間（秒）
-    pattern_duration = 10
-    
-    # 経過時間に基づいてパターンを選択
-    pattern_index = int(elapsed_time / pattern_duration) % 6
-    
-    # パターンが切り替わった時にログを表示
-    if pattern_index != stm_graduate.last_pattern_index:
-        print(f"パターンが切り替わりました: パターン{pattern_index + 1} ({int(elapsed_time)}秒経過)")
-        stm_graduate.last_pattern_index = pattern_index
-    
-    # 6つの異なる角度パターン
+
+    if not hasattr(stm_graduate, "_start_time"):
+        stm_graduate._start_time = time.time()
+    if not hasattr(stm_graduate, "_last_index"):
+        stm_graduate._last_index = -1
+
+    # 経過秒
+    elapsed = time.time() - stm_graduate._start_time
+    pattern_duration = 10.0                              # [s]
+    pattern_index = int(elapsed // pattern_duration) % 6 # 0–5
+
+    # 切り替わりを検出してログ
+    if pattern_index != stm_graduate._last_index:
+        print(f"パターンが切り替わりました: パターン {pattern_index + 1} "
+              f"({int(elapsed)} 秒経過)")
+        stm_graduate._last_index = pattern_index
+
     angles_patterns = [
-        [0, np.pi / 3, 2 * np.pi / 3, np.pi, 4 * np.pi / 3, 5 * np.pi / 3, 4 * np.pi / 3, np.pi, 2 * np.pi / 3, np.pi / 3],
-        [np.pi / 3, 2 * np.pi / 3, np.pi, 4 * np.pi / 3, 5 * np.pi / 3, 0, 5 * np.pi / 3, 4 * np.pi / 3, np.pi, 2 * np.pi / 3],
-        [2 * np.pi / 3, np.pi, 4 * np.pi / 3, 5 * np.pi / 3, 0, np.pi / 3, 0, 5 * np.pi / 3, 4 * np.pi / 3, np.pi],
-        [np.pi, 4 * np.pi / 3, 5 * np.pi / 3, 0, np.pi / 3, 2 * np.pi / 3, np.pi / 3, 0, 5 * np.pi / 3, 4 * np.pi / 3],
-        [4 * np.pi / 3, 5 * np.pi / 3, 0, np.pi / 3, 2 * np.pi / 3, np.pi, 2 * np.pi / 3, np.pi / 3, 0, 5 * np.pi / 3],
-        [5 * np.pi / 3, 0, np.pi / 3, 2 * np.pi / 3, np.pi, 4 * np.pi / 3, np.pi, 2 * np.pi / 3, np.pi / 3, 0]
+        [0, 1, 2, 3, 4, 5, 4, 3, 2, 1],
+        [1, 2, 3, 4, 5, 0, 5, 4, 3, 2],
+        [2, 3, 4, 5, 0, 1, 0, 5, 4, 3],
+        [3, 4, 5, 0, 1, 2, 1, 0, 5, 4],
+        [4, 5, 0, 1, 2, 3, 2, 1, 0, 5],
+        [5, 0, 1, 2, 3, 4, 3, 2, 1, 0],
     ]
-    
-    # 現在のパターンを選択
-    current_angles = angles_patterns[pattern_index]
-    
-    # 選択されたパターンで焦点を生成
-    foci = (
+
+    current_angles = [k * np.pi / 3 for k in angles_patterns[pattern_index]]
+
+    foci = [
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in current_angles
-    )
-    
+    ]
+
     return FociSTM(foci=foci, config=100 * Hz).into_nearest()
 
 # SOEMのエラーハンドラ
@@ -123,6 +115,9 @@ if __name__ == "__main__":
         max_tilt = np.pi / 2  # 最大傾き（90度）
         tilt_step = 0.001  # 1回あたりの傾き変化量（ラジアン）
 
+        # パターン変化の検出用変数
+        last_pattern_index = -1
+
         while True:
             if keyboard.is_pressed("esc"):
                 print("終了")
@@ -154,9 +149,20 @@ if __name__ == "__main__":
                 # 最小傾きを超えない範囲で傾きを減少
                 current_tilt = max(current_tilt - tilt_step, -max_tilt)
             
-            # キーボード操作または傾き変化があった場合に処理を実行
-            if (x != prev_x or y != prev_y or z != prev_z or keyboard.is_pressed("t") or keyboard.is_pressed("r")):
+            # 現在のパターンインデックスを取得（パターン変化検出のため）
+            if hasattr(stm_graduate, "_start_time"):
+                elapsed = time.time() - stm_graduate._start_time
+                current_pattern_index = int(elapsed // 10.0) % 6
+            else:
+                current_pattern_index = 0
+            
+            # キーボード操作、傾き変化、またはパターン変化があった場合にSTMを更新
+            if (x != prev_x or y != prev_y or z != prev_z or 
+                keyboard.is_pressed("t") or keyboard.is_pressed("r") or 
+                current_pattern_index != last_pattern_index):
+                
                 prev_x, prev_y, prev_z = x, y, z # 前回の座標を更新
+                last_pattern_index = current_pattern_index # 前回のパターンインデックスを更新
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
