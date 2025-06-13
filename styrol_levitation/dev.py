@@ -7,6 +7,8 @@ from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するた�
 from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
 from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
 
+# 色々検証してみるためのファイル
+
 # AUTDの配置
 autd_arrangement = [
     AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]), 
@@ -25,12 +27,6 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
     angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
     # forward + reverse の 2 周分を連結
     angles = angles_fwd + angles_rev 
-    # angles = [0, 2 * np.pi / 6, 4 * np.pi / 6, np.pi, 8 * np.pi / 6, 10 * np.pi / 6, 8 * np.pi / 6, np.pi, 4 * np.pi / 6, 2 * np.pi / 6]
-    # angles = [2 * np.pi / 6, 4 * np.pi / 6, np.pi, 8 * np.pi / 6, 10 * np.pi / 6, 0, 10 * np.pi / 6, 8 * np.pi / 6, np.pi, 4 * np.pi / 6]
-    # angles = [4 * np.pi / 6, np.pi, 8 * np.pi / 6, 10 * np.pi / 6, 0, 2 * np.pi / 6, 0, 10 * np.pi / 6, 8 * np.pi / 6, np.pi]
-    # angles = [np.pi, 8 * np.pi / 6, 10 * np.pi / 6, 0, 2 * np.pi / 6, 4 * np.pi / 6, 2 * np.pi / 6, 0, 10 * np.pi / 6, 8 * np.pi / 6]
-    # angles = [8 * np.pi / 6, 10 * np.pi / 6, 0, 2 * np.pi / 6, 4 * np.pi / 6, np.pi, 4 * np.pi / 6, 2 * np.pi / 6, 0, 10 * np.pi / 6]
-    # angles = [10 * np.pi / 6, 0, 2 * np.pi / 6, 4 * np.pi / 6, np.pi, 8 * np.pi / 6, np.pi, 4 * np.pi / 6, 2 * np.pi / 6, 0]
 
     # 円軌道上に焦点を配置するための時空間変調
     foci = (
@@ -39,18 +35,50 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
     )
     return FociSTM(foci=foci, config=100 * Hz).into_nearest()
 
-# 円軌道上の焦点をランダムな順序で出力する関数
-def stm_random(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
-    # 基本の角度リストを生成 (0, 2pi/7, 4pi/7, 6pi/7, 8pi/7, 10pi/7, 12pi/7)s
-    angles = [2.0 * np.pi * i / point_num for i in range(point_num)]
-    # 角度リストをランダムに並び替え
-    random_angles = np.random.permutation(angles)
+# 時間経過に応じてC型パターンを切り替える関数
+def stm_graduate(center: np.ndarray, radius: float) -> FociSTM:
+    import time
     
-    # ランダムな順序で円軌道上に焦点を配置するための時空間変調
+    # グローバル変数として前回のパターンインデックスを保持
+    if not hasattr(stm_graduate, 'last_pattern_index'):
+        stm_graduate.last_pattern_index = -1  # 初期値
+    
+    # 開始時間を記録（静的変数として保持）
+    if not hasattr(stm_graduate, 'start_time'):
+        stm_graduate.start_time = time.time()
+    
+    # 現在の経過時間を計算
+    elapsed_time = time.time() - stm_graduate.start_time
+    # 各パターンの継続時間（秒）
+    pattern_duration = 10
+    
+    # 経過時間に基づいてパターンを選択
+    pattern_index = int(elapsed_time / pattern_duration) % 6
+    
+    # パターンが切り替わった時にログを表示
+    if pattern_index != stm_graduate.last_pattern_index:
+        print(f"パターンが切り替わりました: パターン{pattern_index + 1} ({int(elapsed_time)}秒経過)")
+        stm_graduate.last_pattern_index = pattern_index
+    
+    # 6つの異なる角度パターン
+    angles_patterns = [
+        [0, np.pi / 3, 2 * np.pi / 3, np.pi, 4 * np.pi / 3, 5 * np.pi / 3, 4 * np.pi / 3, np.pi, 2 * np.pi / 3, np.pi / 3],
+        [np.pi / 3, 2 * np.pi / 3, np.pi, 4 * np.pi / 3, 5 * np.pi / 3, 0, 5 * np.pi / 3, 4 * np.pi / 3, np.pi, 2 * np.pi / 3],
+        [2 * np.pi / 3, np.pi, 4 * np.pi / 3, 5 * np.pi / 3, 0, np.pi / 3, 0, 5 * np.pi / 3, 4 * np.pi / 3, np.pi],
+        [np.pi, 4 * np.pi / 3, 5 * np.pi / 3, 0, np.pi / 3, 2 * np.pi / 3, np.pi / 3, 0, 5 * np.pi / 3, 4 * np.pi / 3],
+        [4 * np.pi / 3, 5 * np.pi / 3, 0, np.pi / 3, 2 * np.pi / 3, np.pi, 2 * np.pi / 3, np.pi / 3, 0, 5 * np.pi / 3],
+        [5 * np.pi / 3, 0, np.pi / 3, 2 * np.pi / 3, np.pi, 4 * np.pi / 3, np.pi, 2 * np.pi / 3, np.pi / 3, 0]
+    ]
+    
+    # 現在のパターンを選択
+    current_angles = angles_patterns[pattern_index]
+    
+    # 選択されたパターンで焦点を生成
     foci = (
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
-        for a in random_angles
+        for a in current_angles
     )
+    
     return FociSTM(foci=foci, config=100 * Hz).into_nearest()
 
 # SOEMのエラーハンドラ
@@ -59,7 +87,6 @@ def err_handler(slave: int, status: Status) -> None:
     if status == Status.Lost():
         os._exit(-1)
 
-# 色々検証してみるためのファイル
 if __name__ == "__main__":
     with Controller.open(
         autd_arrangement,
@@ -149,9 +176,7 @@ if __name__ == "__main__":
                 #     config = 100 * Hz,
                 # ).into_nearest()
 
-                stm = stm_alternately(center=center, radius=radius, point_num=point_num)
-
-                # stm = stm_random(center=center, radius=radius, point_num=point_num)
+                stm = stm_graduate(center=center, radius=radius)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm, 傾斜: {np.degrees(current_tilt):.1f}度")
