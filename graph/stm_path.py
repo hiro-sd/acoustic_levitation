@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 # STMの軌道を可視化するためのコード
 dev_radius = 24.0
-point_num = 7
+point_num = 6
 
 # 正方向 → 逆方向で 12 点
 angles_fwd = [2.0 * np.pi * i / point_num for i in range(point_num)]
@@ -44,7 +44,7 @@ plt.ylim(-30, 30)
 plt.grid(True)
 
 balloon_radius = 24.0
-balloon_point_num = 7
+balloon_point_num = 6
 balloon_angles = [2.0 * np.pi * i / balloon_point_num for i in range(balloon_point_num)]
 balloon_xy = [(balloon_radius * np.cos(a), balloon_radius * np.sin(a)) for a in balloon_angles]
 

@@ -31,7 +31,7 @@ autd_arrangement = [
 
 # 既存のSTMパスのコード
 dev_radius = 24.0
-point_num = 7
+point_num = 6
 
 # ...既存のSTMパス生成コード...
 angles_fwd = [2.0 * np.pi * i / point_num for i in range(point_num)]

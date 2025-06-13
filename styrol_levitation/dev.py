@@ -25,13 +25,15 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
     angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
     # forward + reverse の 2 周分を連結
     angles = angles_fwd + angles_rev # angles = [0, 2pi/7, 4pi/7, 6pi/7, 8pi/7, 10pi/7, 12pi/7, 10pi/7, 8pi/7, 6pi/7, 4pi/7, 2pi/7]
-    #new_angles = angles[4:7] + angles[:4] + angles[::-1][9:] + angles[6:8] # new_angles = [8pi/7, 10pi/7, 12pi/7, 0, 2pi/7, 4pi/7, 6pi/7, 4pi/7, 2pi/7, 0, 12pi/7, 10pi/7]
+    # angles = [np.pi, 8 * np.pi / 6, 10 * np.pi / 6, 0, 2 * np.pi / 6, 4 * np.pi / 6, 2 * np.pi / 6, 0, 10 * np.pi / 6, 8 * np.pi / 6]
+    # angles = [8 * np.pi / 6, 10 * np.pi / 6, 0, 2 * np.pi / 6, 4 * np.pi / 6, np.pi, 4 * np.pi / 6, 2 * np.pi / 6, 0, 10 * np.pi / 6]
+
     # 円軌道上に焦点を配置するための時空間変調
     foci = (
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=80 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=100 * Hz).into_nearest()
 
 # 円軌道上の焦点をランダムな順序で出力する関数
 def stm_random(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
@@ -74,9 +76,9 @@ if __name__ == "__main__":
         # radius = 23.0 # 円の半径
 
         # 直径4.5cm球?のパラメータ(いまのところ)
-        m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
 
-        point_num = 7 # 円周上の点の数
+        point_num = 6 # 円周上の点の数
         radius = 24.0 # 円の半径
         x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
