@@ -34,7 +34,7 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=100 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=70 * Hz).into_nearest()
 
 # 時間経過に応じてC型パターンを切り替える関数
 def stm_graduate(center: np.ndarray, radius: float) -> FociSTM:
@@ -46,8 +46,8 @@ def stm_graduate(center: np.ndarray, radius: float) -> FociSTM:
 
     # 経過秒
     elapsed = time.time() - stm_graduate._start_time
-    pattern_duration = 10.0                              # [s]
-    pattern_index = int(elapsed // pattern_duration) % 6 # 0–5
+    pattern_duration = 7.0                              # [s]
+    pattern_index = int(elapsed // pattern_duration) % 8 # 0–7
 
     # 切り替わりを検出してログ
     if pattern_index != stm_graduate._last_index:
@@ -55,23 +55,34 @@ def stm_graduate(center: np.ndarray, radius: float) -> FociSTM:
               f"({int(elapsed)} 秒経過)")
         stm_graduate._last_index = pattern_index
 
+    # angles_patterns = [
+    #     [0, 1, 2, 3, 4, 5, 4, 3, 2, 1],
+    #     [1, 2, 3, 4, 5, 0, 5, 4, 3, 2],
+    #     [2, 3, 4, 5, 0, 1, 0, 5, 4, 3],
+    #     [3, 4, 5, 0, 1, 2, 1, 0, 5, 4],
+    #     [4, 5, 0, 1, 2, 3, 2, 1, 0, 5],
+    #     [5, 0, 1, 2, 3, 4, 3, 2, 1, 0],
+    # ]
+
     angles_patterns = [
-        [0, 1, 2, 3, 4, 5, 4, 3, 2, 1],
-        [1, 2, 3, 4, 5, 0, 5, 4, 3, 2],
-        [2, 3, 4, 5, 0, 1, 0, 5, 4, 3],
-        [3, 4, 5, 0, 1, 2, 1, 0, 5, 4],
-        [4, 5, 0, 1, 2, 3, 2, 1, 0, 5],
-        [5, 0, 1, 2, 3, 4, 3, 2, 1, 0],
+        [0, 1, 2, 3, 4, 5, 6, 7, 6, 5, 4, 3, 2, 1],
+        [1, 2, 3, 4, 5, 6, 7, 0, 7, 6, 5, 4, 3, 2],
+        [2, 3, 4, 5, 6, 7, 0, 1, 0, 7, 6, 5, 4, 3],
+        [3, 4, 5, 6, 7, 0, 1, 2, 1, 0, 7, 6, 5, 4],
+        [4, 5, 6, 7, 0, 1, 2, 3, 2, 1, 0, 7, 6, 5],
+        [5, 6, 7, 0, 1, 2, 3, 4, 3, 2 ,1 ,0, 7, 6],
+        [6, 7, 0, 1, 2, 3, 4, 5, 4, 3, 2, 1, 0, 7],
+        [7, 0, 1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1, 0],
     ]
 
-    current_angles = [k * np.pi / 3 for k in angles_patterns[pattern_index]]
+    current_angles = [k * np.pi / 4 for k in angles_patterns[pattern_index]]
 
     foci = [
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in current_angles
     ]
 
-    return FociSTM(foci=foci, config=100 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=70 * Hz).into_nearest()
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
@@ -101,7 +112,7 @@ if __name__ == "__main__":
         # 直径4.5cm球?のパラメータ(いまのところ)
         m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
 
-        point_num = 6 # 円周上の点の数
+        point_num = 8 # 円周上の点の数
         radius = 24.0 # 円の半径
         x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
@@ -152,7 +163,7 @@ if __name__ == "__main__":
             # 現在のパターンインデックスを取得（パターン変化検出のため）
             if hasattr(stm_graduate, "_start_time"):
                 elapsed = time.time() - stm_graduate._start_time
-                current_pattern_index = int(elapsed // 10.0) % 6
+                current_pattern_index = int(elapsed // 7.0) % 8
             else:
                 current_pattern_index = 0
             
