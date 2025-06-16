@@ -2,7 +2,7 @@ import os
 import time
 import numpy as np, os, keyboard
 from pyautd3 import (
-    AUTD3, Controller, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Silencer, Static,
+    AUTD3, Controller, FociSTM, Hz, Silencer, Static,
 )
 from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
 from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
@@ -46,7 +46,7 @@ def stm_graduate(center: np.ndarray, radius: float) -> FociSTM:
 
     # 経過秒
     elapsed = time.time() - stm_graduate._start_time
-    pattern_duration = 7.0                              # [s]
+    pattern_duration = 7.0 # [s]
     pattern_index = int(elapsed // pattern_duration) % 8 # 0–7
 
     # 切り替わりを検出してログ
@@ -93,8 +93,8 @@ def err_handler(slave: int, status: Status) -> None:
 if __name__ == "__main__":
     with Controller.open(
         autd_arrangement,
-        # Simulator("127.0.0.1:8080"), # シミュレータを使用する際
-        SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する際
+        # Simulator("127.0.0.1:8080"), # シミュレータを使用する
+        SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する
     ) as autd:
         firmware_version = autd.firmware_version()
         print(
@@ -109,7 +109,6 @@ if __name__ == "__main__":
         # m = Static(intensity=int(0xFF * 0.65)) # 振幅変調を行わず、常に同じ振幅を出力する
         # radius = 23.0 # 円の半径
 
-        # 直径4.5cm球?のパラメータ(いまのところ)
         m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 8 # 円周上の点の数
@@ -122,9 +121,9 @@ if __name__ == "__main__":
         step = 0.01 # 1回の操作で移動する距離
 
         # 傾き角度の初期化
-        current_tilt = 0.0  # 現在の傾き（ラジアン）
-        max_tilt = np.pi / 2  # 最大傾き（90度）
-        tilt_step = 0.001  # 1回あたりの傾き変化量（ラジアン）
+        # current_tilt = 0.0  # 現在の傾き（ラジアン）
+        # max_tilt = np.pi / 2  # 最大傾き（90度）
+        # tilt_step = 0.001  # 1回あたりの傾き変化量（ラジアン）
 
         # パターン変化の検出用変数
         last_pattern_index = -1
@@ -153,12 +152,12 @@ if __name__ == "__main__":
                 z = max(z - step, z_min)
 
             # 傾き方向の設定
-            if keyboard.is_pressed("t"):
-                # 最大傾きを超えない範囲で傾きを増加
-                current_tilt = min(current_tilt + tilt_step, max_tilt)
-            elif keyboard.is_pressed("r"):
-                # 最小傾きを超えない範囲で傾きを減少
-                current_tilt = max(current_tilt - tilt_step, -max_tilt)
+            # if keyboard.is_pressed("t"):
+            #     # 最大傾きを超えない範囲で傾きを増加
+            #     current_tilt = min(current_tilt + tilt_step, max_tilt)
+            # elif keyboard.is_pressed("r"):
+            #     # 最小傾きを超えない範囲で傾きを減少
+            #     current_tilt = max(current_tilt - tilt_step, -max_tilt)
             
             # 現在のパターンインデックスを取得（パターン変化検出のため）
             if hasattr(stm_graduate, "_start_time"):
@@ -167,9 +166,9 @@ if __name__ == "__main__":
             else:
                 current_pattern_index = 0
             
-            # キーボード操作、傾き変化、またはパターン変化があった場合にSTMを更新
+            # キーボード操作またはパターン変化があった場合にSTMを更新
             if (x != prev_x or y != prev_y or z != prev_z or 
-                keyboard.is_pressed("t") or keyboard.is_pressed("r") or 
+                #keyboard.is_pressed("t") or keyboard.is_pressed("r") or 
                 current_pattern_index != last_pattern_index):
                 
                 prev_x, prev_y, prev_z = x, y, z # 前回の座標を更新
@@ -196,7 +195,7 @@ if __name__ == "__main__":
                 stm = stm_graduate(center=center, radius=radius)
 
                 autd.send((m, stm))
-                print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm, 傾斜: {np.degrees(current_tilt):.1f}度")
+                print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm") # , 傾斜: {np.degrees(current_tilt):.1f}度")
 
             # # 毎ループでランダムなSTMパターンを生成
             # center = autd.center() + np.array([x, y, z])
