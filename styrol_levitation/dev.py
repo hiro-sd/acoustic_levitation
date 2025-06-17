@@ -34,7 +34,7 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=70 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=100 * Hz).into_nearest()
 
 # 時間経過に応じてC型パターンを切り替える関数
 def stm_graduate(center: np.ndarray, radius: float) -> FociSTM:
@@ -46,7 +46,7 @@ def stm_graduate(center: np.ndarray, radius: float) -> FociSTM:
 
     # 経過秒
     elapsed = time.time() - stm_graduate._start_time
-    pattern_duration = 7.0 # [s]
+    pattern_duration = 5.0 # [s]
     pattern_index = int(elapsed // pattern_duration) % 8 # 0–7
 
     # 切り替わりを検出してログ
@@ -162,7 +162,7 @@ if __name__ == "__main__":
             # 現在のパターンインデックスを取得（パターン変化検出のため）
             if hasattr(stm_graduate, "_start_time"):
                 elapsed = time.time() - stm_graduate._start_time
-                current_pattern_index = int(elapsed // 7.0) % 8
+                current_pattern_index = int(elapsed // 5.0) % 8
             else:
                 current_pattern_index = 0
             
@@ -193,6 +193,7 @@ if __name__ == "__main__":
                 # ).into_nearest()
 
                 stm = stm_graduate(center=center, radius=radius)
+                # stm = stm_alternately(center=center, radius=radius, point_num=point_num)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm") # , 傾斜: {np.degrees(current_tilt):.1f}度")

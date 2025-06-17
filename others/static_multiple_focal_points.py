@@ -37,7 +37,7 @@ if __name__ == "__main__":
         )
 
         autd.send(Silencer())
-        m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 8
         radius = 24.0 # 円の半径
