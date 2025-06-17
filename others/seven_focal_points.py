@@ -1,4 +1,4 @@
-import numpy as np, os, keyboard, time
+import numpy as np, os, keyboard
 from pyautd3 import (
     AUTD3, Controller, ControlPoint, ControlPoints, EmitIntensity, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Phase, Silencer, Static,
 )
@@ -37,31 +37,21 @@ if __name__ == "__main__":
         )
 
         autd.send(Silencer())
-        m = Static(intensity=0xFD) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅を出力する
 
-        point_num = 7
+        point_num = 8
         radius = 24.0 # 円の半径
         x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
         y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
         z_min, z_max = 200.0, 700.0 # 244.0, 642.0 # z座標の最小値と最大値
         prev_x, prev_y, prev_z = None, None, None # 前回のx,y,z座標を保存するための変数
-        step = 1.0 # 1回の操作で移動する距離
-        rotation = False # 回転フラグ
-        prev_rotation = None # 前回の回転フラグを保存するための変数
+        step = 0.01 # 1回の操作で移動する距離
 
         while True:
             if keyboard.is_pressed("esc"):
                 print("終了")
                 break
-
-            if keyboard.is_pressed("enter"):
-                rotation = not rotation # 回転フラグをトグル
-                if rotation:
-                    print("回転開始")
-                else:
-                    print("回転停止")
-                time.sleep(0.3) 
 
             # X方向への移動
             if keyboard.is_pressed("right"):
@@ -82,57 +72,25 @@ if __name__ == "__main__":
                 z = max(z - step, z_min)
 
             # キーボード操作があった場合に処理を実行
-            if (x != prev_x or y != prev_y or z != prev_z or rotation != prev_rotation):
+            if (x != prev_x or y != prev_y or z != prev_z):
                 prev_x, prev_y, prev_z = x, y, z # 前回の座標を更新
-                prev_rotation = rotation # 前回の回転フラグを更新
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
                 # GSPATで7焦点を作成する
-                if not rotation: # 静的な焦点
-                    points = [
-                        center + radius * np.array([np.cos(theta), np.sin(theta), 0.0])
-                        for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
-                    ] 
+                points = [
+                    center + radius * np.array([np.cos(theta), np.sin(theta), 0.0])
+                    for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
+                ] 
 
-                    g = GSPAT(
-                        foci= [(p, 5e5 * Pa) for p in points],
-                        option = GSPATOption(
-                            repeat = 100,
-                            constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
-                            ),
-                        backend = NalgebraBackend(),
-                        )
-                    
-                    data = (m, g)
-                else: # GSPATで生成した多焦点を回転させる
-                    gains = []
-                    thetas = [2.0 * np.pi * i / point_num for i in range(point_num)]
+                g = GSPAT(
+                    foci= [(p, 5e5 * Pa) for p in points],
+                    option = GSPATOption(
+                        repeat = 100,
+                        constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
+                        ),
+                    backend = NalgebraBackend(),
+                    )
 
-                    for theta in thetas:
-                        foci = [
-                            (center + radius * np.array([np.cos(theta + φ), np.sin(theta + φ), 0.0]), 5e3 * Pa) 
-                            for φ in thetas
-                        ]
-
-                        gains.append(
-                            GSPAT(
-                                foci = foci,
-                                option = GSPATOption(
-                                repeat = 50,
-                                constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
-                                ),
-                            backend = NalgebraBackend(),
-                            )
-                        )
-                    
-                    stm = GainSTM(
-                        gains = gains,
-                        config = 1 * Hz,
-                        option = GainSTMOption(mode=GainSTMMode.PhaseIntensityFull),
-                    ).into_nearest()
-
-                    data = (m, stm)
-
-                autd.send(data)
+                autd.send((m, g))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
