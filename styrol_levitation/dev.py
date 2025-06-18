@@ -36,7 +36,7 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles # angles_2
     )
-    return FociSTM(foci=foci, config=100 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=70 * Hz).into_nearest()
 
 # 時間経過に応じてC型パターンを切り替える関数
 def stm_graduate(center: np.ndarray, radius: float) -> FociSTM:
@@ -76,6 +76,21 @@ def stm_graduate(center: np.ndarray, radius: float) -> FociSTM:
         [6, 7, 0, 1, 2, 3, 4, 5, 4, 3, 2, 1, 0, 7],
         [7, 0, 1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1, 0],
     ]
+
+    # angles_patterns = [
+    #     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    #     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    #     [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    #     [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0],
+    #     [4, 5, 6, 7, 8, 9, 10, 11, 12, 0, 1],
+    #     [5, 6, 7, 8, 9, 10, 11, 12, 0, 1, 2],
+    #     [6, 7, 8, 9, 10, 11, 12, 0, 1, 2, 3],
+    #     [7, 8, 9, 10, 11, 12, 0, 1, 2, 3, 4],
+    #     [8, 9, 10, 11, 12, 0, 1, 2, 3, 4, 5],
+    #     [9, 10, 11, 12, 0, 1, 2, 3, 4, 5, 6],
+    #     [10, 11, 12, 0, 1, 2, 3, 4, 5, 6, 7],
+    #     [11, 12, 0, 1, 2, 3, 4, 5, 6, 7, 8],
+    # ]
 
     current_angles = [k * np.pi / 4 for k in angles_patterns[pattern_index]]
 
@@ -159,8 +174,8 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                # stm = stm_graduate(center=center, radius=radius)
-                stm = stm_alternately(center=center, radius=radius, point_num=point_num)
+                stm = stm_graduate(center=center, radius=radius)
+                # stm = stm_alternately(center=center, radius=radius, point_num=point_num)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
