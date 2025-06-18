@@ -36,7 +36,7 @@ for i, (x, y) in enumerate(dev_xy):
              ha='center', va='center', fontsize=10, fontweight='bold')
 
 plt.gca().set_aspect('equal', adjustable='box')
-plt.title('STM path (14points)') 
+plt.title('STM path (14 points)') 
 plt.xlabel('X [mm]')
 plt.ylabel('Y [mm]')
 plt.xlim(-30, 30)
