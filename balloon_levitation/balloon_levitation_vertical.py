@@ -85,7 +85,7 @@ if __name__ == "__main__":
                         center + radius * np.array([np.cos(theta), np.sin(theta), 0])
                         for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
                         ),
-                    config = 100 * Hz, # 100Hzで更新
+                    config = 70 * Hz, # 往復方式と条件を合わせるために70Hzで更新
                 ).into_nearest() # point_num = 40kHz/Nを満たすNが存在しない場合、エラーになる
 
                 autd.send((m, stm))

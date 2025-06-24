@@ -29,12 +29,12 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
     # forward + reverse の 2 周分を連結
     angles = angles_fwd + angles_rev
 
-    angles_2 = angles_fwd[:-1]
+    # angles_2 = angles_fwd[:-1] # 逆回転のSTM
 
     # 円軌道上に焦点を配置するための時空間変調
     foci = (
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
-        for a in angles # angles_2
+        for a in angles
     )
     return FociSTM(foci=foci, config=70 * Hz).into_nearest()
 
@@ -174,8 +174,8 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                stm = stm_graduate(center=center, radius=radius)
-                # stm = stm_alternately(center=center, radius=radius, point_num=point_num)
+                stm = stm_alternately(center=center, radius=radius, point_num=point_num)
+                # stm = stm_graduate(center=center, radius=radius)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
