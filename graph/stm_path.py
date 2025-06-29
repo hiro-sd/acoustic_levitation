@@ -94,7 +94,7 @@ for i, (x, y) in enumerate(balloon_xy):
     plt.annotate('', xy=(xn, yn), xytext=(x, y),
                  arrowprops=dict(arrowstyle='->'))
     # 番号ラベル
-    if i < 7:  # 1-8: 内側へ
+    if i < 8:  # 1-8: 内側へ
         label_pos = (0.85 * x, 0.85 * y)
     plt.text(label_pos[0], label_pos[1], str(i + 1),
              ha='center', va='center', fontsize=10, fontweight='bold')
@@ -107,9 +107,27 @@ plt.xlim(-30, 30)
 plt.ylim(-30, 30)
 plt.grid(True)
 
-balloon_point_num = 8
-balloon_angles = [2.0 * np.pi * i / balloon_point_num for i in range(balloon_point_num)]
-balloon_xy = [(balloon_radius * np.cos(a), balloon_radius * np.sin(a)) for a in balloon_angles]
+plt.figure()
+# 円形の線を描画（緑色）
+circle = plt.Circle((0, 0), balloon_radius, fill=False, color='grey', linewidth=3)
+plt.gca().add_patch(circle)
+
+# 点とラベルを描画
+for i, (x, y) in enumerate(balloon_xy):
+    plt.plot(x, y, marker='o', color='red', markersize=15)
+    # 番号ラベル
+    if i < 8:  # 1-8: 内側へ
+        label_pos = (0.85 * x, 0.85 * y)
+    plt.text(label_pos[0], label_pos[1], str(i + 1),
+             ha='center', va='center', fontsize=15, fontweight='bold')
+    
+plt.gca().set_aspect('equal', adjustable='box')
+# plt.title('STM path (8 points)')
+plt.xlabel('X [mm]')
+plt.ylabel('Y [mm]')
+plt.xlim(-30, 30)
+plt.ylim(-30, 30)
+plt.grid(True)
 
 plt.figure()
 # 1-7点目のみプロット（8点目を除外してC型に）
