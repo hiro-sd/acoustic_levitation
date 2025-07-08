@@ -1,130 +1,100 @@
 import cv2
 import numpy as np
-from tqdm import tqdm
-from ximea import xiapi
-import yaml
-from scipy.spatial.transform import Rotation as R
+import os
+import glob
 
-# ---------- ユーティリティ ----------
-def load_camera_params(yaml_path: str):
-    with open(yaml_path, 'r') as f:
-        data = yaml.safe_load(f)
-    return (np.array(data['camera_matrix']),
-            np.array(data['dist_coeffs']))
+# ball_spinフォルダのパス
+folder_path = "/Users/yoshidahiroto/Downloads/修士関連/acoustic_levitation/rotation_measurement/ball_spin"
 
-def detect_markers_bgr(frame_bgr, hsv_ranges):
-    """HSB 色閾値でマーカー中心を抽出（複数色対応）"""
-    hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
-    centers = []
-    for (lower, upper) in hsv_ranges:
-        mask = cv2.inRange(hsv, lower, upper)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,
-                                cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(5,5)))
-        cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
-                                   cv2.CHAIN_APPROX_SIMPLE)
-        for c in cnts:
-            if cv2.contourArea(c) < 30:   # ノイズ除去
-                continue
-            M = cv2.moments(c)
-            cx = int(M["m10"]/M["m00"]); cy = int(M["m01"]/M["m00"])
-            centers.append((cx, cy))
-    return centers          # [(x,y),...]
+# 出力フォルダを作成
+output_folder = os.path.join(os.path.dirname(folder_path), "detected_circles")
+os.makedirs(output_folder, exist_ok=True)
 
-def solve_orientation(centers_img, centers_obj, K, dist):
-    """対応点 ≥3 で姿勢推定 (PnP) → 回転行列"""
-    ok, rvec, tvec = cv2.solvePnP(centers_obj, centers_img,
-                                  K, dist, flags=cv2.SOLVEPNP_ITERATIVE)
-    if not ok:
-        return None
-    return cv2.Rodrigues(rvec)[0]     # 3×3 回転行列
+# サポートする画像形式
+image_extensions = ['*.jpg']
 
-# ---------- キャプチャ/解析 ----------
-def main():
-    # ---- 撮影条件 ----
-    N_FRAMES   = 3000           # 6 秒間
-    OUTPUT_AVI = 'capture.avi'
-    CAM_YAML   = 'camera_params.yaml'
+# フォルダ内の全ての画像ファイルを取得
+image_files = []
+for ext in image_extensions:
+    image_files.extend(glob.glob(os.path.join(folder_path, ext)))
+    image_files.extend(glob.glob(os.path.join(folder_path, ext.upper())))
 
-    # 3D 座標 (球半径 r=1; 単位球で定義し実スケール不要)
-    obj_pts = np.array([
-        [ 0.0,  0.0,  3.8],     # 北極
-        [ 0.0,  3.8,  0.0],     # 赤道
-        [ 3.8,  0.0,  0.0],     # 赤道
-    ], dtype=np.float32)
+print(f"Found {len(image_files)} images in the folder.")
 
-    # ---- マーカー色範囲 (要調整・複数可) ----
-    red  = (np.array([0,160,120]), np.array([10,255,255]))
-    blue = (np.array([100,100,100]), np.array([130,255,255]))
-    hsv_ranges = [red, blue]
+for i, image_path in enumerate(image_files):
+    print(f"Processing {i+1}/{len(image_files)}: {os.path.basename(image_path)}")
+    
+    # 画像を読み込み
+    img = cv2.imread(image_path)
+    
+    if img is None:
+        print(f"  Error: Could not load {image_path}")
+        continue
+    
+    # 画像サイズを取得
+    h, w = img.shape[:2]
+    
+    # 中央部をクロップ（元画像の50%の領域）
+    crop_ratio = 0.5
+    crop_w = int(w * crop_ratio)
+    crop_h = int(h * crop_ratio)
+    start_x = (w - crop_w) // 2
+    start_y = (h - crop_h) // 2
+    end_x = start_x + crop_w
+    end_y = start_y + crop_h
+    
+    # 中央部のみを切り出し
+    cropped_img = img[start_y:end_y, start_x:end_x]
+    gray = cv2.cvtColor(cropped_img, cv2.COLOR_BGR2GRAY)
+    
+    # 前処理でノイズ除去と円検出の向上
+    gray = cv2.GaussianBlur(gray, (9, 9), 2)
+    
+    # 複数のパラメータ設定で円検出を試行
+    circles = None
+    param_sets = [
+        # (param1, param2, minRadius, maxRadius)
+        (100, 60, 0, 0),      # 元の設定
+        (80, 50, 0, 0),       # より緩い設定
+        (120, 70, 10, 200),   # より厳しい設定 + サイズ制限
+        (60, 40, 0, 0),       # 最も緩い設定
+    ]
+    
+    for param1, param2, minR, maxR in param_sets:
+        circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1, minDist=20, 
+                                  param1=param1, param2=param2, 
+                                  minRadius=minR, maxRadius=maxR)
+        if circles is not None:
+            print(f"  Found circles with params: param1={param1}, param2={param2}")
+            break
+    
+    if circles is None:
+        print(f"  Warning: No circles detected in {os.path.basename(image_path)}")
+        # 検出できなかった画像もコピーして確認用に保存
+        output_filename = f"no_detection_{os.path.basename(image_path)}"
+        output_path = os.path.join(output_folder, output_filename)
+        cv2.imwrite(output_path, img)
+        continue
+    
+    circles_found = 0
+    circles = np.uint16(np.around(circles))
+    circles_found = len(circles[0])
+    
+    for circle in circles[0, :]:
+        # クロップした座標を元画像の座標に変換
+        original_x = circle[0] + start_x
+        original_y = circle[1] + start_y
+        
+        # 元画像に円周を描画する
+        cv2.circle(img, (original_x, original_y), circle[2], (0, 165, 255), 2)
+        # 元画像に中心点を描画する
+        # cv2.circle(img, (original_x, original_y), 2, (0, 0, 255), 3)
+    
+    print(f"  Detected {circles_found} circles")
+    
+    # 結果を保存
+    output_filename = f"detected_{os.path.basename(image_path)}"
+    output_path = os.path.join(output_folder, output_filename)
+    cv2.imwrite(output_path, img)
 
-    # ---- カメラ初期化 ----
-    cam = xiapi.Camera()
-    cam.open_device()
-    cam.set_param('width',  648)
-    cam.set_param('height', 488)
-    cam.set_param('exposure', 1000)       # µs
-    cam.set_param('framerate', 500.0)
-    cam.set_param('gain', 0.0)
-    cam.start_acquisition()
-
-    img = xiapi.Image()
-
-    # ---- 動画保存 (MJPG) ----
-    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-    vw = cv2.VideoWriter(OUTPUT_AVI, fourcc, 500,
-                         (648,488), True)
-
-    K, dist = load_camera_params(CAM_YAML)
-    rotations = []
-    times     = []
-
-    print('Capturing…')
-    for i in tqdm(range(N_FRAMES)):
-        cam.get_image(img)
-        raw = img.get_image_data_numpy()
-        bgr = cv2.cvtColor(raw, cv2.COLOR_BayerBG2BGR)
-
-        # マーカー検出
-        centers = detect_markers_bgr(bgr, hsv_ranges)
-
-        # PnP (≥3 点で実行)
-        if len(centers) >= len(obj_pts):
-            img_pts = np.array(centers[:len(obj_pts)], dtype=np.float32)
-            Rmat = solve_orientation(img_pts, obj_pts, K, dist)
-            if Rmat is not None:
-                rotations.append(R.from_matrix(Rmat))
-                times.append(img.timestamp / 1e6)   # µs → 秒
-
-        vw.write(bgr)
-
-    cam.stop_acquisition()
-    cam.close_device()
-    vw.release()
-    print('Capture done.')
-
-    # ---- 角速度計算 ----
-    if len(rotations) < 2:
-        print('十分な姿勢データが取れていません。')
-        return
-
-    ang_speeds = []
-    axes_world = []
-    for r1, r2, t1, t2 in zip(rotations[:-1], rotations[1:],
-                              times[:-1], times[1:]):
-        dR = r2 * r1.inv()              # 差分回転
-        angle = dR.magnitude()
-        axis  = dR.as_rotvec() / angle  # 正規化回転軸
-        ang_speeds.append(angle / (t2 - t1))  # rad/s
-        axes_world.append(axis)
-
-    rpm = np.mean(ang_speeds) * 60 / (2*np.pi)
-    print(f'平均角速度: {rpm:.1f} rpm  '
-          f'({np.mean(ang_speeds):.2f} rad/s)')
-
-    # 主回転軸（平均）
-    axis_mean = np.mean(axes_world, axis=0)
-    axis_mean /= np.linalg.norm(axis_mean)
-    print(f'推定回転軸 (カメラ座標系): {axis_mean}')
-
-if __name__ == '__main__':
-    main()
+print(f"Processing complete. Results saved to: {output_folder}")
