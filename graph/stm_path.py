@@ -8,7 +8,57 @@ radius_fwd = 18.5  # 往路の円弧半径
 radius_point = 19.0 # 点の半径
 radius_rev = 19.5  # 復路の円弧半径
 angles = [2 * np.pi * i / N for i in range(N)]
+balloon_xy = [(radius_point * np.cos(a), radius_point * np.sin(a)) for a in angles]
 
+# Figure1
+plt.figure()
+for i, (x, y) in enumerate(balloon_xy):
+    plt.plot(x, y, marker='o', color='grey')
+    xn, yn = balloon_xy[(i + 1) % len(balloon_xy)]  # 全周を矢印で接続
+    plt.annotate('', xy=(xn, yn), xytext=(x, y),
+                 arrowprops=dict(arrowstyle='->'))
+    # 番号ラベル
+    if i < 8:  # 1-8: 内側へ
+        label_pos = (0.85 * x, 0.85 * y)
+    plt.text(label_pos[0], label_pos[1], str(i + 1),
+             ha='center', va='center', fontsize=10, fontweight='bold')
+    
+plt.gca().set_aspect('equal', adjustable='box')
+plt.title('STM path (8 points)')
+plt.xlabel('X [mm]')
+plt.ylabel('Y [mm]')
+plt.xlim(-25, 25)
+plt.ylim(-25, 25)
+plt.grid(True)
+
+# Figure2
+plt.figure()
+# 1-7点目のみプロット（8点目を除外してC型に）
+for i in range(7):
+    x, y = balloon_xy[i]
+    plt.plot(x, y, marker='o', color='grey')
+    if i < 6:
+        xn, yn = balloon_xy[i + 1]
+        plt.annotate('', xy=(xn, yn), xytext=(x, y),
+                     arrowprops=dict(arrowstyle='->'))
+    # 番号ラベル
+    label_pos = (0.85 * x, 0.85 * y)
+    plt.text(label_pos[0], label_pos[1], str(i + 1),
+             ha='center', va='center', fontsize=10, fontweight='bold')
+
+# 7点目から1点目への矢印を追加
+plt.annotate('', xy=(balloon_xy[0]), xytext=(balloon_xy[6]),
+             arrowprops=dict(arrowstyle='->'))
+
+plt.gca().set_aspect('equal', adjustable='box')
+plt.title('STM path (7 points)')
+plt.xlabel('X [mm]')
+plt.ylabel('Y [mm]')
+plt.xlim(-25, 25)
+plt.ylim(-25, 25)
+plt.grid(True)
+
+# Figure3
 fig, ax = plt.subplots(figsize=(6,6))
 ax.set_aspect('equal')
 ax.set_xlim(-25, 25)
@@ -73,31 +123,7 @@ dx = 0.5 * radius_rev * np.sin(mid_angle)
 dy = -0.5 * radius_rev * np.cos(mid_angle)
 ax.arrow(x, y, dx*0.1, dy*0.1, head_width=1.2, head_length=2, fc='grey', ec='grey')
 
-balloon_radius = 19.0
-balloon_point_num = 8
-balloon_angles = [2.0 * np.pi * i / balloon_point_num for i in range(balloon_point_num)]
-balloon_xy = [(balloon_radius * np.cos(a), balloon_radius * np.sin(a)) for a in balloon_angles]
-
-plt.figure()
-for i, (x, y) in enumerate(balloon_xy):
-    plt.plot(x, y, marker='o', color='grey')
-    xn, yn = balloon_xy[(i + 1) % len(balloon_xy)]  # 全周を矢印で接続
-    plt.annotate('', xy=(xn, yn), xytext=(x, y),
-                 arrowprops=dict(arrowstyle='->'))
-    # 番号ラベル
-    if i < 8:  # 1-8: 内側へ
-        label_pos = (0.85 * x, 0.85 * y)
-    plt.text(label_pos[0], label_pos[1], str(i + 1),
-             ha='center', va='center', fontsize=10, fontweight='bold')
-    
-plt.gca().set_aspect('equal', adjustable='box')
-plt.title('STM path (8 points)')
-plt.xlabel('X [mm]')
-plt.ylabel('Y [mm]')
-plt.xlim(-25, 25)
-plt.ylim(-25, 25)
-plt.grid(True)
-
+# Figure4
 fig, ax = plt.subplots(figsize=(6,6))
 ax.set_aspect('equal')
 ax.set_xlim(-25, 25)
@@ -117,14 +143,14 @@ for i, a in enumerate(angles):
 for i in range(N-1):
     theta1 = np.rad2deg(angles[i])
     theta2 = np.rad2deg(angles[i+1])
-    arc = Arc((0,0), 2*balloon_radius, 2*balloon_radius, theta1=theta1, theta2=theta2, color='grey', linewidth=3)
+    arc = Arc((0,0), 2*radius_point, 2*radius_point, theta1=theta1, theta2=theta2, color='grey', linewidth=3)
     ax.add_patch(arc)
     # 矢印
     mid_angle = np.deg2rad((theta1 + theta2) / 2)
-    x = balloon_radius * np.cos(mid_angle)
-    y = balloon_radius * np.sin(mid_angle)
-    dx = -0.5 * balloon_radius * np.sin(mid_angle)
-    dy = 0.5 * balloon_radius * np.cos(mid_angle)
+    x = radius_point * np.cos(mid_angle)
+    y = radius_point * np.sin(mid_angle)
+    dx = -0.5 * radius_point * np.sin(mid_angle)
+    dy = 0.5 * radius_point * np.cos(mid_angle)
     ax.arrow(x, y, dx*0.1, dy*0.1, head_width=1.2, head_length=2, fc='grey', ec='grey')
 
 # 8→1の円弧と矢印を追加
@@ -133,45 +159,19 @@ theta2 = np.rad2deg(angles[0])    # 1番の角度
 # 8番から1番への角度差が大きい場合の処理
 if theta1 - theta2 > 180:
     theta2 += 360
-arc = Arc((0,0), 2*balloon_radius, 2*balloon_radius, theta1=theta1, theta2=theta2, color='grey', linewidth=3)
+arc = Arc((0,0), 2*radius_point, 2*radius_point, theta1=theta1, theta2=theta2, color='grey', linewidth=3)
 ax.add_patch(arc)
 # 矢印の位置を修正
 mid_angle = angles[N-1] + (2*np.pi - (angles[N-1] - angles[0])) / 2
 if mid_angle > 2*np.pi:
     mid_angle -= 2*np.pi
-x = balloon_radius * np.cos(mid_angle)
-y = balloon_radius * np.sin(mid_angle)
-dx = -0.5 * balloon_radius * np.sin(mid_angle)
-dy = 0.5 * balloon_radius * np.cos(mid_angle)
+x = radius_point * np.cos(mid_angle)
+y = radius_point * np.sin(mid_angle)
+dx = -0.5 * radius_point * np.sin(mid_angle)
+dy = 0.5 * radius_point * np.cos(mid_angle)
 ax.arrow(x, y, dx*0.1, dy*0.1, head_width=1.2, head_length=2, fc='grey', ec='grey')
 
 plt.gca().set_aspect('equal', adjustable='box')
-plt.xlabel('X [mm]')
-plt.ylabel('Y [mm]')
-plt.xlim(-25, 25)
-plt.ylim(-25, 25)
-plt.grid(True)
-
-plt.figure()
-# 1-7点目のみプロット（8点目を除外してC型に）
-for i in range(7):
-    x, y = balloon_xy[i]
-    plt.plot(x, y, marker='o', color='grey')
-    if i < 6:
-        xn, yn = balloon_xy[i + 1]
-        plt.annotate('', xy=(xn, yn), xytext=(x, y),
-                     arrowprops=dict(arrowstyle='->'))
-    # 番号ラベル
-    label_pos = (0.85 * x, 0.85 * y)
-    plt.text(label_pos[0], label_pos[1], str(i + 1),
-             ha='center', va='center', fontsize=10, fontweight='bold')
-
-# 7点目から1点目への矢印を追加
-plt.annotate('', xy=(balloon_xy[0]), xytext=(balloon_xy[6]),
-             arrowprops=dict(arrowstyle='->'))
-
-plt.gca().set_aspect('equal', adjustable='box')
-plt.title('STM path (7 points)')
 plt.xlabel('X [mm]')
 plt.ylabel('Y [mm]')
 plt.xlim(-25, 25)
