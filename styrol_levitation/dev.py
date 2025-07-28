@@ -39,7 +39,7 @@ def stm_ouhuku_modified(center: np.ndarray, radius: float, point_num: int) -> Fo
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=10 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=9 * Hz).into_nearest()
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
