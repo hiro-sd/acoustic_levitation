@@ -23,14 +23,11 @@ autd_arrangement = [
 # FociSTMで往復軌道を形成するための関数
 def stm_ouhuku(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
     # 正方向角リスト
-    # angles_fwd = [2.0 * np.pi * i / point_num for i in range(point_num)]
     angles_fwd = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)] # 穴の位置をずらすためにπ/8を加える
     # 逆方向角リスト
     angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
     # forward + reverse の 2 周分を連結
     angles = angles_fwd + angles_rev
-
-    # angles_2 = angles_fwd[:-1] # 逆回転のSTM
 
     # 円軌道上に焦点を配置するための時空間変調
     foci = (
