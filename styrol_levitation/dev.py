@@ -48,7 +48,7 @@ def stm_dev(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=17 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=18 * Hz).into_nearest()
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
