@@ -33,14 +33,22 @@ def stm_dev(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
     angles_opposite_rev = angles_opposite_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
     angles_opposite = angles_opposite_fwd + angles_opposite_rev
 
-    angles = angles_basic + angles_opposite # 対向する4点を追加
+    angles_vertical_fwd = angles_fwd[2:] + angles_fwd[:2] # 前半の2点を後半に移動
+    angles_vertical_rev = angles_vertical_fwd[::-1][1:-1]
+    angles_vertical = angles_vertical_fwd + angles_vertical_rev
+
+    angles_vertical_opposite_fwd = angles_vertical_fwd[4:] + angles_vertical_fwd[:4]
+    angles_vertical_opposite_rev = angles_vertical_opposite_fwd[::-1][1:-1]
+    angles_vertical_opposite = angles_vertical_opposite_fwd + angles_vertical_opposite_rev
+
+    angles = angles_basic + angles_opposite + angles_vertical + angles_vertical_opposite
 
     # 円軌道上に焦点を配置するための時空間変調
     foci = (
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=35 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=17 * Hz).into_nearest()
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
