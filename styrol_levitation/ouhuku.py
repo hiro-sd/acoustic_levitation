@@ -59,7 +59,7 @@ def stm_ouhuku_modified(center: np.ndarray, radius: float, point_num: int) -> Fo
     return FociSTM(foci=foci, config=9 * Hz).into_nearest()
 
 # 対向する4点が弱くなる往復軌道を形成するための関数
-def stm_dev(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
+def stm_balance(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
     # 正方向角リスト
     angles_fwd = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)] # 穴の位置をずらすためにπ/8を加える
     # 逆方向角リスト
