@@ -98,7 +98,7 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                stm = stm_random(center=center, radius=radius, point_num=point_num)
+                stm = stm_dev(center=center, radius=radius, point_num=point_num)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
