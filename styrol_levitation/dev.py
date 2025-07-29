@@ -8,7 +8,7 @@ from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するた�
 from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
 from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
 
-# 往復軌道の欠けのある部分を高速で回す
+# 色々試すためのファイル
 
 # AUTDの配置
 autd_arrangement = [
@@ -20,26 +20,21 @@ autd_arrangement = [
     AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
     ]
 
-def stm_ouhuku_modified(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
+def stm_dev(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
     # 正方向角リスト
     angles_fwd = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)] # 穴の位置をずらすためにπ/8を加える
     # 逆方向角リスト
-    angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
-    angles = []
-
-    for _ in range(point_num):
-        tmp = []
-        tmp = angles_fwd + angles_rev # forward + reverseの2周分を連結
-        angles += tmp
-        angles_fwd = angles_fwd[1:] + angles_fwd[:1] # 1つずらす
-        angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
+    angles_rev = angles_fwd[::-1][1:3] + angles_fwd[::-1][5:-1] # 対向する4点が弱くなる
+    # angles_rev = angles_fwd[::-1][0:3] + angles_fwd[::-1][4:-1] # 対向する2点が弱くなる
+    # forward + reverse の 2 周分を連結
+    angles = angles_fwd + angles_rev
 
     # 円軌道上に焦点を配置するための時空間変調
     foci = (
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=9 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=80 * Hz).into_nearest()
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
@@ -96,13 +91,14 @@ if __name__ == "__main__":
             elif keyboard.is_pressed("d"):
                 z = max(z - step, z_min)
             
-            # キーボード操作があった場合にSTMを更新
+            # キーボード操作またはパターン変化があった場合にSTMを更新
             if (x != prev_x or y != prev_y or z != prev_z):
 
                 prev_x, prev_y, prev_z = x, y, z # 前回の座標を更新
+
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                stm = stm_ouhuku_modified(center=center, radius=radius, point_num=point_num)
+                stm = stm_random(center=center, radius=radius, point_num=point_num)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")

@@ -36,6 +36,28 @@ def stm_ouhuku(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
     )
     return FociSTM(foci=foci, config=70 * Hz).into_nearest()
 
+# 往復軌道を高速で回すための関数
+def stm_ouhuku_modified(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
+    # 正方向角リスト
+    angles_fwd = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)] # 穴の位置をずらすためにπ/8を加える
+    # 逆方向角リスト
+    angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
+    angles = []
+
+    for _ in range(point_num):
+        tmp = []
+        tmp = angles_fwd + angles_rev # forward + reverseの2周分を連結
+        angles += tmp
+        angles_fwd = angles_fwd[1:] + angles_fwd[:1] # 1つずらす
+        angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
+
+    # 円軌道上に焦点を配置するための時空間変調
+    foci = (
+        center + radius * np.array([np.cos(a), np.sin(a), 0.0])
+        for a in angles
+    )
+    return FociSTM(foci=foci, config=9 * Hz).into_nearest()
+
 # 時間経過に応じてC型パターンを切り替える関数
 def stm_graduate(center: np.ndarray, radius: float) -> FociSTM:
 
@@ -173,7 +195,6 @@ if __name__ == "__main__":
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
                 stm = stm_ouhuku(center=center, radius=radius, point_num=point_num)
-                # stm = stm_graduate(center=center, radius=radius)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
