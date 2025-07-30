@@ -1,5 +1,4 @@
 import os
-import time
 import numpy as np, os, keyboard
 from pyautd3 import (
     AUTD3, Controller, FociSTM, Hz, Silencer, Static,
@@ -8,7 +7,7 @@ from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するた�
 from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
 from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
 
-# 往復軌道音場を形成するためのファイル
+# いろいろ試すためのファイル
 
 # AUTDの配置
 autd_arrangement = [
@@ -24,18 +23,26 @@ autd_arrangement = [
 def stm_dev(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
     # 正方向角リスト
     angles_fwd = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)] # 穴の位置をずらすためにπ/8を加える
-    angles_fwd += angles_fwd[1:-1]
+    angles_basic = angles_fwd + angles_fwd[1:-1]
     # 逆方向角リスト
-    angles_rev = angles_fwd[::-1]
-    # forward + reverse の 2 周分を連結
-    angles = (angles_fwd * 35) + (angles_rev * 35)
+    angles_rev = angles_fwd[4:] + angles_fwd[:4]
+    angles_opposite = angles_rev + angles_rev[1:-1]
 
-    # 円軌道上に焦点を配置するための時空間変調
+    angles = []
+    for _ in range(point_num):
+        tmp = []
+        tmp =(angles_basic) + (angles_opposite) # forward + reverseの2周分を連結
+        angles += tmp
+        angles_fwd = angles_fwd[1:] + angles_fwd[:1] # 1つずらす
+        angles_basic = angles_fwd + angles_fwd[1:-1]
+        angles_rev = angles_fwd[4:] + angles_fwd[:4]
+        angles_opposite = angles_rev + angles_rev[1:-1]
+    # 円軌道上に焦点を配置する
     foci = (
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=1 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=4 * Hz).into_nearest()
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
