@@ -24,31 +24,18 @@ autd_arrangement = [
 def stm_dev(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
     # 正方向角リスト
     angles_fwd = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)] # 穴の位置をずらすためにπ/8を加える
+    angles_fwd += angles_fwd[1:-1]
     # 逆方向角リスト
-    angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
+    angles_rev = angles_fwd[::-1]
     # forward + reverse の 2 周分を連結
-    angles_basic = angles_fwd + angles_rev
-
-    angles_opposite_fwd = angles_fwd[4:] + angles_fwd[:4] # 前半の4点を後半に移動
-    angles_opposite_rev = angles_opposite_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
-    angles_opposite = angles_opposite_fwd + angles_opposite_rev
-
-    angles_vertical_fwd = angles_fwd[2:] + angles_fwd[:2] # 前半の2点を後半に移動
-    angles_vertical_rev = angles_vertical_fwd[::-1][1:-1]
-    angles_vertical = angles_vertical_fwd + angles_vertical_rev
-
-    angles_vertical_opposite_fwd = angles_vertical_fwd[4:] + angles_vertical_fwd[:4]
-    angles_vertical_opposite_rev = angles_vertical_opposite_fwd[::-1][1:-1]
-    angles_vertical_opposite = angles_vertical_opposite_fwd + angles_vertical_opposite_rev
-
-    angles = angles_basic + angles_opposite + angles_vertical + angles_vertical_opposite
+    angles = (angles_fwd * 35) + (angles_rev * 35)
 
     # 円軌道上に焦点を配置するための時空間変調
     foci = (
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=17 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=1 * Hz).into_nearest()
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
