@@ -1,8 +1,9 @@
 import os
 import numpy as np, os, keyboard
 from pyautd3 import (
-    AUTD3, Controller, FociSTM, Hz, Silencer, Static,
+    AUTD3, Controller, FociSTM, Hz, Silencer, Static, GainSTM, GainSTMMode, GainSTMOption, EmitIntensity
 )
+from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, NalgebraBackend, Pa
 from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
 from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
 from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
@@ -43,6 +44,60 @@ def stm_dev(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
         for a in angles
     )
     return FociSTM(foci=foci, config=4 * Hz).into_nearest()
+
+# 静的8焦点を生成する関数
+def multi_focal_points(center, radius, point_num) -> GSPAT:
+    angles = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)]
+    foci = []
+    for angle in angles:
+        p = center + radius * np.array([np.cos(angle), np.sin(angle), 0.0])
+        foci.append((p, 5e4 * Pa))
+    return GSPAT(
+        foci=foci,
+        option=GSPATOption(
+                repeat=100,
+                constraint=EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
+            ),
+            backend=NalgebraBackend(),
+        )
+
+# ２つの往復軌道を作成する関数
+# GSPATで点1と点5に焦点を配置し、それらをGainSTMで半周ずつ回す
+def stm_dev2(center: np.ndarray, radius: float, point_num: int) -> GainSTM:
+    gains = [],
+    j = 1,
+    k = 1
+    for i in range(point_num-2):
+        angles = [np.pi/point_num + 2.0 * np.pi * i / point_num for i in range(point_num)]
+        if i < point_num // 2:
+            p1 = center + radius * np.array([np.cos(angles[i]), np.sin(angles[i]), 0.0])
+            p2 = center + radius * np.array([np.cos(angles[i+(point_num//2)]), np.sin(angles[i+(point_num//2)]), 0.0])
+        else:
+            p1 = center + radius * np.array([np.cos(angles[i-(j*2)]), np.sin(angles[i-(j*2)]), 0.0])
+            p2 = center + radius * np.array([np.cos(angles[i+(k*2)]), np.sin(angles[i+(k*2)]), 0.0])
+            j += 1
+            k -= 1
+
+        focal_points = GSPAT(
+            foci=[
+                (p1, 5e4 * Pa),
+                (p2, 5e4 * Pa),
+            ],
+            option=GSPATOption(
+                repeat=100,
+                constraint=EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
+            ),
+            backend=NalgebraBackend(),
+        )
+        gains.append(focal_points)
+
+    return GainSTM( # GainSTMでGSPATで作成した2焦点を回す
+        gains,
+        config=100 * Hz,
+        option = GainSTMOption(
+                        mode = GainSTMMode.PhaseIntensityFull,
+                    ),
+    ).into_nearest()
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
@@ -106,7 +161,8 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                stm = stm_dev(center=center, radius=radius, point_num=point_num)
+                g = multi_focal_points(center=center, radius=radius, point_num=point_num)
+                stm = stm_dev2(center=center, radius=radius, point_num=point_num)
 
-                autd.send((m, stm))
+                autd.send((m, g))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
