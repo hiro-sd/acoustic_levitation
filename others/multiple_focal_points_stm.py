@@ -48,7 +48,7 @@ def make_gspat_gain(center, theta, radius):
     p2 = center + radius * np.array([np.cos(theta + np.pi), np.sin(theta + np.pi), 0.0])
     return GSPAT(
         foci=
-            [(p1, 5e4 * Pa), (p2, 5e4 * Pa)],
+            [(p1, 5e5 * Pa), (p2, 5e5 * Pa)],
             option = GSPATOption(
                 repeat = 100,
                 constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
@@ -70,10 +70,10 @@ if __name__ == "__main__":
         )
 
         autd.send(Silencer())
-        m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=int(0xFF*0.8)) # 振幅変調を行わず、常に同じ振幅を出力する
 
-        point_num = 7 # 円周上の点の数
-        radius = 45.0 # 円の半径
+        point_num = 8 # 円周上の点の数
+        radius = 19.0 # 円の半径
         x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
         y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
@@ -115,13 +115,13 @@ if __name__ == "__main__":
 
                 # GSPATで多焦点を作成する場合
                 gains = [
-                    make_gspat_gain(center, 2.0 * np.pi * i / point_num, radius)
+                    make_gspat_gain(center, np.pi/8 + 2.0 * np.pi * i / point_num, radius)
                     for i in range(point_num)
                 ]
 
                 stm = GainSTM(
                     gains,
-                    config = 100 * Hz,
+                    config = 120 * Hz,
                     option = GainSTMOption(
                         mode = GainSTMMode.PhaseIntensityFull,
                     ),

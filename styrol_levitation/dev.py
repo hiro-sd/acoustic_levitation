@@ -97,7 +97,7 @@ def stm_dev2(center: np.ndarray, radius: float, point_num: int) -> GainSTM:
             gains.append(focal_points)
         
         # 逆方向の半周分の点を生成
-        for step in range(point_num // 2 - 1, 0, -1):
+        for step in range(point_num // 2 - 2, 0, -1):
             idx1 = step
             idx2 = (step + point_num // 2) % point_num
             
@@ -118,7 +118,7 @@ def stm_dev2(center: np.ndarray, radius: float, point_num: int) -> GainSTM:
             gains.append(focal_points)
     return GainSTM(
         gains,
-        config=18 * Hz,
+        config=21 * Hz,
         option = GainSTMOption(
                         mode = GainSTMMode.PhaseIntensityFull,
                     ),
@@ -145,7 +145,7 @@ if __name__ == "__main__":
 
         autd.send(Silencer())
 
-        m = Static(intensity=int(0xFF * 0.725)) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=int(0xFF * 0.7)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 8 # 円周上の点の数
         radius = 19.0 # 円の半径
