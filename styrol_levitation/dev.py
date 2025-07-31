@@ -64,36 +64,61 @@ def multi_focal_points(center, radius, point_num) -> GSPAT:
 # ２つの往復軌道を作成する関数
 # GSPATで点1と点5に焦点を配置し、それらをGainSTMで半周ずつ回す
 def stm_dev2(center: np.ndarray, radius: float, point_num: int) -> GainSTM:
-    gains = [],
-    j = 1,
-    k = 1
-    for i in range(point_num-2):
-        angles = [np.pi/point_num + 2.0 * np.pi * i / point_num for i in range(point_num)]
-        if i < point_num // 2:
-            p1 = center + radius * np.array([np.cos(angles[i]), np.sin(angles[i]), 0.0])
-            p2 = center + radius * np.array([np.cos(angles[i+(point_num//2)]), np.sin(angles[i+(point_num//2)]), 0.0])
-        else:
-            p1 = center + radius * np.array([np.cos(angles[i-(j*2)]), np.sin(angles[i-(j*2)]), 0.0])
-            p2 = center + radius * np.array([np.cos(angles[i+(k*2)]), np.sin(angles[i+(k*2)]), 0.0])
-            j += 1
-            k -= 1
-
-        focal_points = GSPAT(
-            foci=[
-                (p1, 5e4 * Pa),
-                (p2, 5e4 * Pa),
-            ],
-            option=GSPATOption(
-                repeat=100,
-                constraint=EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
-            ),
-            backend=NalgebraBackend(),
-        )
-        gains.append(focal_points)
-
+    gains = []
+    
+    # 基本の角度リストを生成
+    base_angles = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)]
+    
+    # 各周回での開始点オフセット
+    for cycle in range(point_num):
+        # 現在の周回での角度リスト（開始点をずらす）
+        angles = base_angles[cycle:] + base_angles[:cycle]
+        
+        # 半周分の点を生成（point_num//2個）
+        for step in range(point_num // 2):
+            # 2つの焦点の位置を計算（対角の位置）
+            idx1 = step
+            idx2 = (step + point_num // 2) % point_num
+            
+            p1 = center + radius * np.array([np.cos(angles[idx1]), np.sin(angles[idx1]), 0.0])
+            p2 = center + radius * np.array([np.cos(angles[idx2]), np.sin(angles[idx2]), 0.0])
+            
+            focal_points = GSPAT(
+                foci=[
+                    (p1, 5e4 * Pa),
+                    (p2, 5e4 * Pa),
+                ],
+                option=GSPATOption(
+                    repeat=100,
+                    constraint=EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
+                ),
+                backend=NalgebraBackend(),
+            )
+            gains.append(focal_points)
+        
+        # 逆方向の半周分の点を生成
+        for step in range(point_num // 2 - 1, 0, -1):
+            idx1 = step
+            idx2 = (step + point_num // 2) % point_num
+            
+            p1 = center + radius * np.array([np.cos(angles[idx1]), np.sin(angles[idx1]), 0.0])
+            p2 = center + radius * np.array([np.cos(angles[idx2]), np.sin(angles[idx2]), 0.0])
+            
+            focal_points = GSPAT(
+                foci=[
+                    (p1, 5e4 * Pa),
+                    (p2, 5e4 * Pa),
+                ],
+                option=GSPATOption(
+                    repeat=100,
+                    constraint=EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
+                ),
+                backend=NalgebraBackend(),
+            )
+            gains.append(focal_points)
     return GainSTM( # GainSTMでGSPATで作成した2焦点を回す
         gains,
-        config=100 * Hz,
+        config=18 * Hz,
         option = GainSTMOption(
                         mode = GainSTMMode.PhaseIntensityFull,
                     ),
@@ -120,7 +145,7 @@ if __name__ == "__main__":
 
         autd.send(Silencer())
 
-        m = Static(intensity=int(0xFF * 0.65)) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=int(0xFF * 0.725)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 8 # 円周上の点の数
         radius = 19.0 # 円の半径
@@ -161,8 +186,8 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                g = multi_focal_points(center=center, radius=radius, point_num=point_num)
+                # g = multi_focal_points(center=center, radius=radius, point_num=point_num)
                 stm = stm_dev2(center=center, radius=radius, point_num=point_num)
 
-                autd.send((m, g))
+                autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
