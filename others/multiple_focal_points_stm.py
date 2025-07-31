@@ -56,20 +56,6 @@ def make_gspat_gain(center, theta, radius):
             backend = NalgebraBackend(),
         )
 
-# GSPATアルゴリズムで2つの焦点を生成する関数 (高度と半径の異なる２つの円軌道を生成する)
-def make_gspat_gain(center, theta, radius):
-    p1 = center + radius * np.array([np.cos(theta), np.sin(theta), 0.0])
-    p2 = center + (2 * radius / 3) * np.array([np.cos(theta), np.sin(theta), -25.0]) 
-    return GSPAT(
-        foci=
-            [(p1, 5e4 * Pa), (p2, 5e4 * Pa)],
-            option = GSPATOption(
-                repeat = 100,
-                constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
-            ),
-            backend = NalgebraBackend(),
-        )
-
 if __name__ == "__main__":
     with Controller.open(
         autd_arrangement,
@@ -135,7 +121,7 @@ if __name__ == "__main__":
 
                 stm = GainSTM(
                     gains,
-                    config = 100 * Hz, # 100Hzで更新(1秒間に円周上を100周する)
+                    config = 100 * Hz,
                     option = GainSTMOption(
                         mode = GainSTMMode.PhaseIntensityFull,
                     ),

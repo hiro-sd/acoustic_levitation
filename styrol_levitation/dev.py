@@ -116,7 +116,7 @@ def stm_dev2(center: np.ndarray, radius: float, point_num: int) -> GainSTM:
                 backend=NalgebraBackend(),
             )
             gains.append(focal_points)
-    return GainSTM( # GainSTMでGSPATで作成した2焦点を回す
+    return GainSTM(
         gains,
         config=18 * Hz,
         option = GainSTMOption(
