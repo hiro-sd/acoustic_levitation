@@ -158,7 +158,7 @@ if __name__ == "__main__":
 
         autd.send(Silencer())
 
-        m = Static(intensity=int(0xFF * 0.7)) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=int(0xFF * 0.86)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 8 # 円周上の点の数
         radius = 19.0 # 円の半径
@@ -200,8 +200,8 @@ if __name__ == "__main__":
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
                 # g = multi_focal_points(center=center, radius=radius, point_num=point_num)
-                # stm = stm_dev2(center=center, radius=radius, point_num=point_num)
-                stm = stm_random(center=center, radius=radius)
+                stm = stm_dev2(center=center, radius=radius, point_num=point_num)
+                # stm = stm_random(center=center, radius=radius)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
