@@ -124,6 +124,19 @@ def stm_dev2(center: np.ndarray, radius: float, point_num: int) -> GainSTM:
                     ),
     ).into_nearest()
 
+# 円周上のランダムな100点を周期的に切り替えるSTM
+def stm_random(center: np.ndarray, radius: float) -> FociSTM:
+    num_points = 100
+    # 0～2πの範囲でランダムな角度を100個生成
+    angles = np.random.uniform(0, 2 * np.pi, num_points)
+    # 角度をソートしても良いが、ランダムなままでもOK
+    foci = (
+        center + radius * np.array([np.cos(a), np.sin(a), 0.0])
+        for a in angles
+    )
+    return FociSTM(foci=foci, config=10 * Hz).into_nearest()
+    
+
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
     print(f"slave [{slave}]: {status}")
@@ -187,7 +200,8 @@ if __name__ == "__main__":
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
                 # g = multi_focal_points(center=center, radius=radius, point_num=point_num)
-                stm = stm_dev2(center=center, radius=radius, point_num=point_num)
+                # stm = stm_dev2(center=center, radius=radius, point_num=point_num)
+                stm = stm_random(center=center, radius=radius)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
