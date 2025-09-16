@@ -113,14 +113,15 @@ def main():
             time_all = np.concatenate(time_dict[color])
             omega_all = np.concatenate(omega_dict[color])
             plt.plot(time_all, omega_all, '.', color=color_map[color], label=f'{color} marker', markersize=10)
-        plt.ylim(y_min, y_max)
+        # ユーザー要望によりY軸上限を300に固定（下限はデータ最小値に合わせる）
+        plt.ylim(y_min, 350)
         plt.ylabel('Angular velocity [rad/s]', fontsize=25)
         plt.title('angular velocity transition', fontsize=25)
         plt.tick_params(labelsize=20)
-        plt.legend(fontsize=25)
+        plt.legend(loc='upper left', fontsize=25)
         plt.gca().text(0.98, 0.98, textstr.strip(), fontsize=25, color='black',
-                      ha='right', va='top', transform=plt.gca().transAxes,
-                      bbox=dict(facecolor='white', alpha=0.7, edgecolor='gray'))
+                       ha='right', va='top', transform=plt.gca().transAxes,
+                       bbox=dict(facecolor='white', alpha=0.7, edgecolor='gray'))
         plt.xlabel('Time [s]', fontsize=25)
         plt.tight_layout()
         plt.show()
