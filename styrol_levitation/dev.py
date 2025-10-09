@@ -63,7 +63,7 @@ def multi_focal_points(center, radius, point_num) -> GSPAT:
 
 # ２つの往復軌道を作成する関数
 # GSPATで点1と点5に焦点を配置し、それらをGainSTMで半周ずつ回す
-def stm_dev2(center: np.ndarray, radius: float, point_num: int) -> GainSTM:
+def stm_dev2(center: np.ndarray, radius: float, point_num: int) -> GainSTM: # 0.75が最適
     gains = []
     
     # 基本の角度リストを生成
@@ -134,7 +134,7 @@ def stm_random(center: np.ndarray, radius: float) -> FociSTM:
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=10 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=9 * Hz).into_nearest()
 
 def stm_repeat(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
     # 正方向角リスト
@@ -144,13 +144,13 @@ def stm_repeat(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
     angles_rev = angles_fwd[4:] + angles_fwd[:4]
     angles_opposite = angles_rev + angles_rev[1:-1]
 
-    angles = (angles_basic * 5) + (angles_opposite * 5)
+    angles = (angles_basic * 10) + (angles_opposite * 10)
     # 円軌道上に焦点を配置する
     foci = (
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=7 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=1 * Hz).into_nearest()
     
 
 # SOEMのエラーハンドラ
@@ -174,7 +174,7 @@ if __name__ == "__main__":
 
         autd.send(Silencer())
 
-        m = Static(intensity=int(0xFF * 0.86)) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=int(0xFF * 0.65)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 8 # 円周上の点の数
         radius = 19.0 # 円の半径
@@ -216,7 +216,7 @@ if __name__ == "__main__":
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
                 # g = multi_focal_points(center=center, radius=radius, point_num=point_num)
-                stm = stm_repeat(center=center, radius=radius, point_num=point_num)
+                stm = stm_dev2(center=center, radius=radius, point_num=point_num)
                 # stm = stm_random(center=center, radius=radius)
 
                 autd.send((m, stm))
