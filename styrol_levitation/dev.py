@@ -135,6 +135,22 @@ def stm_random(center: np.ndarray, radius: float) -> FociSTM:
         for a in angles
     )
     return FociSTM(foci=foci, config=10 * Hz).into_nearest()
+
+def stm_repeat(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
+    # 正方向角リスト
+    angles_fwd = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)] # 穴の位置をずらすためにπ/8を加える
+    angles_basic = angles_fwd + angles_fwd[1:-1]
+    # 逆方向角リスト
+    angles_rev = angles_fwd[4:] + angles_fwd[:4]
+    angles_opposite = angles_rev + angles_rev[1:-1]
+
+    angles = (angles_basic * 5) + (angles_opposite * 5)
+    # 円軌道上に焦点を配置する
+    foci = (
+        center + radius * np.array([np.cos(a), np.sin(a), 0.0])
+        for a in angles
+    )
+    return FociSTM(foci=foci, config=7 * Hz).into_nearest()
     
 
 # SOEMのエラーハンドラ
@@ -200,7 +216,7 @@ if __name__ == "__main__":
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
                 # g = multi_focal_points(center=center, radius=radius, point_num=point_num)
-                stm = stm_dev2(center=center, radius=radius, point_num=point_num)
+                stm = stm_repeat(center=center, radius=radius, point_num=point_num)
                 # stm = stm_random(center=center, radius=radius)
 
                 autd.send((m, stm))
