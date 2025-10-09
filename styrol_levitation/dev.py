@@ -216,7 +216,7 @@ if __name__ == "__main__":
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
                 # g = multi_focal_points(center=center, radius=radius, point_num=point_num)
-                stm = stm_repeat(center=center, radius=radius, point_num=point_num)
+                stm = stm_dev2(center=center, radius=radius, point_num=point_num)
                 # stm = stm_random(center=center, radius=radius)
 
                 autd.send((m, stm))
