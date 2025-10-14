@@ -61,7 +61,7 @@ def multi_focal_points(center, radius, point_num) -> GSPAT:
             backend=NalgebraBackend(),
         )
 
-# ２つの往復軌道を作成する関数
+# ２つの半周往復軌道を作成する関数
 # GSPATで点1と点5に焦点を配置し、それらをGainSTMで半周ずつ回す
 def stm_dev2(center: np.ndarray, radius: float, point_num: int) -> GainSTM: # 0.75が最適
     gains = []
@@ -136,6 +136,7 @@ def stm_random(center: np.ndarray, radius: float) -> FociSTM:
     )
     return FociSTM(foci=foci, config=9 * Hz).into_nearest()
 
+# 逆向きの往復軌道を交互に繰り返すSTM
 def stm_repeat(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
     # 正方向角リスト
     angles_fwd = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)] # 穴の位置をずらすためにπ/8を加える
@@ -151,7 +152,42 @@ def stm_repeat(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
         for a in angles
     )
     return FociSTM(foci=foci, config=1 * Hz).into_nearest()
-    
+
+def stm_double(center: np.ndarray, radius: float, point_num: int) -> GainSTM:
+    # 円周上に等間隔8点
+    angles = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)]
+    # 各点の座標
+    points = [center + radius * np.array([np.cos(a), np.sin(a), 0.0]) for a in angles]
+
+    # ペアのインデックス列（0始まり）
+    pair_indices = [
+        (0, 4), (1, 5), (2, 6), (3, 7),
+        (4, 0), (5, 1), (6, 2), (7, 3),
+        (6, 2), (5, 1), (4, 0), (3, 7), (2, 6), (1, 5)
+    ]
+
+    gains = []
+    for idx1, idx2 in pair_indices:
+        focal_points = GSPAT(
+            foci=[
+                (points[idx1], 5e4 * Pa),
+                (points[idx2], 5e4 * Pa),
+            ],
+            option=GSPATOption(
+                repeat=100,
+                constraint=EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
+            ),
+            backend=NalgebraBackend(),
+        )
+        gains.append(focal_points)
+
+    return GainSTM(
+        gains,
+        config=10 * Hz,  # 必要に応じて周期を調整
+        option=GainSTMOption(
+            mode=GainSTMMode.PhaseIntensityFull,
+        ),
+    ).into_nearest()
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
