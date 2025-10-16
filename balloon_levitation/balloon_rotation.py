@@ -28,7 +28,7 @@ def stm_rotating(center, radius, point_num, total_steps):
             angle = offset + 2 * np.pi * i / point_num
             angles_all.append(angle)
     foci = (center + radius * np.array([np.cos(a), np.sin(a), 0.0]) for a in angles_all)
-    return FociSTM(foci=foci, config=100 * Hz).into_nearest()
+    return FociSTM(foci=foci, config=1 * Hz).into_nearest()
 
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
@@ -50,9 +50,9 @@ if __name__ == "__main__":
 
         autd.send(Silencer())
 
-        m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=int(0xFF*0.5)) # 振幅変調を行わず、常に同じ振幅を出力する
         center = autd.center() + np.array([0.0, 0.0, 400.0])
-        stm = stm_rotating(center, radius=45.0, point_num=6, total_steps=60)
+        stm = stm_rotating(center, radius=45.0, point_num=6, total_steps=100)
         autd.send((m, stm))
 
         while True:

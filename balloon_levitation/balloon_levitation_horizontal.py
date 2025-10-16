@@ -45,7 +45,7 @@ if __name__ == "__main__":
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
         y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
         prev_x, prev_y = None, None # 前回のx,y座標を保存するための変数
-        step = 5.0 # 1回の操作で移動する距離
+        step = 8.0 # 1回の操作で移動する距離
 
         while True:
             if keyboard.is_pressed("esc"): # ESCキーで終了
