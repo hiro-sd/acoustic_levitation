@@ -3,7 +3,7 @@ import numpy as np, os, keyboard
 from pyautd3 import (
     AUTD3, Controller, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Silencer, Static,
 )
-from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
+from pyautd3_link_soem import SOEM, SOEMOption, Status
 
 # 半球型の紙風船を水平方向に移動させるプログラム
 
@@ -37,14 +37,15 @@ if __name__ == "__main__":
 
         autd.send(Silencer())
 
-        m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅を出力する
+        # 物体の質量に応じてintensityを調整する
+        m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅で出力する
 
         point_num = 8 # 円周上の点の数
         radius = 45.0 # 円軌道の半径
         x, y = 0.0, 0.0 # x,y座標の初期値
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
         y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
-        prev_x, prev_y = None, None # 前回のx,y座標を保存するための変数
+        prev_x, prev_y = None, None # x,y座標を保存するための変数
         step = 8.0 # 1回の操作で移動する距離
 
         while True:

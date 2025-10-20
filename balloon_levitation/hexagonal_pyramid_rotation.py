@@ -1,9 +1,9 @@
 import os
 import numpy as np, os, keyboard
 from pyautd3 import (
-    AUTD3, Controller, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Silencer, Static,
+    AUTD3, Controller, FociSTM, Hz, Silencer, Static
 )
-from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
+from pyautd3_link_soem import SOEM, SOEMOption, Status
 
 # 六角錐型の紙風船を回転させるプログラム
 
@@ -17,7 +17,7 @@ autd_arrangement = [
     AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
     ]
 
-# 等間隔6点を連続的に回転させるSTM生成関数
+# 等間隔な6焦点の位置を連続的に回転させるSTM
 def stm_rotating(center, radius, point_num, total_steps):
     # total_steps: 1周を何分割して連続回転させるか（大きいほど滑らか）
     angles_all = []
@@ -50,7 +50,9 @@ if __name__ == "__main__":
 
         autd.send(Silencer())
 
-        m = Static(intensity=int(0xFF*0.5)) # 振幅変調を行わず、常に同じ振幅を出力する
+        # 物体の質量に応じてintensityを調整する
+        m = Static(intensity=int(0xFF*0.5)) # 振幅変調を行わず、常に同じ振幅で出力する
+        
         center = autd.center() + np.array([0.0, 0.0, 400.0])
         stm = stm_rotating(center, radius=45.0, point_num=6, total_steps=100)
         autd.send((m, stm))
