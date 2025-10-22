@@ -183,7 +183,7 @@ def stm_double(center: np.ndarray, radius: float, point_num: int) -> GainSTM:
 
     return GainSTM(
         gains,
-        config=72 * Hz,
+        config=70 * Hz,
         option=GainSTMOption(
             mode=GainSTMMode.PhaseIntensityFull,
         ),
@@ -210,7 +210,7 @@ if __name__ == "__main__":
 
         autd.send(Silencer())
 
-        m = Static(intensity=int(0xFF * 0.78)) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=int(0xFF * 0.75)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 8 # 円周上の点の数
         radius = 19.0 # 円の半径

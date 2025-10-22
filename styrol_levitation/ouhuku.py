@@ -75,9 +75,37 @@ def stm_balance(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
     )
     return FociSTM(foci=foci, config=84 * Hz).into_nearest()
 
+# === 追加: パターン時間スケジュール ===
+HOLD = 5.0               # パターン0/4の保持時間[秒]
+TRANSIENT = 1.0  # 一度だけ経由する時間（約0.2s）
+
+# 0→(1→2→3)→4→(5→6→7)→0…
+SCHEDULE = [
+    (0, HOLD),
+    (1, TRANSIENT),
+    (2, TRANSIENT),
+    (3, TRANSIENT),
+    (4, HOLD),
+    (5, TRANSIENT),
+    (6, TRANSIENT),
+    (7, TRANSIENT),
+]
+
+TOTAL_PERIOD = sum(d for _, d in SCHEDULE)
+
+def get_scheduled_pattern_index(elapsed: float) -> int:
+    """経過時間からスケジュール上の現在パターン(0..7)を返す"""
+    t = elapsed % TOTAL_PERIOD
+    acc = 0.0
+    for pat, dur in SCHEDULE:
+        if acc + dur > t:
+            return pat
+        acc += dur
+    return SCHEDULE[-1][0]  # 念のため
+
+
 # 時間経過に応じてC型パターンを切り替える関数
 def stm_gradually(center: np.ndarray, radius: float) -> FociSTM:
-
     if not hasattr(stm_gradually, "_start_time"):
         stm_gradually._start_time = time.time()
     if not hasattr(stm_gradually, "_last_index"):
@@ -85,12 +113,11 @@ def stm_gradually(center: np.ndarray, radius: float) -> FociSTM:
 
     # 経過秒
     elapsed = time.time() - stm_gradually._start_time
-    pattern_duration = 5.0 # [s]
-    pattern_index = int(elapsed // pattern_duration) % 8 # 0–7
+    pattern_index = get_scheduled_pattern_index(elapsed)
 
-    # 切り替わりを検出してログ
+    # 切替ログ
     if pattern_index != stm_gradually._last_index:
-        print(f"パターンが切り替わりました: パターン {pattern_index + 1} "
+        print(f"パターンが切り替わりました: パターン {pattern_index} "
               f"({int(elapsed)} 秒経過)")
         stm_gradually._last_index = pattern_index
 
@@ -130,11 +157,8 @@ def stm_gradually(center: np.ndarray, radius: float) -> FociSTM:
     # ]
 
     current_angles = [k * np.pi / 4 for k in angles_patterns[pattern_index]]
-
-    foci = [
-        center + radius * np.array([np.cos(a), np.sin(a), 0.0])
-        for a in current_angles
-    ]
+    foci = [center + radius * np.array([np.cos(a), np.sin(a), 0.0])
+            for a in current_angles]
 
     return FociSTM(foci=foci, config=70 * Hz).into_nearest()
 
@@ -195,13 +219,14 @@ if __name__ == "__main__":
                 z = min(z + step, z_max)
             elif keyboard.is_pressed("d"):
                 z = max(z - step, z_min)
-            
+
             # 現在のパターンインデックスを取得（パターン変化検出のため）
             if hasattr(stm_gradually, "_start_time"):
                 elapsed = time.time() - stm_gradually._start_time
-                current_pattern_index = int(elapsed // 5.0) % 8
+                current_pattern_index = get_scheduled_pattern_index(elapsed)
             else:
                 current_pattern_index = 0
+
             
             # キーボード操作またはパターン変化があった場合にSTMを更新
             if (x != prev_x or y != prev_y or z != prev_z or current_pattern_index != last_pattern_index):
@@ -211,7 +236,7 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                stm = stm_gradually(center=center, radius=radius)
+                stm = stm_ouhuku(center=center, radius=radius, point_num=point_num)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
