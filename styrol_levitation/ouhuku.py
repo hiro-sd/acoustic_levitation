@@ -76,23 +76,23 @@ def stm_balance(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
     return FociSTM(foci=foci, config=84 * Hz).into_nearest()
 
 # 時間経過に応じてC型パターンを切り替える関数
-def stm_graduate(center: np.ndarray, radius: float) -> FociSTM:
+def stm_gradually(center: np.ndarray, radius: float) -> FociSTM:
 
-    if not hasattr(stm_graduate, "_start_time"):
-        stm_graduate._start_time = time.time()
-    if not hasattr(stm_graduate, "_last_index"):
-        stm_graduate._last_index = -1
+    if not hasattr(stm_gradually, "_start_time"):
+        stm_gradually._start_time = time.time()
+    if not hasattr(stm_gradually, "_last_index"):
+        stm_gradually._last_index = -1
 
     # 経過秒
-    elapsed = time.time() - stm_graduate._start_time
+    elapsed = time.time() - stm_gradually._start_time
     pattern_duration = 5.0 # [s]
     pattern_index = int(elapsed // pattern_duration) % 8 # 0–7
 
     # 切り替わりを検出してログ
-    if pattern_index != stm_graduate._last_index:
+    if pattern_index != stm_gradually._last_index:
         print(f"パターンが切り替わりました: パターン {pattern_index + 1} "
               f"({int(elapsed)} 秒経過)")
-        stm_graduate._last_index = pattern_index
+        stm_gradually._last_index = pattern_index
 
     # angles_patterns = [
     #     [0, 1, 2, 3, 4, 5, 4, 3, 2, 1],
@@ -197,8 +197,8 @@ if __name__ == "__main__":
                 z = max(z - step, z_min)
             
             # 現在のパターンインデックスを取得（パターン変化検出のため）
-            if hasattr(stm_graduate, "_start_time"):
-                elapsed = time.time() - stm_graduate._start_time
+            if hasattr(stm_gradually, "_start_time"):
+                elapsed = time.time() - stm_gradually._start_time
                 current_pattern_index = int(elapsed // 5.0) % 8
             else:
                 current_pattern_index = 0
@@ -211,17 +211,7 @@ if __name__ == "__main__":
 
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
-                stm = stm_ouhuku_modified(center=center, radius=radius, point_num=point_num)
+                stm = stm_gradually(center=center, radius=radius)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
-
-            # # 毎ループでランダムなSTMパターンを生成
-            # center = autd.center() + np.array([x, y, z])
-            # stm = stm_random(center=center, radius=radius, point_num=point_num)
-            # autd.send((m, stm))
-
-            # # 位置が変更された場合のみ座標を表示
-            # if (x != prev_x or y != prev_y or z != prev_z or keyboard.is_pressed("t") or keyboard.is_pressed("r")):
-            #     prev_x, prev_y, prev_z = x, y, z
-            #     print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm, 傾斜: {np.degrees(current_tilt):.1f}度")
