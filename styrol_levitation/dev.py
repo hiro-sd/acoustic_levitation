@@ -189,6 +189,19 @@ def stm_double(center: np.ndarray, radius: float, point_num: int) -> GainSTM:
         ),
     ).into_nearest()
 
+# 対向する位置に交互に焦点を作るSTM
+def stm_opposite(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
+    # 正方向角リスト
+    angles = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)] # 穴の位置をずらすためにπ/8を加える
+    angles_new= [val for pair in zip(angles[:point_num//2], angles[point_num//2:]) for val in pair] # 対向する位置に交互に焦点を作るように順番を入れ替え
+    
+    # 円軌道上に焦点を配置する
+    foci = (
+        center + radius * np.array([np.cos(a), np.sin(a), 0.0])
+        for a in angles_new
+    )
+    return FociSTM(foci=foci, config=100 * Hz).into_nearest()
+
 # SOEMのエラーハンドラ
 def err_handler(slave: int, status: Status) -> None:
     print(f"slave [{slave}]: {status}")
@@ -210,7 +223,7 @@ if __name__ == "__main__":
 
         autd.send(Silencer())
 
-        m = Static(intensity=int(0xFF * 0.75)) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=int(0xFF * 0.65)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 8 # 円周上の点の数
         radius = 19.0 # 円の半径
@@ -252,7 +265,7 @@ if __name__ == "__main__":
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
                 # g = multi_focal_points(center=center, radius=radius, point_num=point_num)
-                stm = stm_double(center=center, radius=radius, point_num=point_num)
+                stm = stm_opposite(center=center, radius=radius, point_num=point_num)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")
