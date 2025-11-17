@@ -2,12 +2,12 @@ import os
 import time
 import cv2
 from ultralytics import YOLO
+import ximea.xiapi as xi
 
 MODEL_PATH = "yolo11n.pt"  # yolo11n.pt / yolo11s.pt / 自分の学習済みモデルなど
-CAMERA_INDEX = 0           # 使用するWebカメラ番号（通常0）
 IMG_SIZE = 640             # 推論時の入力サイズ
 CONF_THRES = 0.25          # バウンディングボックスの信頼度閾値
-CAP_WIDTH = 1280           # キャプチャ解像度（対応しないカメラもあります）
+CAP_WIDTH = 1280           # 使いたい解像度（XIMEA側で設定できれば使用）
 CAP_HEIGHT = 720
 
 # CPUでスレッド数を制限したい場合
@@ -20,16 +20,33 @@ def main():
     print(f"[INFO] Loading model: {MODEL_PATH}")
     model = YOLO(MODEL_PATH)
 
-    # カメラ初期化
-    cap = cv2.VideoCapture(CAMERA_INDEX)
-    if not cap.isOpened(): # カメラがオープンできなかった場合
-        raise RuntimeError(f"カメラ {CAMERA_INDEX} をオープンできませんでした。")
+    # XIMEAカメラ初期化
+    print("[INFO] Initializing XIMEA camera...")
+    cam = xi.Camera()
 
-    # 解像度の指定
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAP_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAP_HEIGHT)
+    # デバイスオープン（複数台ある場合は device=0,1,... を指定）
+    cam.open_device()  # 例: cam.open_device(device=0)
 
-    window_name = "YOLO11 (CPU) - Press q to quit"
+    # 露光時間やゲイン、解像度などの設定（環境に合わせて調整）
+    # 単位は µs（例: 5000 = 5 ms）※値は適宜変更してください
+    cam.set_exposure(5000)
+
+    # 解像度を設定したい場合（モデルやカメラによっては別パラメータ名の場合あり）
+    # 利用環境のサンプルコードやマニュアルに合わせて調整してください。
+    # try:
+    #     cam.set_width(CAP_WIDTH)
+    #     cam.set_height(CAP_HEIGHT)
+    # except Exception as e:
+    #     print("[WARN] 解像度設定に失敗しました:", e)
+
+    # 画像バッファ
+    img = xi.Image()
+
+    # キャプチャ開始
+    cam.start_acquisition()
+    print("[INFO] XIMEA acquisition started.")
+
+    window_name = "YOLO11 + XIMEA (CPU) - Press q to quit"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
     prev_time = time.time()
@@ -37,17 +54,25 @@ def main():
 
     try:
         while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("[WARN] フレームを取得できませんでした。")
-                break
+            # XIMEA からフレーム取得
+            cam.get_image(img)                       # カメラから1フレーム取得
+            frame = img.get_image_data_numpy()      # NumPy配列として取得
+
+            # XIMEAのPythonサンプルでは RGB で返ってくることが多いので、
+            # OpenCV と同じ BGR に変換しておく（必須ではないが無難）
+            if frame.ndim == 3 and frame.shape[2] == 3:
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            else:
+                # モノクロの場合などは3chに変換しておく
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+
 
             # YOLO11で推論（CPU指定）
             results = model.predict(
-                source=frame,      # 画像(ndarray)をそのまま渡せる
+                source=frame_bgr,   # 画像(ndarray)をそのまま渡せる
                 imgsz=IMG_SIZE,
                 conf=CONF_THRES,
-                device="cpu",      # CPUで実行
+                device="cpu",       # CPUで実行
                 verbose=False
             )
 
@@ -86,7 +111,16 @@ def main():
                 break
 
     finally:
-        cap.release()
+        # 後処理
+        print("[INFO] Stopping acquisition and closing XIMEA device...")
+        try:
+            cam.stop_acquisition()
+        except Exception:
+            pass
+        try:
+            cam.close_device()
+        except Exception:
+            pass
         cv2.destroyAllWindows()
 
 
