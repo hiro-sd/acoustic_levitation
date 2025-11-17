@@ -9,7 +9,7 @@ from ultralytics import YOLO
 MODEL_PATH = "yolo11n.pt"  # yolo11n.pt / yolo11s.pt / 自分の学習済みモデルなど
 CAMERA_INDEX = 0           # 使用するWebカメラ番号（通常0）
 IMG_SIZE = 640             # 推論時の入力サイズ
-CONF_THRES = 0.25          # バウンディングボックスの信頼度しきい値
+CONF_THRES = 0.25          # バウンディングボックスの信頼度閾値
 CAP_WIDTH = 1280           # キャプチャ解像度（対応しないカメラもあります）
 CAP_HEIGHT = 720
 
