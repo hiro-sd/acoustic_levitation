@@ -3,9 +3,6 @@ import time
 import cv2
 from ultralytics import YOLO
 
-# --------------------------------------------------
-# 設定（必要に応じてここだけ書き換えればOK）
-# --------------------------------------------------
 MODEL_PATH = "yolo11n.pt"  # yolo11n.pt / yolo11s.pt / 自分の学習済みモデルなど
 CAMERA_INDEX = 0           # 使用するWebカメラ番号（通常0）
 IMG_SIZE = 640             # 推論時の入力サイズ
@@ -13,25 +10,22 @@ CONF_THRES = 0.25          # バウンディングボックスの信頼度閾値
 CAP_WIDTH = 1280           # キャプチャ解像度（対応しないカメラもあります）
 CAP_HEIGHT = 720
 
-# CPUでスレッド数を制限したい場合（お好みで）
+# CPUでスレッド数を制限したい場合
 os.environ.setdefault("OMP_NUM_THREADS", "4")
 
 
 def main():
-    # -----------------------------
-    # モデル読み込み（YOLO11）
-    # -----------------------------
-    print(f"[INFO] Loading model: {MODEL_PATH}")
-    model = YOLO(MODEL_PATH)  # 公式YOLO11 Detectモデル or 自分の学習済みモデル
 
-    # -----------------------------
+    # モデル読み込み（YOLO11）
+    print(f"[INFO] Loading model: {MODEL_PATH}")
+    model = YOLO(MODEL_PATH)
+
     # カメラ初期化
-    # -----------------------------
     cap = cv2.VideoCapture(CAMERA_INDEX)
-    if not cap.isOpened():
+    if not cap.isOpened(): # カメラがオープンできなかった場合
         raise RuntimeError(f"カメラ {CAMERA_INDEX} をオープンできませんでした。")
 
-    # 解像度の指定（効かない場合もあります）
+    # 解像度の指定
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAP_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAP_HEIGHT)
 
@@ -48,9 +42,7 @@ def main():
                 print("[WARN] フレームを取得できませんでした。")
                 break
 
-            # -------------------------
             # YOLO11で推論（CPU指定）
-            # -------------------------
             results = model.predict(
                 source=frame,      # 画像(ndarray)をそのまま渡せる
                 imgsz=IMG_SIZE,
@@ -62,9 +54,7 @@ def main():
             # アノテーション済み画像を取得（バウンディングボックスとラベル付き）
             annotated_frame = results[0].plot()
 
-            # -------------------------
             # FPS計算と表示
-            # -------------------------
             now = time.time()
             dt = now - prev_time
             prev_time = now
@@ -86,9 +76,7 @@ def main():
                 cv2.LINE_AA,
             )
 
-            # -------------------------
             # 画面表示
-            # -------------------------
             cv2.imshow(window_name, annotated_frame)
 
             # 'q' キーで終了
