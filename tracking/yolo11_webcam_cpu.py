@@ -2,7 +2,10 @@ import os
 import time
 import cv2
 from ultralytics import YOLO
-import ximea.xiapi as xi
+import ximea
+
+# trackingフォルダにxiapi.pyをコピーした状態
+# TODO: CHATGPTの⑤動作確認から再開する
 
 MODEL_PATH = "yolo11n.pt"  # yolo11n.pt / yolo11s.pt / 自分の学習済みモデルなど
 IMG_SIZE = 640             # 推論時の入力サイズ
