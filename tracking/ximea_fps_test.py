@@ -1,6 +1,11 @@
-# capture_fps_test.py (簡易)
+# 高速カメラのfpsを計測するスクリプト
 from time import perf_counter
+import sys
+
+# XIMEA をデフォルトパスに入れている場合（標準インストール）
+sys.path.append(r"C:\Users\Hiroto Yoshida\Desktop\XIMEA\API\Python\v3")
 from ximea import xiapi
+
 img = xiapi.Image()
 cam = xiapi.Camera()
 cam.open_device()
