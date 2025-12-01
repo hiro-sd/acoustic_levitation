@@ -1,19 +1,25 @@
 import os
 import time
+import sys
 import cv2
 from ultralytics import YOLO
-import ximea
 
-# trackingフォルダにxiapi.pyをコピーした状態
-# TODO: CHATGPTの⑤動作確認から再開する
+# XIMEA をデフォルトパスに入れている場合（標準インストール）
+sys.path.append(r"C:\Users\Hiroto Yoshida\Desktop\XIMEA\API\Python\v3")
 
+# XIMEA 用
+from ximea import xiapi
+
+# 設定（必要に応じてここだけ書き換えればOK）
 MODEL_PATH = "yolo11n.pt"  # yolo11n.pt / yolo11s.pt / 自分の学習済みモデルなど
 IMG_SIZE = 640             # 推論時の入力サイズ
-CONF_THRES = 0.25          # バウンディングボックスの信頼度閾値
-CAP_WIDTH = 1280           # 使いたい解像度（XIMEA側で設定できれば使用）
-CAP_HEIGHT = 720
+CONF_THRES = 0.5           # バウンディングボックスの信頼度しきい値
 
-# CPUでスレッド数を制限したい場合
+# XIMEA 側の設定（必要に応じて調整）
+EXPOSURE_US = 5000         # 露光時間 [µs]（明るさ・モーションブラーに応じて調整）
+# MQ003CG-CM はもともと 640x480 が標準解像度
+
+# CPUでスレッド数を制限したい場合（お好みで）
 os.environ.setdefault("OMP_NUM_THREADS", "4")
 
 
@@ -21,31 +27,33 @@ def main():
 
     # モデル読み込み（YOLO11）
     print(f"[INFO] Loading model: {MODEL_PATH}")
-    model = YOLO(MODEL_PATH)
+    model = YOLO(MODEL_PATH)  # 公式YOLO11 Detectモデル or 自分の学習済みモデル
 
-    # XIMEAカメラ初期化
+    # XIMEA カメラ初期化
     print("[INFO] Initializing XIMEA camera...")
-    cam = xi.Camera()
+    cam = xiapi.Camera()
 
-    # デバイスオープン（複数台ある場合は device=0,1,... を指定）
-    cam.open_device()  # 例: cam.open_device(device=0)
+    # 複数台ある場合は open_device(device=0) のように指定可能
+    cam.open_device()
+    print("[INFO] XIMEA camera opened.")
 
-    # 露光時間やゲイン、解像度などの設定（環境に合わせて調整）
-    # 単位は µs（例: 5000 = 5 ms）※値は適宜変更してください
-    cam.set_exposure(5000)
+    # 画像フォーマットをカラー (RGB24) に設定
+    cam.set_imgdataformat('XI_RGB24')
 
-    # 解像度を設定したい場合（モデルやカメラによっては別パラメータ名の場合あり）
-    # 利用環境のサンプルコードやマニュアルに合わせて調整してください。
-    # try:
-    #     cam.set_width(CAP_WIDTH)
-    #     cam.set_height(CAP_HEIGHT)
-    # except Exception as e:
-    #     print("[WARN] 解像度設定に失敗しました:", e)
+    # 自動ホワイトバランスON
+    try:
+        cam.enable_auto_wb()
+    except AttributeError:
+        cam.set_param('auto_wb', 1)
+
+    # 露光時間設定（単位は µs）
+    cam.set_exposure(EXPOSURE_US)
+    print(f"[INFO] Exposure set to {EXPOSURE_US} us")
 
     # 画像バッファ
-    img = xi.Image()
+    img = xiapi.Image()
 
-    # キャプチャ開始
+    # 取得開始
     cam.start_acquisition()
     print("[INFO] XIMEA acquisition started.")
 
@@ -57,18 +65,17 @@ def main():
 
     try:
         while True:
-            # XIMEA からフレーム取得
-            cam.get_image(img)                       # カメラから1フレーム取得
-            frame = img.get_image_data_numpy()      # NumPy配列として取得
 
-            # XIMEAのPythonサンプルでは RGB で返ってくることが多いので、
-            # OpenCV と同じ BGR に変換しておく（必須ではないが無難）
-            if frame.ndim == 3 and frame.shape[2] == 3:
-                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            # XIMEA から 1 フレーム取得
+            cam.get_image(img)
+            frame = img.get_image_data_numpy()
+
+            # カラーの場合: frame は通常 RGB。OpenCV 互換の BGR に変換しておく
+            # モノクロの場合: 2次元配列なので BGR に拡張
+            if frame.ndim == 3:
+                frame_bgr = frame.copy()
             else:
-                # モノクロの場合などは3chに変換しておく
                 frame_bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-
 
             # YOLO11で推論（CPU指定）
             results = model.predict(
@@ -83,8 +90,8 @@ def main():
             annotated_frame = results[0].plot()
 
             # FPS計算と表示
-            now = time.time()
-            dt = now - prev_time
+            now = time.time()          # 現在時刻
+            dt = now - prev_time       # 前フレームからの経過時間
             prev_time = now
             if dt > 0:
                 fps = 0.9 * fps + 0.1 * (1.0 / dt)  # 簡易移動平均
@@ -110,12 +117,12 @@ def main():
             # 'q' キーで終了
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
-                print("[INFO] 'q' が押されたので終了します。")
+                print("[INFO] 'q' キーが押されたので終了します。")
                 break
 
     finally:
-        # 後処理
-        print("[INFO] Stopping acquisition and closing XIMEA device...")
+        # XIMEA 側の後処理
+        print("[INFO] Stopping acquisition and closing XIMEA camera...")
         try:
             cam.stop_acquisition()
         except Exception:
@@ -124,6 +131,7 @@ def main():
             cam.close_device()
         except Exception:
             pass
+
         cv2.destroyAllWindows()
 
 

@@ -56,8 +56,8 @@ def main():
             annotated_frame = results[0].plot()
 
             # FPS計算と表示
-            now = time.time()
-            dt = now - prev_time
+            now = time.time() # 現在時刻
+            dt = now - prev_time # 前フレームからの経過時間
             prev_time = now
             if dt > 0:
                 fps = 0.9 * fps + 0.1 * (1.0 / dt)  # 簡易移動平均
