@@ -39,10 +39,10 @@ if __name__ == "__main__":
 
         autd.send(Silencer())
 
-        m = Static(intensity=int(0xFF*0.7)) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する (小球は* 0.65)
 
         point_num = 8 # 円周上の点の数
-        radius = 19.0 # 円軌道の半径
+        radius = 23.0 # 円軌道の半径 (小球は19 mm)
         x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
         y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
