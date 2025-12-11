@@ -23,7 +23,6 @@ def err_handler(slave: int, status: Status) -> None:
     if status == Status.Lost():
         os._exit(-1)
 
-# 平井さんの修論を参考にして作成したファイル
 if __name__ == "__main__":
     with Controller.open(
         autd_arrangement,
