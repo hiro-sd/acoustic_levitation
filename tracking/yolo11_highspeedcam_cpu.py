@@ -6,6 +6,8 @@ from ultralytics import YOLO
 
 # XIMEA をデフォルトパスに入れている場合（標準インストール）
 sys.path.append(r"C:\Users\Hiroto Yoshida\Desktop\XIMEA\API\Python\v3")
+
+
 # XIMEA 用
 from ximea import xiapi
 
@@ -118,6 +120,8 @@ def main():
             if key == ord("q"):
                 print("[INFO] 'q' キーが押されたので終了します。")
                 break
+
+
 
     finally:
         # XIMEA 側の後処理
