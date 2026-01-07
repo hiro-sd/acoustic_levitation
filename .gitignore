@@ -172,3 +172,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# img datasets
+tracking/datasets/train/images/
+tracking/datasets/valid/images/
+tracking/datasets/test/images/
