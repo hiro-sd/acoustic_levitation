@@ -1,0 +1,35 @@
+{
+  "csv_path": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\calib_points_uv_xy.csv",
+  "A_2x3": [
+    [
+      0.4828603396891242,
+      -0.0049182869868897175,
+      -159.34300668267267
+    ],
+    [
+      -0.012420190414686443,
+      -0.47713028907367255,
+      115.62492376472873
+    ]
+  ],
+  "inliers": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "error_all_mm": {
+    "mean_mm": 0.7302861213684082,
+    "median_mm": 0.6975265145301819,
+    "rmse_mm": 0.8060272932052612,
+    "max_mm": 1.2738227844238281,
+    "min_mm": 0.03124082274734974
+  },
+  "ransac_reproj_threshold_px": 3.0,
+  "note": "xy(mm) = A @ [u, v, 1].T  (u,v are pixel coords)"
+}
