@@ -13,11 +13,14 @@ from pyautd3_emulator import Emulator # エミュレータを使用するため�
 # AUTDの配置
 autd_arrangement = [
     AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]), 
-    AUTD3(pos=[0.0, -(AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[0.0, -2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, -2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, -(AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[0.0, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[0.0, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[AUTD3.DEVICE_WIDTH, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
     AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
+    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
     ]
 
 # FociSTMで往復軌道を形成するための関数
@@ -183,7 +186,7 @@ if __name__ == "__main__":
 
         autd.send(Silencer())
 
-        m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する (小球は* 0.65)
+        m = Static(intensity=(int(0xFF * 0.8))) # 振幅変調を行わず、常に同じ振幅を出力する (小球は* 0.6)
 
         point_num = 8 # 円周上の点の数
         radius = 23.0 # 円の半径 (小球は19 mm)
