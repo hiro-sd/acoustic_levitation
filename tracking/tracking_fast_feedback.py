@@ -5,8 +5,11 @@ import threading
 import numpy as np
 import cv2
 import keyboard
+import json
 
 from ultralytics import YOLO
+
+# 高速カメラで物体の位置を最速でトラッキングしつつ、別スレッドでAUTDの焦点を更新するコード
 
 # XIMEA設定
 sys.path.append(r"C:\Users\Hiroto Yoshida\Desktop\XIMEA\API\Python\v3")
@@ -25,12 +28,13 @@ from pyautd3_link_soem import SOEM, SOEMOption, Status
 MODEL_PATH = "tracking/train/weights/best.pt"
 TARGET_CLASS_NAME = "levitatedball"
 CONF_THRES = 0.5
+AFFINE_JSON = "affine_uv_to_xy.json"
 
 # YOLO再捕捉の軽量化
 YOLO_IMGSZ = 320
 YOLO_REFIND_COOLDOWN_S = 0.3
 
-# CVトラッキング
+# 古典CVトラッキング
 USE_OTSU = True
 FIXED_THRESH = 180
 BLUR_KSIZE = 5
@@ -50,14 +54,12 @@ LOST_MAX_FRAMES = 10
 # カメラ
 EXPOSURE_US = 5000
 
-# AUTD物理設定
+# AUTD 物理設定
 POINT_NUM = 8
 RADIUS = 23.0
-DEFAULT_Z = 400.0  # 基準高さ (mm)
+DEFAULT_Z = 400.0  # 基準高さ
 
 # 座標変換設定 (要調整)
-# カメラ画像の1ピクセルが現実の何mmに相当するか
-# (例: 画面幅640pxが 現実の200mmなら 200/640 = 0.3125)
 MM_PER_PIXEL = 0.5 
 
 # CPUスレッド
@@ -177,12 +179,13 @@ def track_ball_cv(frame_rgb: np.ndarray, roi_rect):
     (xc, yc), r = cv2.minEnclosingCircle(cnt)
     return (float(x1 + xc), float(y1 + yc), float(r)), bw
 
-# AUTD制御用スレッド関数 (カメラのFPSに依存せず、最新のターゲット位置へAUTDの焦点を更新し続けるスレッド)
+# AUTD制御用スレッド関数　(カメラのFPSに依存せず、最新のターゲット位置へAUTDの焦点を更新し続けるスレッド)
 def autd_control_loop(autd):
     global shared_target_pos, program_running
     print("[THREAD] AUTD Control Thread Started.")
     
-    last_sent_time = 0
+    # 最後に送信した座標を保持し、変化がなければ送信しない等の最適化も可能
+    # ここではシンプルにループごとに送信
     
     while program_running:
         # 1. 座標取得（排他制御）
@@ -191,14 +194,13 @@ def autd_control_loop(autd):
             if shared_target_pos is not None:
                 tgt = shared_target_pos
         
-        # ターゲットがない場合は何もしない（あるいは初期位置に戻す）
         if tgt is None:
             time.sleep(0.002)
             continue
 
         tx, ty, tz = tgt
         
-        # 2. STM生成（指定された中心座標の周りに8点を配置）
+        # 2. STM生成
         center_vec = np.array([tx, ty, tz])
         
         try:
@@ -219,11 +221,17 @@ def autd_control_loop(autd):
         except Exception as e:
             print(f"[THREAD ERROR] {e}")
 
-        # 送信頻度の調整（早すぎても通信が詰まるため、適度なSleepを入れる）
-        # 0.004s = 4ms (約250Hz)
+        # 送信頻度の調整（約250Hz）
         time.sleep(0.004)
 
     print("[THREAD] AUTD Control Thread Stopped.")
+
+# アフィン行列をJSONから読み込む
+def load_affine_matrix(json_path):
+    with open(json_path, "r") as f:
+        data = json.load(f)
+    A = np.array(data["A_2x3"], dtype=np.float32)
+    return A
 
 
 def main():
@@ -234,14 +242,24 @@ def main():
     model = YOLO(MODEL_PATH)
     target_cls_id = find_target_class_id(model, TARGET_CLASS_NAME)
     
-    # 2. カメラ初期化
+    # 2. アフィン行列の読み込み（起動時に1回だけ）
+    try:
+        A_affine = load_affine_matrix(AFFINE_JSON)
+        use_affine = True
+        print(f"[INFO] Loaded affine matrix from {AFFINE_JSON}")
+    except Exception as e:
+        print(f"[WARN] Affine matrix load failed: {e}. Using MM_PER_PIXEL fallback.")
+        A_affine = None
+        use_affine = False
+    
+    # 3. カメラ初期化
     try:
         cam, img = init_ximea_camera()
     except Exception as e:
         print(f"[ERROR] Camera Init Failed: {e}")
         return
 
-    # 3. AUTD起動
+    # 4. AUTD起動
     print("[INFO] Opening AUTD Controller...")
     try:
         with Controller.open(
@@ -253,19 +271,25 @@ def main():
             autd.send(Silencer())
             autd.send(Static(intensity=int(0xFF * 0.8)))
 
-            # AUTD全体の中心座標を取得（基準点）
+            # 基準座標（初期位置）
             base_center = autd.center()
-            # 初期ターゲット位置をセット（スレッドが動き出すための初期値）
+            # スレッド開始時は「中心」をターゲットにしておく
             with pos_lock:
                 shared_target_pos = (base_center[0], base_center[1], DEFAULT_Z)
 
-            # スレッド起動
+            # スレッド起動 
             t = threading.Thread(target=autd_control_loop, args=(autd,))
             t.start()
 
-            print("[INFO] Vision loop started. Press ESC to exit.")
+            print("[INFO] Vision loop started.")
+            print("=================================================")
+            print("  READY TO LEVITATE.")
+            print("  Place the particle at the center.")
+            print("  Press [ENTER] to START dynamic tracking.")
+            print("  Press [ESC] to EXIT.")
+            print("=================================================")
             
-            # メインループ
+            # --- メインループ ---
             window_name = "Tracking & Control"
             cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
@@ -283,9 +307,20 @@ def main():
             last_yolo_t = 0.0
             method = "CV"
 
+            # 追従開始フラグ（False = 固定位置維持, True = カメラ座標反映）
+            tracking_active = False
+
             while True:
+                # キー入力確認
                 if keyboard.is_pressed("esc"):
                     break
+                
+                # Enterが押されたらトラッキング開始
+                if not tracking_active and keyboard.is_pressed("enter"):
+                    tracking_active = True
+                    print("[INFO] >>> TRACKING ACTIVATED <<<")
+                    # チャタリング防止のために少し待つ（任意）
+                    time.sleep(0.2)
 
                 # 1. 画像取得
                 cam.get_image(img)
@@ -311,7 +346,8 @@ def main():
                     detected = True
                     
                     # 描画
-                    cv2.circle(frame_bgr, (int(u), int(v)), int(max(2, r)), (0, 255, 0), 2)
+                    color = (0, 255, 0) if tracking_active else (200, 200, 200)
+                    cv2.circle(frame_bgr, (int(u), int(v)), int(max(2, r)), color, 2)
                     cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (255, 255, 0), 2)
 
                 else:
@@ -339,22 +375,25 @@ def main():
                     cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (0, 255, 255), 2)
 
                 # 3. 座標変換 & スレッドへの指示更新
-                if detected:
-                    # [座標変換] 画像中心(W/2, H/2) を AUTD中心(base_center) と仮定
-                    # カメラの取り付け向きによって符号 (+/-) を逆にする必要がある
-                    
-                    # ピクセル変位 (画像中心からのズレ)
+                # Enterが押されていて(tracking_active)、かつ認識できている場合のみ更新
+                if detected and tracking_active:
+                    # [座標変換]
                     dx_px = u - (W / 2)
                     dy_px = v - (H / 2)
                     
-                    # ミリメートル変位
-                    dx_mm = dx_px * MM_PER_PIXEL
-                    dy_mm = dy_px * MM_PER_PIXEL
-
-                    # AUTD座標系へ適用 (X軸, Y軸の向きに注意する)
-                    # ここでは「画像右＝AUTD X正」「画像下＝AUTD Y正」と仮定
-                    target_x = base_center[0] + dx_mm
-                    target_y = base_center[1] + dy_mm
+                    if use_affine:
+                        # アフィン変換を使用
+                        uv_homo = np.array([[u, v, 1]], dtype=np.float32).T  # 3x1
+                        xy_affine = (A_affine @ uv_homo).flatten()  # 2x1 -> [x, y]
+                        target_x = xy_affine[0]
+                        target_y = xy_affine[1]
+                    else:
+                        # フォールバック：従来の方法
+                        dx_mm = dx_px * MM_PER_PIXEL
+                        dy_mm = dy_px * MM_PER_PIXEL
+                        target_x = base_center[0] + dx_mm
+                        target_y = base_center[1] + dy_mm
+        
                     target_z = DEFAULT_Z
 
                     # スレッドへ渡す
@@ -364,14 +403,20 @@ def main():
                     cv2.putText(frame_bgr, f"TGT: {target_x:.1f}, {target_y:.1f}", (10, 60), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
-                # 4. FPS計測・表示
+                # 4. ステータス・FPS計測・表示
                 now = time.time()
                 dt = now - prev_time
                 prev_time = now
                 if dt > 0: fps = 0.9 * fps + 0.1 * (1.0 / dt)
 
+                status_text = "ACTIVE" if tracking_active else "WAIT (Press ENTER)"
+                status_color = (0, 255, 0) if tracking_active else (0, 165, 255)
+
                 cv2.putText(frame_bgr, f"FPS: {fps:.1f} | {method}", (10, 30), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                
+                cv2.putText(frame_bgr, f"STATUS: {status_text}", (10, H - 20), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
 
                 cv2.imshow(window_name, frame_bgr)
                 if cv2.waitKey(1) & 0xFF == 27:
@@ -380,7 +425,6 @@ def main():
     except Exception as e:
         print(f"[ERROR] Runtime Error: {e}")
     finally:
-        # 終了処理：スレッドを止める
         program_running = False
         if 't' in locals() and t.is_alive():
             t.join()
