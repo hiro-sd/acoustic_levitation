@@ -56,7 +56,7 @@ EXPOSURE_US = 5000
 
 # AUTD 物理設定
 POINT_NUM = 8
-RADIUS = 23.0
+RADIUS = 23.5
 DEFAULT_Z = 400.0  # 基準高さ
 
 # CPUスレッド
@@ -266,7 +266,7 @@ def main():
             
             # 初期化送信
             autd.send(Silencer())
-            autd.send(Static(intensity=int(0xFF * 0.8)))
+            autd.send(Static(intensity=int(0xFF * 0.9)))
 
             # 基準座標（初期位置）
             base_center = autd.center()

@@ -27,8 +27,8 @@ EXPOSURE_US = 5000
 
 # AUTD（あなたの元コードに合わせて）
 POINT_NUM = 8
-RADIUS = 23.0
-X0, Y0, Z0 = 0.0, 0.0, 400.0
+RADIUS = 23.5
+X0, Y0, Z0 = -35.0, 0.0, 400.0
 
 # キャリブレーション点保存
 CSV_PATH = "calib_points_uv_xy.csv"
@@ -136,7 +136,7 @@ def main():
     ) as autd:
 
         autd.send(Silencer())
-        m = Static(intensity=int(0xFF))
+        m = Static(intensity=int(0xFF * 0.9))
 
         window_name = "XIMEA + YOLO + AUTD | 'c': capture 5s mean (u,v) | ESC: quit"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
