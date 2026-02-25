@@ -28,7 +28,7 @@ EXPOSURE_US = 5000
 # AUTD（あなたの元コードに合わせて）
 POINT_NUM = 8
 RADIUS = 23.0
-X0, Y0, Z0 = -20.0, -20.0, 400.0
+X0, Y0, Z0 = 0.0, 0.0, 400.0
 
 # キャリブレーション点保存
 CSV_PATH = "calib_points_uv_xy.csv"
