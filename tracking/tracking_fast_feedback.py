@@ -59,9 +59,6 @@ POINT_NUM = 8
 RADIUS = 23.0
 DEFAULT_Z = 400.0  # 基準高さ
 
-# 座標変換設定 (要調整)
-MM_PER_PIXEL = 0.5 
-
 # CPUスレッド
 os.environ.setdefault("OMP_NUM_THREADS", "4")
 
@@ -377,22 +374,12 @@ def main():
                 # 3. 座標変換 & スレッドへの指示更新
                 # Enterが押されていて(tracking_active)、かつ認識できている場合のみ更新
                 if detected and tracking_active:
-                    # [座標変換]
-                    dx_px = u - (W / 2)
-                    dy_px = v - (H / 2)
-                    
                     if use_affine:
                         # アフィン変換を使用
                         uv_homo = np.array([[u, v, 1]], dtype=np.float32).T  # 3x1
                         xy_affine = (A_affine @ uv_homo).flatten()  # 2x1 -> [x, y]
-                        target_x = xy_affine[0]
-                        target_y = xy_affine[1]
-                    else:
-                        # フォールバック：従来の方法
-                        dx_mm = dx_px * MM_PER_PIXEL
-                        dy_mm = dy_px * MM_PER_PIXEL
-                        target_x = base_center[0] + dx_mm
-                        target_y = base_center[1] + dy_mm
+                        target_x = base_center[0] + xy_affine[0]
+                        target_y = base_center[1] + xy_affine[1]
         
                     target_z = DEFAULT_Z
 
