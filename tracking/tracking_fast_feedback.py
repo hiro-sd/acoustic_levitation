@@ -2,6 +2,7 @@ import os
 import time
 import sys
 import threading
+import math
 import numpy as np
 import cv2
 import keyboard
@@ -61,6 +62,10 @@ POINT_NUM = 8
 RADIUS = 23.5
 DEFAULT_Z = 400.0  # 基準高さ
 
+# ★ 中心引き戻し（フィードバック）の設定 ★
+PULL_RATIO = 0.03   # 距離に対して何％中心に寄せるか（0.03 = 3%）
+MAX_PULL_MM = 1.0   # 1フレームあたりの最大移動量(mm)。大きすぎるとボールが落ちます。
+
 # CPUスレッド
 os.environ.setdefault("OMP_NUM_THREADS", "4")
 
@@ -79,6 +84,7 @@ autd_arrangement = [
 # スレッド共有変数
 shared_target_pos = None  # (x, y, z) [mm]
 program_running = True    # スレッド終了フラグ
+autd_display_fps = 0.0    # AUTDのFPS表示用
 pos_lock = threading.Lock() # 排他制御
 
 
@@ -165,12 +171,10 @@ def track_ball_cv(frame_rgb: np.ndarray, roi_rect):
         area = cv2.contourArea(cnt)
         if area < MIN_AREA_PX or area > MAX_AREA_PX: continue
         
-        # ★修正3: 誤検出防止（円形度のチェックを追加）
-        # 物体がないのに背景のノイズを拾うのを防ぐため、形が「円」に近いものだけを候補にします。
         perimeter = cv2.arcLength(cnt, True)
         if perimeter == 0: continue
         circularity = 4 * np.pi * (area / (perimeter * perimeter))
-        if circularity < 0.8:  # 円形度が60%未満のいびつな形は除外
+        if circularity < 0.6: 
             continue
 
         M = cv2.moments(cnt)
@@ -187,10 +191,15 @@ def track_ball_cv(frame_rgb: np.ndarray, roi_rect):
     (xc, yc), r = cv2.minEnclosingCircle(cnt)
     return (float(x1 + xc), float(y1 + yc), float(r)), bw
 
+
 # AUTD制御用スレッド関数
 def autd_control_loop(autd):
-    global shared_target_pos, program_running
+    global shared_target_pos, program_running, autd_display_fps
     print("[THREAD] AUTD Control Thread Started.")
+    
+    # AUTD用のFPS計算タイマー
+    fps_start_time = time.time()
+    fps_frame_count = 0
     
     while program_running:
         tgt = None
@@ -218,15 +227,22 @@ def autd_control_loop(autd):
             ).into_nearest()
 
             autd.send(stm)
+            fps_frame_count += 1
             
         except Exception as e:
             pass # スレッド終了時のエラーは無視
+
+        # FPS計算 (1秒ごとに更新)
+        now = time.time()
+        if now - fps_start_time >= 1.0:
+            autd_display_fps = fps_frame_count / (now - fps_start_time)
+            fps_start_time = now
+            fps_frame_count = 0
 
         time.sleep(0.004)
 
     print("[THREAD] AUTD Control Thread Stopped.")
 
-# アフィン行列をJSONから読み込む
 def load_affine_matrix(json_path):
     with open(json_path, "r") as f:
         data = json.load(f)
@@ -284,10 +300,10 @@ def main():
             window_name = "Tracking & Control"
             cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
-            # ★修正4: 正確なFPS計算（1秒間の処理フレーム数をカウント）
-            fps_start_time = time.time()
-            fps_frame_count = 0
-            display_fps = 0.0
+            # カメラFPS計算用
+            cam_fps_start_time = time.time()
+            cam_fps_frame_count = 0
+            cam_display_fps = 0.0
 
             frame_count = 0
 
@@ -315,16 +331,11 @@ def main():
                 cam.get_image(img)
                 frame = img.get_image_data_numpy()
                 frame_count += 1
-                fps_frame_count += 1
+                cam_fps_frame_count += 1
                 do_display = (frame_count % DISPLAY_EVERY_N_FRAMES == 0)
                 
-                # ★修正2: 青っぽくなる問題の解消
-                # XIMEAは XI_RGB24 設定でも、OpenCV用(NumPy)に BGR 配列としてメモリに格納されることが多いです。
-                # 余計な cvtColor(RGB2BGR) をかけるとBとRが逆転し青くなります。
-                # そのため、表示時は変換せずにそのままコピー（copy）して使います。
                 frame_bgr = frame.copy() if do_display else None
 
-                # ROI処理 & トラッキング
                 x1, y1, x2, y2 = clamp_roi(roi_cx, roi_cy, roi_size, W, H)
                 roi_rect = (x1, y1, x2, y2)
                 track, bw = track_ball_cv(frame, roi_rect)
@@ -371,13 +382,30 @@ def main():
                     if do_display:
                         cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (0, 255, 255), 2)
 
+                # --- 座標計算 と 中心引き戻し制御 ---
                 if detected and tracking_active:
                     if use_affine:
+                        # 1. カメラで見た物体の絶対座標を計算
                         uv_homo = np.array([[u, v, 1]], dtype=np.float32).T 
                         xy_affine = (A_affine @ uv_homo).flatten() 
-                        target_x = base_center[0] + xy_affine[0]
-                        target_y = base_center[1] + xy_affine[1]
-        
+                        current_x = base_center[0] + xy_affine[0]
+                        current_y = base_center[1] + xy_affine[1]
+                        
+                        # 2. 中心 (base_center) への距離とベクトルを計算
+                        dx = base_center[0] - current_x
+                        dy = base_center[1] - current_y
+                        dist = math.hypot(dx, dy)
+                        
+                        # 3. 中心に向けて少しだけ引っ張る（フィードバック制御）
+                        pull_dist = min(MAX_PULL_MM, dist * PULL_RATIO)
+                        
+                        if dist > 0.1: # 誤差範囲(0.1mm)より外側にいる場合のみ引っ張る
+                            target_x = current_x + (dx / dist) * pull_dist
+                            target_y = current_y + (dy / dist) * pull_dist
+                        else:
+                            target_x = current_x
+                            target_y = current_y
+                    
                     target_z = DEFAULT_Z
 
                     with pos_lock:
@@ -387,19 +415,20 @@ def main():
                         cv2.putText(frame_bgr, f"TGT: {target_x:.1f}, {target_y:.1f}", (10, 60), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
-                # ★修正4: 正確なFPSの更新（1秒ごとに表示数値を更新）
+                # カメラFPSの更新
                 now = time.time()
-                if now - fps_start_time >= 1.0:
-                    display_fps = fps_frame_count / (now - fps_start_time)
-                    fps_start_time = now
-                    fps_frame_count = 0
+                if now - cam_fps_start_time >= 1.0:
+                    cam_display_fps = cam_fps_frame_count / (now - cam_fps_start_time)
+                    cam_fps_start_time = now
+                    cam_fps_frame_count = 0
 
                 status_text = "ACTIVE" if tracking_active else "WAIT (Press ENTER)"
                 status_color = (0, 255, 0) if tracking_active else (0, 165, 255)
 
                 if do_display:
-                    cv2.putText(frame_bgr, f"FPS: {display_fps:.1f} | {method}", (10, 30), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                    # カメラとAUTD両方のFPSを表示
+                    cv2.putText(frame_bgr, f"CAM FPS: {cam_display_fps:.1f} | AUTD FPS: {autd_display_fps:.1f} | {method}", (10, 30), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     
                     cv2.putText(frame_bgr, f"STATUS: {status_text}", (10, H - 20), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
@@ -408,16 +437,14 @@ def main():
                     if cv2.waitKey(1) & 0xFF == 27:
                         break
             
-            # ★修正1: ESCキーで抜けた直後に、スレッドを停止してAUTD出力を完全に止める
             program_running = False
-            t.join() # AUTDスレッドの終了を待機
-            autd.send(Static(intensity=0)) # 音圧を0にして出力を完全停止
+            t.join() 
+            autd.send(Static(intensity=0)) 
             print("[INFO] AUTD emission stopped.")
 
     except Exception as e:
         print(f"[ERROR] Runtime Error: {e}")
     finally:
-        # 万が一のエラー時にも確実にスレッドを止める
         program_running = False
         if 't' in locals() and t.is_alive():
             t.join()
