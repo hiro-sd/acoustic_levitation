@@ -62,9 +62,9 @@ POINT_NUM = 8
 RADIUS = 23.5
 DEFAULT_Z = 400.0  # 基準高さ
 
-# ★ 中心引き戻し（フィードバック）の設定 ★
+# 中心引き戻し（フィードバック）の設定 
 PULL_RATIO = 0.03   # 距離に対して何％中心に寄せるか（0.03 = 3%）
-MAX_PULL_MM = 1.0   # 1フレームあたりの最大移動量(mm)。大きすぎるとボールが落ちます。
+MAX_PULL_MM = 1.0   # 1フレームあたりの最大移動量(mm)
 
 # CPUスレッド
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -382,7 +382,7 @@ def main():
                     if do_display:
                         cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (0, 255, 255), 2)
 
-                # --- 座標計算 と 中心引き戻し制御 ---
+                # 座標計算 と 中心引き戻し制御
                 if detected and tracking_active:
                     if use_affine:
                         # 1. カメラで見た物体の絶対座標を計算
