@@ -24,6 +24,7 @@ from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static
 from pyautd3_link_soem import SOEM, SOEMOption, Status
 
 
+
 # 設定
 MODEL_PATH = "tracking/train/weights/best.pt"
 TARGET_CLASS_NAME = "levitatedball"
@@ -35,18 +36,21 @@ YOLO_IMGSZ = 320
 YOLO_REFIND_COOLDOWN_S = 0.3
 
 # 古典CVトラッキング
-USE_OTSU = True
-FIXED_THRESH = 180
+USE_OTSU = False
+FIXED_THRESH = 160
 BLUR_KSIZE = 5
 MIN_AREA_PX = 200
 MAX_AREA_PX = 200000
 
 # ROI
-ROI_INIT_SIZE = 320
-ROI_MIN_SIZE = 160
+ROI_INIT_SIZE = 240
+ROI_MIN_SIZE = 120
 ROI_MAX_SIZE = 640
 ROI_MARGIN = 40
-ROI_EXPAND_ON_LOST = 1.25
+ROI_EXPAND_ON_LOST = 1.15
+
+# 描画間引き（1なら毎フレーム描画）
+DISPLAY_EVERY_N_FRAMES = 3
 
 # ロスト判定
 LOST_MAX_FRAMES = 10
@@ -78,6 +82,7 @@ autd_arrangement = [
 shared_target_pos = None  # (x, y, z) [mm]
 program_running = True    # スレッド終了フラグ
 pos_lock = threading.Lock() # 排他制御
+
 
 
 def err_handler(slave: int, status: Status) -> None:
@@ -221,6 +226,7 @@ def autd_control_loop(autd):
         # 送信頻度の調整（約250Hz）
         time.sleep(0.004)
 
+    autd.close()
     print("[THREAD] AUTD Control Thread Stopped.")
 
 # アフィン行列をJSONから読み込む
@@ -229,6 +235,7 @@ def load_affine_matrix(json_path):
         data = json.load(f)
     A = np.array(data["A_2x3"], dtype=np.float32)
     return A
+
 
 
 def main():
@@ -292,6 +299,7 @@ def main():
 
             prev_time = time.time()
             fps = 0.0
+            frame_count = 0
 
             # 最初の1フレーム取得して画像サイズ確認
             cam.get_image(img)
@@ -322,7 +330,9 @@ def main():
                 # 1. 画像取得
                 cam.get_image(img)
                 frame = img.get_image_data_numpy()
-                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) # 表示用
+                frame_count += 1
+                do_display = (frame_count % DISPLAY_EVERY_N_FRAMES == 0)
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) if do_display else None  # 表示用
 
                 # 2. ROI処理 & トラッキング
                 x1, y1, x2, y2 = clamp_roi(roi_cx, roi_cy, roi_size, W, H)
@@ -343,10 +353,10 @@ def main():
                     detected = True
                     
                     # 描画
-                    color = (0, 255, 0) if tracking_active else (200, 200, 200)
-                    cv2.circle(frame_bgr, (int(u), int(v)), int(max(2, r)), color, 2)
-                    cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (255, 255, 0), 2)
-
+                    if do_display:
+                        color = (0, 255, 0) if tracking_active else (200, 200, 200)
+                        cv2.circle(frame_bgr, (int(u), int(v)), int(max(2, r)), color, 2)
+                        cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (255, 255, 0), 2)
                 else:
                     # ロスト時
                     lost_count += 1
@@ -354,7 +364,7 @@ def main():
                     
                     now_mono = time.monotonic()
                     if lost_count >= LOST_MAX_FRAMES and (now_mono - last_yolo_t) >= YOLO_REFIND_COOLDOWN_S:
-                        det = yolo_refind_center(model, frame_bgr, target_cls_id)
+                        det = yolo_refind_center(model, frame, target_cls_id)
                         last_yolo_t = now_mono
                         if det:
                             u, v, score, (bx1, by1, bx2, by2) = det
@@ -363,13 +373,15 @@ def main():
                             roi_cx, roi_cy = int(u), int(v)
                             roi_size = ROI_INIT_SIZE
                             detected = True
-                            cv2.rectangle(frame_bgr, (int(bx1), int(by1)), (int(bx2), int(by2)), (0, 0, 255), 2)
+                            if do_display:
+                                cv2.rectangle(frame_bgr, (int(bx1), int(by1)), (int(bx2), int(by2)), (0, 0, 255), 2)
                         else:
                             method = "LOST"
                     else:
                         method = "LOST"
                     
-                    cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                    if do_display:
+                        cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (0, 255, 255), 2)
 
                 # 3. 座標変換 & スレッドへの指示更新
                 # Enterが押されていて(tracking_active)、かつ認識できている場合のみ更新
@@ -387,8 +399,9 @@ def main():
                     with pos_lock:
                         shared_target_pos = (target_x, target_y, target_z)
                         
-                    cv2.putText(frame_bgr, f"TGT: {target_x:.1f}, {target_y:.1f}", (10, 60), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                    if do_display:
+                        cv2.putText(frame_bgr, f"TGT: {target_x:.1f}, {target_y:.1f}", (10, 60), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
                 # 4. ステータス・FPS計測・表示
                 now = time.time()
@@ -399,15 +412,16 @@ def main():
                 status_text = "ACTIVE" if tracking_active else "WAIT (Press ENTER)"
                 status_color = (0, 255, 0) if tracking_active else (0, 165, 255)
 
-                cv2.putText(frame_bgr, f"FPS: {fps:.1f} | {method}", (10, 30), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-                
-                cv2.putText(frame_bgr, f"STATUS: {status_text}", (10, H - 20), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
+                if do_display:
+                    cv2.putText(frame_bgr, f"FPS: {fps:.1f} | {method}", (10, 30), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                    
+                    cv2.putText(frame_bgr, f"STATUS: {status_text}", (10, H - 20), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
 
-                cv2.imshow(window_name, frame_bgr)
-                if cv2.waitKey(1) & 0xFF == 27:
-                    break
+                    cv2.imshow(window_name, frame_bgr)
+                    if cv2.waitKey(1) & 0xFF == 27:
+                        break
 
     except Exception as e:
         print(f"[ERROR] Runtime Error: {e}")
