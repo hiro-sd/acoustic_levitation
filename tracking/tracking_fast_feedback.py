@@ -54,8 +54,8 @@ RADIUS = 23.5
 DEFAULT_Z = 400.0  
 
 # 中心引き戻し（フィードバック）の設定 
-PULL_RATIO = 0.03   # 距離に対して何％中心に寄せるか（0.03 = 3%）
-MAX_PULL_MM = 1.0   # 1フレームあたりの最大移動量(mm)
+# PULL_RATIO = 0.03   # 距離に対して何％中心に寄せるか（0.03 = 3%）
+# MAX_PULL_MM = 1.0   # 1フレームあたりの最大移動量(mm)
 
 # CPUスレッド
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -218,8 +218,8 @@ def autd_control_loop(autd, sender):
             fps_start_time = now
             fps_frame_count = 0
 
-        # 通信の安全マージン: 約30Hz（0.033秒）更新に抑える
-        time.sleep(0.03) # 0.05
+        # 通信の安全マージン: 約200Hz更新
+        time.sleep(0.005)
 
     print("[THREAD] AUTD Control Thread Stopped.")
 
@@ -261,11 +261,24 @@ def main():
             SOEM(err_handler=err_handler, option=soem_option),
         ) as autd:
             
+            try:
+                default_opt = SenderOption(timeout=Duration.from_millis(0))
+                if hasattr(autd, "default_sender_option"):
+                    autd.default_sender_option = default_opt
+                    print("[INFO] Set autd.default_sender_option timeout=0")
+                elif hasattr(autd, "set_default_sender_option"):
+                    autd.set_default_sender_option(default_opt)
+                    print("[INFO] Called autd.set_default_sender_option(timeout=0)")
+                else:
+                    print("[WARN] Could not set default sender option (API not found).")
+            except Exception as e:
+                print(f"[WARN] Failed to set default sender option: {e}")
+            
             sender = autd.sender(SenderOption(timeout=Duration.from_millis(0)))
             
             # 初期化送信
             sender.send(Silencer())
-            sender.send(Static(intensity=int(0xFF * 0.85)))
+            sender.send(Static(intensity=int(0xFF * 0.9)))
 
             # 基準座標（中心）を取得
             base_center = autd.center()
@@ -377,19 +390,21 @@ def main():
                         current_y = base_center[1] + xy_affine[1]
                         
                         # 中心 (base_center) への距離とベクトルを計算
-                        dx = base_center[0] - current_x
-                        dy = base_center[1] - current_y
-                        dist = math.hypot(dx, dy)
+                        # dx = base_center[0] - current_x
+                        # dy = base_center[1] - current_y
+                        # dist = math.hypot(dx, dy)
                         
                         # 中心に向けて少しだけ引っ張る（フィードバック制御）
-                        pull_dist = min(MAX_PULL_MM, dist * PULL_RATIO)
+                        # pull_dist = min(MAX_PULL_MM, dist * PULL_RATIO)
                         
-                        if dist > 0.1: # 誤差範囲(0.1mm)より外側にいる場合のみ引っ張る
-                            target_x = current_x + (dx / dist) * pull_dist
-                            target_y = current_y + (dy / dist) * pull_dist
-                        else:
-                            target_x = current_x
-                            target_y = current_y
+                        # if dist > 0.1: # 誤差範囲(0.1mm)より外側にいる場合のみ引っ張る
+                        #     target_x = current_x + (dx / dist) * pull_dist
+                        #     target_y = current_y + (dy / dist) * pull_dist
+                        # else:
+                        #     target_x = current_x
+                        #     target_y = current_y
+                        target_x = current_x
+                        target_y = current_y
                     
                     target_z = DEFAULT_Z
 
@@ -427,9 +442,17 @@ def main():
             print("[INFO] Silencing AUTD...")
             # エラーが起きてもクラッシュせずに必ずデバイスを閉じる
             try:
-                sender.send(Silencer())
-                sender.send(Static(intensity=0)) 
+                # 停止は「確実に届かせたい」ので、shutdown用にtimeout長めsenderを使う
+                shutdown_sender = autd.sender(SenderOption(timeout=Duration.from_millis(10000)))
+
+                # 念のため複数回送って、間に少し待つ（SOEMの取りこぼし対策）
+                shutdown_sender.send(Silencer())
+                time.sleep(0.05)
+                shutdown_sender.send(Static(intensity=0))
+                time.sleep(0.05)
+                shutdown_sender.send(Silencer())
                 time.sleep(0.1)
+
                 print("[INFO] AUTD emission cleanly stopped.")
             except Exception as e:
                 print(f"[WARN] Failed to silence completely: {e}")
