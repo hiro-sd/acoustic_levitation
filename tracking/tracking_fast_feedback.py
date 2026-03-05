@@ -20,7 +20,6 @@ except ImportError:
 
 # AUTD関連
 from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static, SenderOption, Duration
-# from pyautd3.utils import Duration
 from pyautd3_link_soem import SOEM, SOEMOption, Status
 
 # 設定
