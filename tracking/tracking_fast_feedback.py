@@ -8,8 +8,6 @@ import cv2
 import keyboard
 import json
 
-from ultralytics import YOLO
-
 # 高速カメラで物体の位置を最速でトラッキングしつつ、別スレッドでAUTDの焦点を更新するコード
 
 # XIMEA設定
@@ -21,20 +19,14 @@ except ImportError:
     xiapi = None
 
 # AUTD関連
-from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static
+from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static, SenderOption
+from pyautd3.utils import Duration
 from pyautd3_link_soem import SOEM, SOEMOption, Status
 
 # 設定
-MODEL_PATH = "tracking/train/weights/best.pt"
-TARGET_CLASS_NAME = "levitatedball"
-CONF_THRES = 0.5
 AFFINE_JSON = "affine_uv_to_xy.json"
 
-# YOLO再捕捉の軽量化
-YOLO_IMGSZ = 320
-YOLO_REFIND_COOLDOWN_S = 0.3
-
-# 古典CVトラッキング
+# CVトラッキング
 USE_OTSU = False
 FIXED_THRESH = 160
 BLUR_KSIZE = 5
@@ -60,7 +52,7 @@ EXPOSURE_US = 5000
 # AUTD 物理設定
 POINT_NUM = 8
 RADIUS = 23.5
-DEFAULT_Z = 400.0  # 基準高さ
+DEFAULT_Z = 400.0  
 
 # 中心引き戻し（フィードバック）の設定 
 PULL_RATIO = 0.03   # 距離に対して何％中心に寄せるか（0.03 = 3%）
@@ -89,7 +81,7 @@ pos_lock = threading.Lock() # 排他制御
 
 
 def err_handler(slave: int, status: Status) -> None:
-    print(f"slave [{slave}]: {status}")
+    print(f"[AUTD SOEM] slave [{slave}]: {status}")
     if status == Status.Lost():
         os._exit(-1)
 
@@ -107,32 +99,6 @@ def init_ximea_camera():
     img = xiapi.Image()
     cam.start_acquisition()
     return cam, img
-
-def find_target_class_id(model: YOLO, target_name: str) -> int | None:
-    names = model.model.names
-    for cid, name in names.items():
-        if str(name).lower() == target_name.lower():
-            return int(cid)
-    return None
-
-def yolo_refind_center(model: YOLO, frame_rgb_or_bgr: np.ndarray, target_cls_id: int | None):
-    results = model.predict(source=frame_rgb_or_bgr, imgsz=YOLO_IMGSZ, conf=CONF_THRES, device="cpu", verbose=False)
-    boxes = results[0].boxes
-    if boxes is None or len(boxes) == 0:
-        return None
-    best = None
-    best_score = -1.0
-    for b in boxes:
-        score = float(b.conf[0].item())
-        if score < CONF_THRES: continue
-        cls_id = int(b.cls[0].item())
-        if target_cls_id is not None and cls_id != target_cls_id: continue
-        x1, y1, x2, y2 = b.xyxy[0].tolist()
-        u, v = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-        if score > best_score:
-            best_score = score
-            best = (u, v, score, (x1, y1, x2, y2))
-    return best
 
 def clamp_roi(cx, cy, size, w, h):
     size = int(max(ROI_MIN_SIZE, min(ROI_MAX_SIZE, size)))
@@ -193,13 +159,14 @@ def track_ball_cv(frame_rgb: np.ndarray, roi_rect):
 
 
 # AUTD制御用スレッド関数
-def autd_control_loop(autd):
+def autd_control_loop(autd, sender):
     global shared_target_pos, program_running, autd_display_fps
     print("[THREAD] AUTD Control Thread Started.")
     
     # AUTD用のFPS計算タイマー
     fps_start_time = time.time()
     fps_frame_count = 0
+    last_sent_pos = None  
     
     while program_running:
         tgt = None
@@ -208,8 +175,18 @@ def autd_control_loop(autd):
                 tgt = shared_target_pos
         
         if tgt is None:
-            time.sleep(0.002)
+            time.sleep(0.03) # 0.05
             continue
+
+        # 重複データの連続送信を防ぐ（通信パンク対策）
+        if last_sent_pos is not None:
+            dx = tgt[0] - last_sent_pos[0]
+            dy = tgt[1] - last_sent_pos[1]
+            dz = tgt[2] - last_sent_pos[2]
+            dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+            if dist < 0.1:
+                time.sleep(0.01) 
+                continue
 
         tx, ty, tz = tgt
         center_vec = np.array([tx, ty, tz])
@@ -226,11 +203,14 @@ def autd_control_loop(autd):
                 config=100 * Hz,
             ).into_nearest()
 
-            autd.send(stm)
+            sender.send(stm)
+            last_sent_pos = tgt 
             fps_frame_count += 1
             
         except Exception as e:
-            pass # スレッド終了時のエラーは無視
+            print(f"[AUTD Thread Error] {e}")
+            # エラー時はデバイスが自動復帰するまで0.5秒待つ
+            time.sleep(0.5)
 
         # FPS計算 (1秒ごとに更新)
         now = time.time()
@@ -239,7 +219,8 @@ def autd_control_loop(autd):
             fps_start_time = now
             fps_frame_count = 0
 
-        time.sleep(0.004)
+        # 通信の安全マージン: 約30Hz（0.033秒）更新に抑える
+        time.sleep(0.03) # 0.05
 
     print("[THREAD] AUTD Control Thread Stopped.")
 
@@ -249,52 +230,59 @@ def load_affine_matrix(json_path):
     A = np.array(data["A_2x3"], dtype=np.float32)
     return A
 
-
 def main():
     global shared_target_pos, program_running
 
-    print(f"[INFO] Loading YOLO model...")
-    model = YOLO(MODEL_PATH)
-    target_cls_id = find_target_class_id(model, TARGET_CLASS_NAME)
-    
+    # アフィン行列読み込み
     try:
         A_affine = load_affine_matrix(AFFINE_JSON)
         use_affine = True
         print(f"[INFO] Loaded affine matrix from {AFFINE_JSON}")
     except Exception as e:
-        print(f"[WARN] Affine matrix load failed: {e}. Using MM_PER_PIXEL fallback.")
+        print(f"[WARN] Affine matrix load failed: {e}")
         A_affine = None
         use_affine = False
     
+    # 1. カメラ初期化
     try:
         cam, img = init_ximea_camera()
     except Exception as e:
         print(f"[ERROR] Camera Init Failed: {e}")
         return
 
+    # 2. AUTD起動
     print("[INFO] Opening AUTD Controller...")
     try:
+        # 9台接続に合わせて同期周期(sync0_cycle)を2msに緩和し、通信パンクを防ぐ
+        soem_option = SOEMOption()
+        soem_option.sync0_cycle = Duration.from_micros(2000) # 3000
+        
         with Controller.open(
             autd_arrangement,
-            SOEM(err_handler=err_handler, option=SOEMOption()),
+            SOEM(err_handler=err_handler, option=soem_option),
         ) as autd:
             
-            autd.send(Silencer())
-            autd.send(Static(intensity=int(0xFF * 0.9)))
+            sender = autd.sender(SenderOption(timeout=Duration.from_millis(0)))
+            
+            # 初期化送信
+            sender.send(Silencer())
+            sender.send(Static(intensity=int(0xFF * 0.85)))
 
+            # 基準座標（中心）を取得
             base_center = autd.center()
             with pos_lock:
                 shared_target_pos = (base_center[0], base_center[1], DEFAULT_Z)
 
-            t = threading.Thread(target=autd_control_loop, args=(autd,))
+            # スレッド起動
+            t = threading.Thread(target=autd_control_loop, args=(autd, sender))
             t.start()
 
             print("[INFO] Vision loop started.")
             print("=================================================")
             print("  READY TO LEVITATE.")
-            print("  Place the particle at the center.")
             print("  Press [ENTER] to START dynamic tracking.")
-            print("  Press [ESC] to EXIT.")
+            print("  Press [ENTER] again to PAUSE (Return to center).")
+            print("  Press [ESC] to EXIT and STOP ultrasound.")
             print("=================================================")
             
             window_name = "Tracking & Control"
@@ -304,9 +292,9 @@ def main():
             cam_fps_start_time = time.time()
             cam_fps_frame_count = 0
             cam_display_fps = 0.0
-
             frame_count = 0
 
+            # 最初の1フレーム取得して画像サイズ確認
             cam.get_image(img)
             frame0 = img.get_image_data_numpy()
             H, W = frame0.shape[:2]
@@ -314,20 +302,31 @@ def main():
             roi_cx, roi_cy = W // 2, H // 2
             roi_size = ROI_INIT_SIZE
             lost_count = 0
-            last_yolo_t = 0.0
             method = "CV"
 
             tracking_active = False
+            prev_enter_state = False
 
             while True:
+                # キー入力確認
                 if keyboard.is_pressed("esc"):
                     break
                 
-                if not tracking_active and keyboard.is_pressed("enter"):
-                    tracking_active = True
-                    print("[INFO] >>> TRACKING ACTIVATED <<<")
-                    time.sleep(0.2)
+                # Enterキーのトグル処理
+                current_enter_state = keyboard.is_pressed("enter")
+                if current_enter_state and not prev_enter_state:
+                    tracking_active = not tracking_active
+                    
+                    if tracking_active:
+                        print("[INFO] >>> TRACKING ACTIVATED <<<")
+                    else:
+                        print("[INFO] >>> TRACKING PAUSED (Center Fixed) <<<")
+                        # オフになった瞬間、ターゲットを初期位置（中心）に戻す
+                        with pos_lock:
+                            shared_target_pos = (base_center[0], base_center[1], DEFAULT_Z)
+                prev_enter_state = current_enter_state
 
+                # 1. 画像取得
                 cam.get_image(img)
                 frame = img.get_image_data_numpy()
                 frame_count += 1
@@ -336,6 +335,7 @@ def main():
                 
                 frame_bgr = frame.copy() if do_display else None
 
+                # 2. ROI処理 & トラッキング
                 x1, y1, x2, y2 = clamp_roi(roi_cx, roi_cy, roi_size, W, H)
                 roi_rect = (x1, y1, x2, y2)
                 track, bw = track_ball_cv(frame, roi_rect)
@@ -344,6 +344,7 @@ def main():
                 u, v, r = 0, 0, 0
 
                 if track is not None:
+                    # 追跡成功時
                     u, v, r = track
                     method = "CV"
                     lost_count = 0
@@ -358,45 +359,30 @@ def main():
                         cv2.circle(frame_bgr, (int(u), int(v)), int(max(2, r)), color, 2)
                         cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (255, 255, 0), 2)
                 else:
+                    # ロスト時
                     lost_count += 1
+                    # ROIを少しずつ広げて再発見を試みる
                     roi_size = int(min(ROI_MAX_SIZE, roi_size * ROI_EXPAND_ON_LOST))
-                    
-                    now_mono = time.monotonic()
-                    if lost_count >= LOST_MAX_FRAMES and (now_mono - last_yolo_t) >= YOLO_REFIND_COOLDOWN_S:
-                        det = yolo_refind_center(model, frame, target_cls_id)
-                        last_yolo_t = now_mono
-                        if det:
-                            u, v, score, (bx1, by1, bx2, by2) = det
-                            method = "YOLO"
-                            lost_count = 0
-                            roi_cx, roi_cy = int(u), int(v)
-                            roi_size = ROI_INIT_SIZE
-                            detected = True
-                            if do_display:
-                                cv2.rectangle(frame_bgr, (int(bx1), int(by1)), (int(bx2), int(by2)), (0, 0, 255), 2)
-                        else:
-                            method = "LOST"
-                    else:
-                        method = "LOST"
+                    method = "LOST"
                     
                     if do_display:
                         cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (0, 255, 255), 2)
 
-                # 座標計算 と 中心引き戻し制御
+                # 3. 座標計算 と 中心引き戻し制御
                 if detected and tracking_active:
                     if use_affine:
-                        # 1. カメラで見た物体の絶対座標を計算
+                        # カメラで見た物体の絶対座標を計算
                         uv_homo = np.array([[u, v, 1]], dtype=np.float32).T 
                         xy_affine = (A_affine @ uv_homo).flatten() 
                         current_x = base_center[0] + xy_affine[0]
                         current_y = base_center[1] + xy_affine[1]
                         
-                        # 2. 中心 (base_center) への距離とベクトルを計算
+                        # 中心 (base_center) への距離とベクトルを計算
                         dx = base_center[0] - current_x
                         dy = base_center[1] - current_y
                         dist = math.hypot(dx, dy)
                         
-                        # 3. 中心に向けて少しだけ引っ張る（フィードバック制御）
+                        # 中心に向けて少しだけ引っ張る（フィードバック制御）
                         pull_dist = min(MAX_PULL_MM, dist * PULL_RATIO)
                         
                         if dist > 0.1: # 誤差範囲(0.1mm)より外側にいる場合のみ引っ張る
@@ -415,7 +401,7 @@ def main():
                         cv2.putText(frame_bgr, f"TGT: {target_x:.1f}, {target_y:.1f}", (10, 60), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
-                # カメラFPSの更新
+                # 4. カメラFPSの更新と画面表示
                 now = time.time()
                 if now - cam_fps_start_time >= 1.0:
                     cam_display_fps = cam_fps_frame_count / (now - cam_fps_start_time)
@@ -426,28 +412,35 @@ def main():
                 status_color = (0, 255, 0) if tracking_active else (0, 165, 255)
 
                 if do_display:
-                    # カメラとAUTD両方のFPSを表示
                     cv2.putText(frame_bgr, f"CAM FPS: {cam_display_fps:.1f} | AUTD FPS: {autd_display_fps:.1f} | {method}", (10, 30), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                    
                     cv2.putText(frame_bgr, f"STATUS: {status_text}", (10, H - 20), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
-
                     cv2.imshow(window_name, frame_bgr)
                     if cv2.waitKey(1) & 0xFF == 27:
                         break
             
+            # 堅牢な終了処理
             program_running = False
-            t.join() 
-            autd.send(Static(intensity=0)) 
-            print("[INFO] AUTD emission stopped.")
+            print("[INFO] Waiting for AUTD thread to close...")
+            t.join(timeout=2.0) 
+            
+            print("[INFO] Silencing AUTD...")
+            # エラーが起きてもクラッシュせずに必ずデバイスを閉じる
+            try:
+                sender.send(Silencer())
+                sender.send(Static(intensity=0)) 
+                time.sleep(0.1)
+                print("[INFO] AUTD emission cleanly stopped.")
+            except Exception as e:
+                print(f"[WARN] Failed to silence completely: {e}")
 
     except Exception as e:
         print(f"[ERROR] Runtime Error: {e}")
     finally:
         program_running = False
         if 't' in locals() and t.is_alive():
-            t.join()
+            t.join(timeout=1.0)
         
         try:
             cam.stop_acquisition()
