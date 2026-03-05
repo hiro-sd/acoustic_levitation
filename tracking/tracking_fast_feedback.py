@@ -19,8 +19,8 @@ except ImportError:
     xiapi = None
 
 # AUTD関連
-from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static, SenderOption
-from pyautd3.utils import Duration
+from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static, SenderOption, Duration
+# from pyautd3.utils import Duration
 from pyautd3_link_soem import SOEM, SOEMOption, Status
 
 # 設定
@@ -255,7 +255,7 @@ def main():
     try:
         # 9台接続に合わせて同期周期(sync0_cycle)を2msに緩和し、通信パンクを防ぐ
         soem_option = SOEMOption()
-        soem_option.sync0_cycle = Duration.from_micros(2000) # 3000
+        soem_option.sync0_cycle = Duration.from_micros(2000)
         
         with Controller.open(
             autd_arrangement,
