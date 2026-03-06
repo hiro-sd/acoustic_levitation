@@ -297,8 +297,8 @@ def main():
             print("  Press [ESC] to EXIT and STOP ultrasound.")
             print("=================================================")
             
-            window_name = "Tracking & Control"
-            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            # window_name = "Tracking & Control"
+            # cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
             # カメラFPS計算用
             cam_fps_start_time = time.time()
@@ -343,9 +343,11 @@ def main():
                 frame = img.get_image_data_numpy()
                 frame_count += 1
                 cam_fps_frame_count += 1
-                do_display = (frame_count % DISPLAY_EVERY_N_FRAMES == 0)
-                
-                frame_bgr = frame.copy() if do_display else None
+                # do_display = (frame_count % DISPLAY_EVERY_N_FRAMES == 0)
+                do_display = False
+
+                # frame_bgr = frame.copy() if do_display else None
+                frame_bgr = None
 
                 # 2. ROI処理 & トラッキング
                 x1, y1, x2, y2 = clamp_roi(roi_cx, roi_cy, roi_size, W, H)
@@ -430,9 +432,9 @@ def main():
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     cv2.putText(frame_bgr, f"STATUS: {status_text}", (10, H - 20), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
-                    cv2.imshow(window_name, frame_bgr)
-                    if cv2.waitKey(1) & 0xFF == 27:
-                        break
+                    # cv2.imshow(window_name, frame_bgr)
+                    # if cv2.waitKey(1) & 0xFF == 27:
+                    #     break
             
             # 堅牢な終了処理
             program_running = False
@@ -468,7 +470,7 @@ def main():
             cam.stop_acquisition()
             cam.close_device()
         except: pass
-        cv2.destroyAllWindows()
+        # cv2.destroyAllWindows()
         print("[INFO] Finished.")
 
 if __name__ == "__main__":
