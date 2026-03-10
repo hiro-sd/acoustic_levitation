@@ -51,10 +51,6 @@ POINT_NUM = 8
 RADIUS = 23.5
 DEFAULT_Z = 400.0  
 
-# 中心引き戻し（フィードバック）の設定 
-# PULL_RATIO = 0.03   # 距離に対して何％中心に寄せるか（0.03 = 3%）
-# MAX_PULL_MM = 1.0   # 1フレームあたりの最大移動量(mm)
-
 # CPUスレッド
 os.environ.setdefault("OMP_NUM_THREADS", "4")
 
@@ -257,18 +253,19 @@ def main():
             TwinCAT(),
         ) as autd:
             
-            try:
-                default_opt = SenderOption(timeout=Duration.from_millis(0))
-                if hasattr(autd, "default_sender_option"):
-                    autd.default_sender_option = default_opt
-                    print("[INFO] Set autd.default_sender_option timeout=0")
-                elif hasattr(autd, "set_default_sender_option"):
-                    autd.set_default_sender_option(default_opt)
-                    print("[INFO] Called autd.set_default_sender_option(timeout=0)")
-                else:
-                    print("[WARN] Could not set default sender option (API not found).")
-            except Exception as e:
-                print(f"[WARN] Failed to set default sender option: {e}")
+            # TODO: ここ見直す
+            # try:
+            #     default_opt = SenderOption(timeout=Duration.from_millis(0))
+            #     if hasattr(autd, "default_sender_option"):
+            #         autd.default_sender_option = default_opt
+            #         print("[INFO] Set autd.default_sender_option timeout=0")
+            #     elif hasattr(autd, "set_default_sender_option"):
+            #         autd.set_default_sender_option(default_opt)
+            #         print("[INFO] Called autd.set_default_sender_option(timeout=0)")
+            #     else:
+            #         print("[WARN] Could not set default sender option (API not found).")
+            # except Exception as e:
+            #     print(f"[WARN] Failed to set default sender option: {e}")
             
             sender = autd.sender(SenderOption(timeout=Duration.from_millis(0)))
             
@@ -282,7 +279,7 @@ def main():
                 shared_target_pos = (base_center[0], base_center[1], DEFAULT_Z)
 
             # スレッド起動
-            t = threading.Thread(target=autd_control_loop, args=(sender,))
+            t = threading.Thread(target=autd_control_loop, args=(autd,))
             t.start()
 
             print("[INFO] Vision loop started.")
@@ -383,21 +380,6 @@ def main():
                         xy_affine = (A_affine @ uv_homo).flatten() 
                         current_x = base_center[0] + xy_affine[0]
                         current_y = base_center[1] + xy_affine[1]
-                        
-                        # 中心 (base_center) への距離とベクトルを計算
-                        # dx = base_center[0] - current_x
-                        # dy = base_center[1] - current_y
-                        # dist = math.hypot(dx, dy)
-                        
-                        # 中心に向けて少しだけ引っ張る（フィードバック制御）
-                        # pull_dist = min(MAX_PULL_MM, dist * PULL_RATIO)
-                        
-                        # if dist > 0.1: # 誤差範囲(0.1mm)より外側にいる場合のみ引っ張る
-                        #     target_x = current_x + (dx / dist) * pull_dist
-                        #     target_y = current_y + (dy / dist) * pull_dist
-                        # else:
-                        #     target_x = current_x
-                        #     target_y = current_y
                         target_x = current_x
                         target_y = current_y
                     
