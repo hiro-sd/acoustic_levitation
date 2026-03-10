@@ -4,7 +4,8 @@ import numpy as np, os, keyboard
 from pyautd3 import (
     AUTD3, Controller, FociSTM, Hz, Silencer, Static,
 )
-from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
+# from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
+from pyautd3.link.twincat import TwinCAT # TwinCATを使用するために追加した
 from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
 from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
 
@@ -40,16 +41,17 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
     return FociSTM(foci=foci, config=100 * Hz).into_nearest()
 
 # SOEMのエラーハンドラ
-def err_handler(slave: int, status: Status) -> None:
-    print(f"slave [{slave}]: {status}")
-    if status == Status.Lost():
-        os._exit(-1)
+# def err_handler(slave: int, status: Status) -> None:
+#     print(f"slave [{slave}]: {status}")
+#     if status == Status.Lost():
+#         os._exit(-1)
 
 if __name__ == "__main__":
     with Controller.open(
         autd_arrangement,
         # Simulator("127.0.0.1:8080"), # シミュレータを使用する
-        SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する
+        # SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する
+        TwinCAT(), # TwinCATを使用する
     ) as autd:
         firmware_version = autd.firmware_version()
         print(

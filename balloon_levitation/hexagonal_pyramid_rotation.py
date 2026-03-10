@@ -3,7 +3,8 @@ import numpy as np, os, keyboard
 from pyautd3 import (
     AUTD3, Controller, FociSTM, Hz, Silencer, Static
 )
-from pyautd3_link_soem import SOEM, SOEMOption, Status
+# from pyautd3_link_soem import SOEM, SOEMOption, Status
+from pyautd3.link.twincat import TwinCAT
 
 # 六角錐型の紙風船を回転させるプログラム
 
@@ -34,15 +35,16 @@ def stm_rotating(center, radius, point_num, total_steps):
     return FociSTM(foci=foci, config=1 * Hz).into_nearest()
 
 # SOEMのエラーハンドラ
-def err_handler(slave: int, status: Status) -> None:
-    print(f"slave [{slave}]: {status}")
-    if status == Status.Lost():
-        os._exit(-1)
+# def err_handler(slave: int, status: Status) -> None:
+#     print(f"slave [{slave}]: {status}")
+#     if status == Status.Lost():
+#         os._exit(-1)
 
 if __name__ == "__main__":
     with Controller.open(
         autd_arrangement,
-        SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する
+        # SOEM(err_handler=err_handler, option=SOEMOption()),
+        TwinCAT(),
     ) as autd:
         firmware_version = autd.firmware_version()
         print(

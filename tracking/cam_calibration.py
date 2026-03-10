@@ -16,7 +16,8 @@ from ximea import xiapi
 
 # ===== AUTD 関連 =====
 from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static
-from pyautd3_link_soem import SOEM, SOEMOption, Status
+# from pyautd3_link_soem import SOEM, SOEMOption, Status
+from pyautd3.link.twincat import TwinCAT
 
 # ===================== 設定 =====================
 MODEL_PATH = "tracking/train/weights/best.pt"   # ←独自モデルならここをあなたの.ptに
@@ -52,10 +53,10 @@ autd_arrangement = [
     ]
 
 
-def err_handler(slave: int, status: Status) -> None:
-    print(f"slave [{slave}]: {status}")
-    if status == Status.Lost():
-        os._exit(-1)
+# def err_handler(slave: int, status: Status) -> None:
+#     print(f"slave [{slave}]: {status}")
+#     if status == Status.Lost():
+#         os._exit(-1)
 
 
 def init_ximea_camera():
@@ -132,7 +133,8 @@ def main():
 
     with Controller.open(
         autd_arrangement,
-        SOEM(err_handler=err_handler, option=SOEMOption()),
+        # SOEM(err_handler=err_handler, option=SOEMOption()),
+        TwinCAT(),
     ) as autd:
 
         autd.send(Silencer())
