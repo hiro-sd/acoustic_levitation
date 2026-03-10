@@ -293,8 +293,8 @@ def main():
             print("  Press [ESC] to EXIT and STOP ultrasound.")
             print("=================================================")
             
-            window_name = "Tracking & Control" # カメラ表示をなくす場合はこれをコメントアウト
-            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL) # カメラ表示をなくす場合はこれをコメントアウト
+            # window_name = "Tracking & Control" # カメラ表示をなくす場合はこれをコメントアウト
+            # cv2.namedWindow(window_name, cv2.WINDOW_NORMAL) # カメラ表示をなくす場合はこれをコメントアウト
 
             # カメラFPS計算用
             cam_fps_start_time = time.time()
