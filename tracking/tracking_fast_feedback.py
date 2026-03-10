@@ -23,7 +23,6 @@ from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static, SenderOpti
 # from pyautd3_link_soem import SOEM, SOEMOption, Status
 from pyautd3.link.twincat import TwinCAT
 
-
 # 設定
 AFFINE_JSON = "affine_uv_to_xy.json"
 
@@ -43,9 +42,6 @@ ROI_EXPAND_ON_LOST = 1.15
 
 # 描画間引き（1なら毎フレーム描画）
 DISPLAY_EVERY_N_FRAMES = 3
-
-# ロスト判定
-LOST_MAX_FRAMES = 10
 
 # カメラ
 EXPOSURE_US = 5000
@@ -79,7 +75,6 @@ shared_target_pos = None  # (x, y, z) [mm]
 program_running = True    # スレッド終了フラグ
 autd_display_fps = 0.0    # AUTDのFPS表示用
 pos_lock = threading.Lock() # 排他制御
-
 
 # def err_handler(slave: int, status: Status) -> None:
 #     print(f"[AUTD SOEM] slave [{slave}]: {status}")
@@ -115,7 +110,6 @@ def clamp_roi(cx, cy, size, w, h):
     return x1, y1, x2, y2
 
 def track_ball_cv(frame_rgb: np.ndarray, roi_rect):
-    h, w = frame_rgb.shape[:2]
     x1, y1, x2, y2 = roi_rect
     roi = frame_rgb[y1:y2, x1:x2]
     
@@ -151,16 +145,15 @@ def track_ball_cv(frame_rgb: np.ndarray, roi_rect):
         score = area - 0.8 * dist2
         if score > best_score:
             best_score = score
-            best = (cnt, cx, cy, area)
+            best = cnt
 
     if best is None: return None, bw
-    cnt, cx, cy, area = best
+    cnt = best
     (xc, yc), r = cv2.minEnclosingCircle(cnt)
     return (float(x1 + xc), float(y1 + yc), float(r)), bw
 
-
 # AUTD制御用スレッド関数
-def autd_control_loop(autd, sender):
+def autd_control_loop(sender):
     global shared_target_pos, program_running, autd_display_fps
     print("[THREAD] AUTD Control Thread Started.")
     
@@ -289,7 +282,7 @@ def main():
                 shared_target_pos = (base_center[0], base_center[1], DEFAULT_Z)
 
             # スレッド起動
-            t = threading.Thread(target=autd_control_loop, args=(autd, sender))
+            t = threading.Thread(target=autd_control_loop, args=(sender,))
             t.start()
 
             print("[INFO] Vision loop started.")
@@ -316,7 +309,6 @@ def main():
             
             roi_cx, roi_cy = W // 2, H // 2
             roi_size = ROI_INIT_SIZE
-            lost_count = 0
             method = "CV"
 
             tracking_active = False
@@ -346,16 +338,16 @@ def main():
                 frame = img.get_image_data_numpy()
                 frame_count += 1
                 cam_fps_frame_count += 1
-                do_display = (frame_count % DISPLAY_EVERY_N_FRAMES == 0) # カメラ表示をなくす場合はこれをコメントアウト
-                # do_display = False # カメラ表示をする場合はこれをコメントアウト
+                # do_display = (frame_count % DISPLAY_EVERY_N_FRAMES == 0) # カメラ表示をなくす場合はこれをコメントアウト
+                do_display = False # カメラ表示をする場合はこれをコメントアウト
 
-                frame_bgr = frame.copy() if do_display else None # カメラ表示をなくす場合はこれをコメントアウト
-                # frame_bgr = None # カメラ表示をする場合はこれをコメントアウト
+                # frame_bgr = frame.copy() if do_display else None # カメラ表示をなくす場合はこれをコメントアウト
+                frame_bgr = None # カメラ表示をする場合はこれをコメントアウト
 
                 # 2. ROI処理 & トラッキング
                 x1, y1, x2, y2 = clamp_roi(roi_cx, roi_cy, roi_size, W, H)
                 roi_rect = (x1, y1, x2, y2)
-                track, bw = track_ball_cv(frame, roi_rect)
+                track, _ = track_ball_cv(frame, roi_rect)
 
                 detected = False
                 u, v, r = 0, 0, 0
@@ -364,7 +356,6 @@ def main():
                     # 追跡成功時
                     u, v, r = track
                     method = "CV"
-                    lost_count = 0
                     roi_cx, roi_cy = int(u), int(v)
                     desired = int(2 * (2.5 * r + ROI_MARGIN))
                     roi_size = int(0.7 * roi_size + 0.3 * desired)
@@ -377,7 +368,6 @@ def main():
                         cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (255, 255, 0), 2)
                 else:
                     # ロスト時
-                    lost_count += 1
                     # ROIを少しずつ広げて再発見を試みる
                     roi_size = int(min(ROI_MAX_SIZE, roi_size * ROI_EXPAND_ON_LOST))
                     method = "LOST"
@@ -435,9 +425,9 @@ def main():
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     cv2.putText(frame_bgr, f"STATUS: {status_text}", (10, H - 20), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
-                    cv2.imshow(window_name, frame_bgr) # カメラ表示をなくす場合はこれをコメントアウト
-                    if cv2.waitKey(1) & 0xFF == 27: # カメラ表示をなくす場合はこれをコメントアウト
-                        break # カメラ表示をなくす場合はこれをコメントアウト
+                    # cv2.imshow(window_name, frame_bgr) # カメラ表示をなくす場合はこれをコメントアウト
+                    # if cv2.waitKey(1) & 0xFF == 27: # カメラ表示をなくす場合はこれをコメントアウト
+                    #     break # カメラ表示をなくす場合はこれをコメントアウト
             
             # 堅牢な終了処理
             program_running = False
@@ -473,7 +463,7 @@ def main():
             cam.stop_acquisition()
             cam.close_device()
         except: pass
-        cv2.destroyAllWindows() # カメラ表示をなくす場合はこれをコメントアウト
+        # cv2.destroyAllWindows() # カメラ表示をなくす場合はこれをコメントアウト
         print("[INFO] Finished.")
 
 if __name__ == "__main__":
