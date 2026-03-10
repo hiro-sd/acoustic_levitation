@@ -20,7 +20,9 @@ except ImportError:
 
 # AUTD関連
 from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static, SenderOption, Duration
-from pyautd3_link_soem import SOEM, SOEMOption, Status
+# from pyautd3_link_soem import SOEM, SOEMOption, Status
+from pyautd3.link.twincat import TwinCAT
+
 
 # 設定
 AFFINE_JSON = "affine_uv_to_xy.json"
@@ -79,10 +81,10 @@ autd_display_fps = 0.0    # AUTDのFPS表示用
 pos_lock = threading.Lock() # 排他制御
 
 
-def err_handler(slave: int, status: Status) -> None:
-    print(f"[AUTD SOEM] slave [{slave}]: {status}")
-    if status == Status.Lost():
-        os._exit(-1)
+# def err_handler(slave: int, status: Status) -> None:
+#     print(f"[AUTD SOEM] slave [{slave}]: {status}")
+#     if status == Status.Lost():
+#         os._exit(-1)
 
 def init_ximea_camera():
     if xiapi is None:
@@ -253,12 +255,13 @@ def main():
     print("[INFO] Opening AUTD Controller...")
     try:
         # 9台接続に合わせて同期周期(sync0_cycle)を2msに緩和し、通信パンクを防ぐ
-        soem_option = SOEMOption()
-        soem_option.sync0_cycle = Duration.from_micros(2000)
+        # soem_option = SOEMOption()
+        # soem_option.sync0_cycle = Duration.from_micros(2000)
         
         with Controller.open(
             autd_arrangement,
-            SOEM(err_handler=err_handler, option=soem_option),
+            # SOEM(err_handler=err_handler, option=soem_option),
+            TwinCAT(),
         ) as autd:
             
             try:
@@ -297,8 +300,8 @@ def main():
             print("  Press [ESC] to EXIT and STOP ultrasound.")
             print("=================================================")
             
-            # window_name = "Tracking & Control"
-            # cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            window_name = "Tracking & Control" # カメラ表示をなくす場合はこれをコメントアウト
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL) # カメラ表示をなくす場合はこれをコメントアウト
 
             # カメラFPS計算用
             cam_fps_start_time = time.time()
@@ -343,11 +346,11 @@ def main():
                 frame = img.get_image_data_numpy()
                 frame_count += 1
                 cam_fps_frame_count += 1
-                # do_display = (frame_count % DISPLAY_EVERY_N_FRAMES == 0)
-                do_display = False
+                do_display = (frame_count % DISPLAY_EVERY_N_FRAMES == 0) # カメラ表示をなくす場合はこれをコメントアウト
+                # do_display = False # カメラ表示をする場合はこれをコメントアウト
 
-                # frame_bgr = frame.copy() if do_display else None
-                frame_bgr = None
+                frame_bgr = frame.copy() if do_display else None # カメラ表示をなくす場合はこれをコメントアウト
+                # frame_bgr = None # カメラ表示をする場合はこれをコメントアウト
 
                 # 2. ROI処理 & トラッキング
                 x1, y1, x2, y2 = clamp_roi(roi_cx, roi_cy, roi_size, W, H)
@@ -432,9 +435,9 @@ def main():
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     cv2.putText(frame_bgr, f"STATUS: {status_text}", (10, H - 20), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
-                    # cv2.imshow(window_name, frame_bgr)
-                    # if cv2.waitKey(1) & 0xFF == 27:
-                    #     break
+                    cv2.imshow(window_name, frame_bgr) # カメラ表示をなくす場合はこれをコメントアウト
+                    if cv2.waitKey(1) & 0xFF == 27: # カメラ表示をなくす場合はこれをコメントアウト
+                        break # カメラ表示をなくす場合はこれをコメントアウト
             
             # 堅牢な終了処理
             program_running = False
@@ -470,7 +473,7 @@ def main():
             cam.stop_acquisition()
             cam.close_device()
         except: pass
-        # cv2.destroyAllWindows()
+        cv2.destroyAllWindows() # カメラ表示をなくす場合はこれをコメントアウト
         print("[INFO] Finished.")
 
 if __name__ == "__main__":
