@@ -54,6 +54,7 @@ DEFAULT_Z = 400.0
 # CPUスレッド
 os.environ.setdefault("OMP_NUM_THREADS", "4")
 
+# AUTD配置（3行×3列）
 autd_arrangement = [
     AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]),
     AUTD3(pos=[0.0, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
@@ -72,6 +73,7 @@ program_running = True    # スレッド終了フラグ
 autd_display_fps = 0.0    # AUTDのFPS表示用
 pos_lock = threading.Lock() # 排他制御
 
+# soemのエラーハンドラ
 # def err_handler(slave: int, status: Status) -> None:
 #     print(f"[AUTD SOEM] slave [{slave}]: {status}")
 #     if status == Status.Lost():
@@ -149,7 +151,7 @@ def track_ball_cv(frame_rgb: np.ndarray, roi_rect):
     return (float(x1 + xc), float(y1 + yc), float(r)), bw
 
 # AUTD制御用スレッド関数
-def autd_control_loop(sender):
+def autd_control_loop(autd):
     global shared_target_pos, program_running, autd_display_fps
     print("[THREAD] AUTD Control Thread Started.")
     
@@ -193,7 +195,7 @@ def autd_control_loop(sender):
                 config=100 * Hz,
             ).into_nearest()
 
-            sender.send(stm)
+            autd.send(stm)
             last_sent_pos = tgt 
             fps_frame_count += 1
             
@@ -243,35 +245,15 @@ def main():
     # 2. AUTD起動
     print("[INFO] Opening AUTD Controller...")
     try:
-        # 9台接続に合わせて同期周期(sync0_cycle)を2msに緩和し、通信パンクを防ぐ
-        # soem_option = SOEMOption()
-        # soem_option.sync0_cycle = Duration.from_micros(2000)
-        
         with Controller.open(
             autd_arrangement,
-            # SOEM(err_handler=err_handler, option=soem_option),
+            # SOEM(err_handler=err_handler, option=SOEMOption()),
             TwinCAT(),
         ) as autd:
             
-            # TODO: ここ見直す
-            # try:
-            #     default_opt = SenderOption(timeout=Duration.from_millis(0))
-            #     if hasattr(autd, "default_sender_option"):
-            #         autd.default_sender_option = default_opt
-            #         print("[INFO] Set autd.default_sender_option timeout=0")
-            #     elif hasattr(autd, "set_default_sender_option"):
-            #         autd.set_default_sender_option(default_opt)
-            #         print("[INFO] Called autd.set_default_sender_option(timeout=0)")
-            #     else:
-            #         print("[WARN] Could not set default sender option (API not found).")
-            # except Exception as e:
-            #     print(f"[WARN] Failed to set default sender option: {e}")
-            
-            sender = autd.sender(SenderOption(timeout=Duration.from_millis(0)))
-            
             # 初期化送信
-            sender.send(Silencer())
-            sender.send(Static(intensity=int(0xFF * 0.9)))
+            autd.send(Silencer())
+            autd.send(Static(intensity=int(0xFF * 0.9)))
 
             # 基準座標（中心）を取得
             base_center = autd.center()
@@ -290,8 +272,8 @@ def main():
             print("  Press [ESC] to EXIT and STOP ultrasound.")
             print("=================================================")
             
-            # window_name = "Tracking & Control" # カメラ表示をなくす場合はこれをコメントアウト
-            # cv2.namedWindow(window_name, cv2.WINDOW_NORMAL) # カメラ表示をなくす場合はこれをコメントアウト
+            window_name = "Tracking & Control" # カメラ表示をなくす場合はこれをコメントアウト
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL) # カメラ表示をなくす場合はこれをコメントアウト
 
             # カメラFPS計算用
             cam_fps_start_time = time.time()
@@ -335,11 +317,11 @@ def main():
                 frame = img.get_image_data_numpy()
                 frame_count += 1
                 cam_fps_frame_count += 1
-                # do_display = (frame_count % DISPLAY_EVERY_N_FRAMES == 0) # カメラ表示をなくす場合はこれをコメントアウト
-                do_display = False # カメラ表示をする場合はこれをコメントアウト
+                do_display = (frame_count % DISPLAY_EVERY_N_FRAMES == 0) # カメラ表示をなくす場合はこれをコメントアウト
+                # do_display = False # カメラ表示をする場合はこれをコメントアウト
 
-                # frame_bgr = frame.copy() if do_display else None # カメラ表示をなくす場合はこれをコメントアウト
-                frame_bgr = None # カメラ表示をする場合はこれをコメントアウト
+                frame_bgr = frame.copy() if do_display else None # カメラ表示をなくす場合はこれをコメントアウト
+                # frame_bgr = None # カメラ表示をする場合はこれをコメントアウト
 
                 # 2. ROI処理 & トラッキング
                 x1, y1, x2, y2 = clamp_roi(roi_cx, roi_cy, roi_size, W, H)
@@ -407,32 +389,14 @@ def main():
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     cv2.putText(frame_bgr, f"STATUS: {status_text}", (10, H - 20), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
-                    # cv2.imshow(window_name, frame_bgr) # カメラ表示をなくす場合はこれをコメントアウト
-                    # if cv2.waitKey(1) & 0xFF == 27: # カメラ表示をなくす場合はこれをコメントアウト
-                    #     break # カメラ表示をなくす場合はこれをコメントアウト
+                    cv2.imshow(window_name, frame_bgr) # カメラ表示をなくす場合はこれをコメントアウト
+                    if cv2.waitKey(1) & 0xFF == 27: # カメラ表示をなくす場合はこれをコメントアウト
+                        break # カメラ表示をなくす場合はこれをコメントアウト
             
-            # 堅牢な終了処理
+            # 終了処理
             program_running = False
             print("[INFO] Waiting for AUTD thread to close...")
-            t.join(timeout=2.0) 
-            
-            print("[INFO] Silencing AUTD...")
-            # エラーが起きてもクラッシュせずに必ずデバイスを閉じる
-            try:
-                # 停止は「確実に届かせたい」ので、shutdown用にtimeout長めsenderを使う
-                shutdown_sender = autd.sender(SenderOption(timeout=Duration.from_millis(10000)))
-
-                # 念のため複数回送って、間に少し待つ（SOEMの取りこぼし対策）
-                shutdown_sender.send(Silencer())
-                time.sleep(0.05)
-                shutdown_sender.send(Static(intensity=0))
-                time.sleep(0.05)
-                shutdown_sender.send(Silencer())
-                time.sleep(0.1)
-
-                print("[INFO] AUTD emission cleanly stopped.")
-            except Exception as e:
-                print(f"[WARN] Failed to silence completely: {e}")
+            t.join(timeout=2.0)
 
     except Exception as e:
         print(f"[ERROR] Runtime Error: {e}")
@@ -445,7 +409,7 @@ def main():
             cam.stop_acquisition()
             cam.close_device()
         except: pass
-        # cv2.destroyAllWindows() # カメラ表示をなくす場合はこれをコメントアウト
+        cv2.destroyAllWindows() # カメラ表示をなくす場合はこれをコメントアウト
         print("[INFO] Finished.")
 
 if __name__ == "__main__":
