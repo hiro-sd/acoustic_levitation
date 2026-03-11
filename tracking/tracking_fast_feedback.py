@@ -184,16 +184,30 @@ def autd_control_loop(autd):
         center_vec = np.array([tx, ty, tz])
         
         try:
-            stm = FociSTM(
-                foci=(
-                    center_vec + RADIUS * np.array([np.cos(theta), np.sin(theta), 0.0])
-                    for theta in (
-                        np.pi / 8 + 2.0 * np.pi * i / POINT_NUM
-                        for i in range(POINT_NUM)
-                    )
-                ),
-                config=100 * Hz,
-            ).into_nearest()
+            # stm = FociSTM(
+            #     foci=(
+            #         center_vec + RADIUS * np.array([np.cos(theta), np.sin(theta), 0.0])
+            #         for theta in (
+            #             np.pi / 8 + 2.0 * np.pi * i / POINT_NUM
+            #             for i in range(POINT_NUM)
+            #         )
+            #     ),
+            #     config=100 * Hz,
+            # ).into_nearest()
+
+            # 正方向角リスト
+            angles_fwd = [np.pi/8 + 2.0 * np.pi * i / POINT_NUM for i in range(POINT_NUM)] # 穴の位置をずらすためにπ/8を加える
+            # 逆方向角リスト
+            angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
+            # forward + reverse の 2 周分を連結
+            angles = angles_fwd + angles_rev
+
+            # 円軌道上に焦点を配置するための時空間変調
+            foci = (
+                center_vec + RADIUS * np.array([np.cos(a), np.sin(a), 0.0])
+                for a in angles
+            )
+            stm = FociSTM(foci=foci, config=70 * Hz).into_nearest()
 
             autd.send(stm)
             last_sent_pos = tgt 
@@ -290,6 +304,13 @@ def main():
             roi_size = ROI_INIT_SIZE
             method = "CV"
 
+            # --- 制御用変数の初期化（whileループの直前に配置） ---
+            prev_particle_x = None
+            prev_particle_y = None
+            prev_vx = 0.0
+            prev_vy = 0.0
+            prev_time_pd = time.time()
+
             tracking_active = False
             prev_enter_state = False
 
@@ -354,17 +375,56 @@ def main():
                     if do_display:
                         cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (0, 255, 255), 2)
 
-                # 3. 座標計算 と 中心引き戻し制御
+                # 3. 座標計算 と 中心引き戻し制御（PD制御）
                 if detected and tracking_active:
                     if use_affine:
-                        # カメラで見た物体の絶対座標を計算
+                        # 1. カメラで見た物体の絶対座標を計算
                         uv_homo = np.array([[u, v, 1]], dtype=np.float32).T 
                         xy_affine = (A_affine @ uv_homo).flatten() 
                         current_x = base_center[0] + xy_affine[0]
                         current_y = base_center[1] + xy_affine[1]
-                        target_x = current_x
-                        target_y = current_y
-                    
+
+                        # 2. 現在の時刻と前回からの経過時間(dt)を計算
+                        current_time_pd = time.time()
+                        dt_pd = current_time_pd - prev_time_pd
+                        
+                        # 3. 速度の計算と平滑化（ノイズによる暴走を防ぐローパスフィルタ）
+                        if prev_particle_x is not None and dt_pd > 0:
+                            raw_vx = (current_x - prev_particle_x) / dt_pd
+                            raw_vy = (current_y - prev_particle_y) / dt_pd
+                            # 前回の速度と50%ずつ混ぜて滑らかにする
+                            vx = 0.5 * prev_vx + 0.5 * raw_vx
+                            vy = 0.5 * prev_vy + 0.5 * raw_vy
+                        else:
+                            vx, vy = 0.0, 0.0
+
+                        # 値の更新
+                        prev_particle_x = current_x
+                        prev_particle_y = current_y
+                        prev_vx = vx
+                        prev_vy = vy
+                        prev_time_pd = current_time_pd
+
+                        # ====================================================
+                        # ★ PD制御ゲイン（ここで安定性をチューニングします）★
+                        # ====================================================
+                        K_p = 0.2   # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
+                        K_d = 0.008 # [D] 揺れを抑えるブレーキの強さ (速度に対する抵抗)
+
+                        # 最終的に物体を留めておきたい目標位置 (AUTDの中心)
+                        setpoint_x = base_center[0]
+                        setpoint_y = base_center[1]
+
+                        # 4. 新しい焦点位置の計算
+                        # 目標位置 + (P制御: ズレの逆へ) + (D制御: 速度の逆へ)
+                        target_x = setpoint_x + K_p * (setpoint_x - current_x) - K_d * vx
+                        target_y = setpoint_y + K_p * (setpoint_y - current_y) - K_d * vy
+
+                        # 5. 焦点を動かしすぎてボールが落ちるのを防ぐリミッター (中心から±8mm以内)
+                        limit_mm = 8.0
+                        target_x = np.clip(target_x, setpoint_x - limit_mm, setpoint_x + limit_mm)
+                        target_y = np.clip(target_y, setpoint_y - limit_mm, setpoint_y + limit_mm)
+                        
                     target_z = DEFAULT_Z
 
                     with pos_lock:
@@ -373,6 +433,25 @@ def main():
                     if do_display:
                         cv2.putText(frame_bgr, f"TGT: {target_x:.1f}, {target_y:.1f}", (10, 60), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                # 3. 座標計算 と 中心引き戻し制御        
+                # if detected and tracking_active:
+                #     if use_affine:
+                #         # カメラで見た物体の絶対座標を計算
+                #         uv_homo = np.array([[u, v, 1]], dtype=np.float32).T 
+                #         xy_affine = (A_affine @ uv_homo).flatten() 
+                #         current_x = base_center[0] + xy_affine[0]
+                #         current_y = base_center[1] + xy_affine[1]
+                #         target_x = current_x
+                #         target_y = current_y
+                    
+                #     target_z = DEFAULT_Z
+
+                #     with pos_lock:
+                #         shared_target_pos = (target_x, target_y, target_z)
+                        
+                #     if do_display:
+                #         cv2.putText(frame_bgr, f"TGT: {target_x:.1f}, {target_y:.1f}", (10, 60), 
+                #                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
                 # 4. カメラFPSの更新と画面表示
                 now = time.time()
