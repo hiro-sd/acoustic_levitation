@@ -19,7 +19,7 @@ except ImportError:
     xiapi = None
 
 # AUTD関連
-from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static, SenderOption, Duration
+from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static
 # from pyautd3_link_soem import SOEM, SOEMOption, Status
 from pyautd3.link.twincat import TwinCAT
 
@@ -184,30 +184,32 @@ def autd_control_loop(autd):
         center_vec = np.array([tx, ty, tz])
         
         try:
-            # stm = FociSTM(
-            #     foci=(
-            #         center_vec + RADIUS * np.array([np.cos(theta), np.sin(theta), 0.0])
-            #         for theta in (
-            #             np.pi / 8 + 2.0 * np.pi * i / POINT_NUM
-            #             for i in range(POINT_NUM)
-            #         )
-            #     ),
-            #     config=100 * Hz,
-            # ).into_nearest()
+            # 対称音場
+            stm = FociSTM(
+                foci=(
+                    center_vec + RADIUS * np.array([np.cos(theta), np.sin(theta), 0.0])
+                    for theta in (
+                        np.pi / 8 + 2.0 * np.pi * i / POINT_NUM
+                        for i in range(POINT_NUM)
+                    )
+                ),
+                config=100 * Hz,
+            ).into_nearest()
 
+            # 非対称音場
             # 正方向角リスト
-            angles_fwd = [np.pi/8 + 2.0 * np.pi * i / POINT_NUM for i in range(POINT_NUM)] # 穴の位置をずらすためにπ/8を加える
-            # 逆方向角リスト
-            angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
-            # forward + reverse の 2 周分を連結
-            angles = angles_fwd + angles_rev
+            # angles_fwd = [np.pi/8 + 2.0 * np.pi * i / POINT_NUM for i in range(POINT_NUM)] # 穴の位置をずらすためにπ/8を加える
+            # # 逆方向角リスト
+            # angles_rev = angles_fwd[::-1][1:-1] # [::-1]で逆順にし、[1:-1]で最初と最後を除く
+            # # forward + reverse の 2 周分を連結
+            # angles = angles_fwd + angles_rev
 
-            # 円軌道上に焦点を配置するための時空間変調
-            foci = (
-                center_vec + RADIUS * np.array([np.cos(a), np.sin(a), 0.0])
-                for a in angles
-            )
-            stm = FociSTM(foci=foci, config=70 * Hz).into_nearest()
+            # # 円軌道上に焦点を配置するための時空間変調
+            # foci = (
+            #     center_vec + RADIUS * np.array([np.cos(a), np.sin(a), 0.0])
+            #     for a in angles
+            # )
+            # stm = FociSTM(foci=foci, config=70 * Hz).into_nearest()
 
             autd.send(stm)
             last_sent_pos = tgt 
@@ -405,9 +407,7 @@ def main():
                         prev_vy = vy
                         prev_time_pd = current_time_pd
 
-                        # ====================================================
-                        # ★ PD制御ゲイン（ここで安定性をチューニングします）★
-                        # ====================================================
+                        # PD制御ゲイン (ここで安定性をチューニング)
                         K_p = 0.2   # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
                         K_d = 0.008 # [D] 揺れを抑えるブレーキの強さ (速度に対する抵抗)
 
@@ -433,25 +433,6 @@ def main():
                     if do_display:
                         cv2.putText(frame_bgr, f"TGT: {target_x:.1f}, {target_y:.1f}", (10, 60), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                # 3. 座標計算 と 中心引き戻し制御        
-                # if detected and tracking_active:
-                #     if use_affine:
-                #         # カメラで見た物体の絶対座標を計算
-                #         uv_homo = np.array([[u, v, 1]], dtype=np.float32).T 
-                #         xy_affine = (A_affine @ uv_homo).flatten() 
-                #         current_x = base_center[0] + xy_affine[0]
-                #         current_y = base_center[1] + xy_affine[1]
-                #         target_x = current_x
-                #         target_y = current_y
-                    
-                #     target_z = DEFAULT_Z
-
-                #     with pos_lock:
-                #         shared_target_pos = (target_x, target_y, target_z)
-                        
-                #     if do_display:
-                #         cv2.putText(frame_bgr, f"TGT: {target_x:.1f}, {target_y:.1f}", (10, 60), 
-                #                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
                 # 4. カメラFPSの更新と画面表示
                 now = time.time()
