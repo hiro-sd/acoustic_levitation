@@ -3,6 +3,7 @@ import time
 import sys
 import threading
 import math
+import csv
 import numpy as np
 import cv2
 import keyboard
@@ -50,6 +51,12 @@ EXPOSURE_US = 5000
 POINT_NUM = 8
 RADIUS = 23.5
 DEFAULT_Z = 400.0  
+
+# ログ設定 (安定性比較実験用)
+LOG_ENABLED = True               # TrueにするとCSVへログを記録する
+LOG_CSV_PATH = "stability_log.csv"  # 出力ファイル名
+LOG_DURATION_SEC = 60.0          # 1回のログ取得時間[s]
+LOG_TRIGGER_KEY = "l"           # このキー押下で1回分のログ取得を開始
 
 # CPUスレッド
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -285,6 +292,7 @@ def main():
             print("  READY TO LEVITATE.")
             print("  Press [ENTER] to START dynamic tracking.")
             print("  Press [ENTER] again to PAUSE (Return to center).")
+            print(f"  Press [{LOG_TRIGGER_KEY.upper()}] to START 60s logging in current mode.")
             print("  Press [ESC] to EXIT and STOP ultrasound.")
             print("=================================================")
             
@@ -315,6 +323,15 @@ def main():
 
             tracking_active = False
             prev_enter_state = False
+            prev_log_trigger_state = False
+
+            # ログ制御状態
+            log_file_initialized = False
+            log_session_active = False
+            log_session_end_time = 0.0
+            log_session_mode = ""
+            log_file = None
+            log_writer = None
 
             while True:
                 # キー入力確認
@@ -334,6 +351,41 @@ def main():
                         with pos_lock:
                             shared_target_pos = (base_center[0], base_center[1], DEFAULT_Z)
                 prev_enter_state = current_enter_state
+
+                # ログ開始キーのトグル処理（押下エッジで開始）
+                current_log_trigger_state = keyboard.is_pressed(LOG_TRIGGER_KEY)
+                if LOG_ENABLED and current_log_trigger_state and not prev_log_trigger_state:
+                    if log_session_active:
+                        remain = max(0.0, log_session_end_time - time.time())
+                        print(f"[LOG] Recording in progress ({log_session_mode}), remaining {remain:.1f}s")
+                    else:
+                        if not log_file_initialized:
+                            with open(LOG_CSV_PATH, "w", newline="", encoding="utf-8") as f_init:
+                                w_init = csv.writer(f_init)
+                                w_init.writerow([
+                                    "timestamp", "mode", "u_px", "v_px", "x_mm", "y_mm",
+                                    "center_x_mm", "center_y_mm"
+                                ])
+                            log_file_initialized = True
+                            print(f"[LOG] Log file initialized: {LOG_CSV_PATH}")
+
+                        log_file = open(LOG_CSV_PATH, "a", newline="", encoding="utf-8")
+                        log_writer = csv.writer(log_file)
+                        log_session_active = True
+                        log_session_mode = "PD" if tracking_active else "FIXED"
+                        now_log = time.time()
+                        log_session_end_time = now_log + LOG_DURATION_SEC
+                        print(f"[LOG] START {log_session_mode} logging for {LOG_DURATION_SEC:.0f}s")
+                prev_log_trigger_state = current_log_trigger_state
+
+                # 1分経過でログセッションを自動停止
+                if log_session_active and time.time() >= log_session_end_time:
+                    log_session_active = False
+                    if log_file is not None:
+                        log_file.close()
+                        log_file = None
+                        log_writer = None
+                    print(f"[LOG] DONE {log_session_mode} logging ({LOG_DURATION_SEC:.0f}s)")
 
                 # 1. 画像取得
                 cam.get_image(img)
@@ -378,6 +430,23 @@ def main():
                         cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (0, 255, 255), 2)
 
                 # 3. 座標計算 と 中心引き戻し制御（PD制御）
+                # 位置ログ書き込み（ログセッション中かつ検出成功時のみ記録）
+                if detected and log_session_active and log_writer is not None:
+                    if use_affine:
+                        uv_homo_log = np.array([[u, v, 1]], dtype=np.float32).T
+                        xy_log = (A_affine @ uv_homo_log).flatten()
+                        x_log = base_center[0] + xy_log[0]
+                        y_log = base_center[1] + xy_log[1]
+                    else:
+                        x_log, y_log = float(u), float(v)
+                    log_writer.writerow([
+                        f"{time.time():.4f}",
+                        log_session_mode,
+                        f"{u:.2f}", f"{v:.2f}",
+                        f"{x_log:.3f}", f"{y_log:.3f}",
+                        f"{base_center[0]:.3f}", f"{base_center[1]:.3f}"
+                    ])
+
                 if detected and tracking_active:
                     if use_affine:
                         # 1. カメラで見た物体の絶対座標を計算
@@ -455,6 +524,9 @@ def main():
             
             # 終了処理
             program_running = False
+            if log_file is not None:
+                log_file.close()
+                print(f"[LOG] Saved (closed session): {LOG_CSV_PATH}")
             print("[INFO] Waiting for AUTD thread to close...")
             t.join(timeout=2.0)
 
@@ -465,6 +537,13 @@ def main():
         if 't' in locals() and t.is_alive():
             t.join(timeout=1.0)
         
+        # 異常終了時もログファイルを確実に閉じる
+        if 'log_file' in locals() and log_file is not None:
+            try:
+                log_file.close()
+                print(f"[LOG] Saved (on exit): {LOG_CSV_PATH}")
+            except: pass
+
         try:
             cam.stop_acquisition()
             cam.close_device()
