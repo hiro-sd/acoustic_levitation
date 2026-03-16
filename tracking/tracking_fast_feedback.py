@@ -55,7 +55,7 @@ DEFAULT_Z = 400.0
 # ログ設定 (安定性比較実験用)
 LOG_ENABLED = True               # TrueにするとCSVへログを記録する
 LOG_CSV_PATH = "stability_log.csv"  # 出力ファイル名
-LOG_DURATION_SEC = 60.0          # 1回のログ取得時間[s]
+LOG_DURATION_SEC = 30.0          # 1回のログ取得時間[s]
 LOG_TRIGGER_KEY = "l"           # このキー押下で1回分のログ取得を開始
 
 # CPUスレッド
@@ -477,8 +477,8 @@ def main():
                         prev_time_pd = current_time_pd
 
                         # PD制御ゲイン (ここで安定性をチューニング)
-                        K_p = 0.2   # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
-                        K_d = 0.008 # [D] 揺れを抑えるブレーキの強さ (速度に対する抵抗)
+                        K_p = 0.15   # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
+                        K_d = 0.016  # [D] 揺れを抑えるブレーキの強さ (速度に対する抵抗)
 
                         # 最終的に物体を留めておきたい目標位置 (AUTDの中心)
                         setpoint_x = base_center[0]
