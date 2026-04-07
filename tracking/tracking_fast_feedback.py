@@ -63,14 +63,15 @@ EXPOSURE_US = 5000
 POINT_NUM = 8
 RADIUS = 23.5
 DEFAULT_Z = 400.0
-AUTD_LOOP_SLEEP_SEC = 0.001  # まずは1ms程度で回す
+AUTD_LOOP_SLEEP_SEC = 0.001
 
-# XY制御（PD: 速度予測なし）
+# XY制御（予測PD）
 K_P_XY = 0.15
 K_D_XY = 0.016
+DT_PRED_XY = 0.03  # 30 ms 先を予測
 
-# Z制御
-K_P_Z = 0.08
+# Z制御（独立P）
+K_P_Z = 0.015
 Z_MIN = 330.0
 Z_MAX = 470.0
 
@@ -460,9 +461,16 @@ def main():
             tracking_active = False
             prev_enter_state = False
             prev_log_trigger_state = False
-            prev_err_x = 0.0
-            prev_err_y = 0.0
+
+            # XY 予測PD用
+            prev_particle_x = None
+            prev_particle_y = None
+            prev_vx = 0.0
+            prev_vy = 0.0
             prev_time_ctrl = time.time()
+
+            # Z見失い時保持用
+            last_valid_target_z = DEFAULT_Z
 
             # ログ制御
             log_file_initialized = False
@@ -483,8 +491,10 @@ def main():
 
                     if tracking_active:
                         print("[INFO] >>> TRACKING ACTIVATED <<<")
-                        prev_err_x = 0.0
-                        prev_err_y = 0.0
+                        prev_particle_x = None
+                        prev_particle_y = None
+                        prev_vx = 0.0
+                        prev_vy = 0.0
                         prev_time_ctrl = time.time()
                     else:
                         print("[INFO] >>> TRACKING PAUSED (Center Fixed) <<<")
@@ -634,39 +644,56 @@ def main():
                         f"{base_center[0]:.3f}", f"{base_center[1]:.3f}", f"{DEFAULT_Z:.3f}",
                     ])
 
-                # 4. 制御（XY: PD / Z: P）
+                # 4. 制御（XY: 予測PD / Z: 独立P + 見失い時保持）
                 if tracking_active:
                     target_x = base_center[0]
                     target_y = base_center[1]
-                    target_z = DEFAULT_Z
+                    target_z = last_valid_target_z
 
-                    if use_affine:
-                        now_ctrl = time.time()
-                        dt_ctrl = max(1e-3, now_ctrl - prev_time_ctrl)
-                        prev_time_ctrl = now_ctrl
+                    now_ctrl = time.time()
+                    dt_ctrl = max(1e-3, now_ctrl - prev_time_ctrl)
+                    prev_time_ctrl = now_ctrl
 
-                        if detected_xy:
-                            uv_homo = np.array([[u_xy, v_xy, 1.0]], dtype=np.float32).T
-                            xy_affine = (A_affine @ uv_homo).flatten()
-                            current_x = base_center[0] + xy_affine[0]
-                            current_y = base_center[1] + xy_affine[1]
-                            setpoint_x = base_center[0]
-                            setpoint_y = base_center[1]
-                            err_x = setpoint_x - current_x
-                            err_y = setpoint_y - current_y
-                            derr_x = (err_x - prev_err_x) / dt_ctrl
-                            derr_y = (err_y - prev_err_y) / dt_ctrl
-                            target_x = setpoint_x + K_P_XY * err_x + K_D_XY * derr_x
-                            target_y = setpoint_y + K_P_XY * err_y + K_D_XY * derr_y
-                            prev_err_x = err_x
-                            prev_err_y = err_y
+                    # XY: 予測PD
+                    if use_affine and detected_xy:
+                        uv_homo = np.array([[u_xy, v_xy, 1.0]], dtype=np.float32).T
+                        xy_affine = (A_affine @ uv_homo).flatten()
+                        current_x = base_center[0] + xy_affine[0]
+                        current_y = base_center[1] + xy_affine[1]
 
-                        if detected_z and use_z_model:
-                            current_z = z_a * v_z + z_b
-                            setpoint_z = DEFAULT_Z
-                            # 物体が下がれば焦点を上げ、上がれば焦点を下げる
-                            target_z = setpoint_z + K_P_Z * (setpoint_z - current_z)
-                            target_z = float(np.clip(target_z, Z_MIN, Z_MAX))
+                        if prev_particle_x is not None and dt_ctrl > 0:
+                            raw_vx = (current_x - prev_particle_x) / dt_ctrl
+                            raw_vy = (current_y - prev_particle_y) / dt_ctrl
+                            vx = 0.5 * prev_vx + 0.5 * raw_vx
+                            vy = 0.5 * prev_vy + 0.5 * raw_vy
+                        else:
+                            vx, vy = 0.0, 0.0
+
+                        prev_particle_x = current_x
+                        prev_particle_y = current_y
+                        prev_vx = vx
+                        prev_vy = vy
+
+                        x_pred = current_x + vx * DT_PRED_XY
+                        y_pred = current_y + vy * DT_PRED_XY
+
+                        setpoint_x = base_center[0]
+                        setpoint_y = base_center[1]
+
+                        target_x = setpoint_x + K_P_XY * (setpoint_x - x_pred) - K_D_XY * vx
+                        target_y = setpoint_y + K_P_XY * (setpoint_y - y_pred) - K_D_XY * vy
+
+                    # Z: 独立P
+                    if use_z_model and detected_z:
+                        current_z = z_a * v_z + z_b
+                        setpoint_z = DEFAULT_Z
+
+                        # 焦点を高くすると物体も高くなる系
+                        target_z = setpoint_z + K_P_Z * (setpoint_z - current_z)
+                        target_z = float(np.clip(target_z, Z_MIN, Z_MAX))
+
+                        # 検出できたときだけ更新して保持
+                        last_valid_target_z = target_z
 
                     set_shared_target_pos(target_x, target_y, target_z)
 
