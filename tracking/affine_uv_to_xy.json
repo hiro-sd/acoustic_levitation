@@ -1,0 +1,38 @@
+{
+  "csv_path": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\xy_calib_points.csv",
+  "A_2x3": [
+    [
+      0.8849881887435913,
+      0.0006262089591473341,
+      -296.0372009277344
+    ],
+    [
+      0.0301873367279768,
+      -0.8029326796531677,
+      174.33642578125
+    ]
+  ],
+  "inliers": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "error_all_mm": {
+    "mean_mm": 0.7691020965576172,
+    "median_mm": 0.6711277365684509,
+    "rmse_mm": 0.9257645606994629,
+    "max_mm": 1.855332374572754,
+    "min_mm": 0.05688614025712013
+  },
+  "ransac_reproj_threshold_mm": 3.0,
+  "input_uv_type": "undistorted_pixel",
+  "xy_definition": "AUTD center offset in mm",
+  "equation": "[x_mm, y_mm]^T = A @ [u_ud, v_ud, 1]^T",
+  "note": "This affine was fitted on undistorted pixel coordinates. Do NOT undistort again before applying A."
+}

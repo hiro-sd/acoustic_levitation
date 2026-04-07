@@ -1,0 +1,17 @@
+{
+  "csv_path": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\z_calib_points.csv",
+  "equation": "z_mm = a * v_rot_ud + b",
+  "a": -0.6207267591200064,
+  "b": 598.7405507590246,
+  "input_axis": "v",
+  "input_v_type": "undistorted_rotated_pixel",
+  "camera_role": "side_camera_for_z",
+  "error_mm": {
+    "mean_abs_mm": 0.4531035598190051,
+    "median_abs_mm": 0.36952639827200073,
+    "rmse_mm": 0.5124972778093779,
+    "max_abs_mm": 1.0054269564662377,
+    "min_abs_mm": 0.17154120338079792
+  },
+  "note": "This fit assumes the image was undistorted first and then rotated, so physical z corresponds to the image v-axis."
+}

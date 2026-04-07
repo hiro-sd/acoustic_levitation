@@ -1,0 +1,16 @@
+ChArUco Board Information
+========================
+squaresX         : 7
+squaresY         : 5
+squareLength_mm  : 25.0
+markerLength_mm  : 18.0
+aruco_dictionary : DICT_4X4_50
+output_width_px  : 2000
+output_height_px : 1400
+margin_px        : 40
+
+[IMPORTANT]
+- 印刷時は「実際のサイズ」で印刷してください
+- 「ページに合わせる」「拡大縮小」はOFFにしてください
+- 印刷後に定規で1マスの実寸を測ってください
+- キャリブレーションコードでは、その実測値を squareLength として使ってください

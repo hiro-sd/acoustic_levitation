@@ -18,15 +18,15 @@ except ImportError:
 CAM1_SN = "43430551"
 CAM2_SN = "43435351"
 
-SAVE_ROOT = Path("dual_usb_soft_sync")
+SAVE_ROOT = Path("./tracking/calibration/dual_usb_soft_sync")
 PAIR_DIR = SAVE_ROOT / "pairs"
 PAIR_DIR.mkdir(parents=True, exist_ok=True)
 
 NUM_FRAMES = 100
 TIMEOUT_MS = 2000
 
-EXPOSURE_US = 3000
-IMG_FORMAT = "XI_MONO8"   # 必要なら XI_RGB24
+EXPOSURE_US = 5000
+IMG_FORMAT = "XI_RGB24"   # 必要なら XI_RGB24
 WIDTH = None              # 例: 1024
 HEIGHT = None             # 例: 768
 
