@@ -9,7 +9,6 @@ import keyboard
 import json
 
 # 高速カメラで物体の位置をトラッキングしつつ、別スレッドでAUTDの焦点を更新するコード
-# 重要:
 #   - affine_uv_to_xy.json は「補正済みピクセル座標 (u, v)」前提
 #   - よって、このコードでは毎フレーム画像を先に undistort し、
 #     その補正済み画像で球検出を行う
@@ -66,12 +65,13 @@ DEFAULT_Z = 400.0
 AUTD_LOOP_SLEEP_SEC = 0.001
 
 # XY制御（予測PD）
-K_P_XY = 0.15
-K_D_XY = 0.016
-DT_PRED_XY = 0.03  # 30 ms 先を予測
+K_P_XY = 0.15 # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
+K_D_XY = 0.015 # [D] 揺れを抑えるブレーキの強さ (速度に対する抵抗)
+DT_PRED_XY = 0.035  # 35 ms 先を予測
 
-# Z制御（独立P）
-K_P_Z = 0.015
+# Z制御（予測P）
+K_P_Z = 0.1
+DT_PRED_Z = 0.05  # 50 ms 先を予測
 Z_MIN = 330.0
 Z_MAX = 470.0
 
@@ -469,6 +469,10 @@ def main():
             prev_vy = 0.0
             prev_time_ctrl = time.time()
 
+            # Z 速度予測用
+            prev_particle_z = None
+            prev_vz = 0.0
+
             # Z見失い時保持用
             last_valid_target_z = DEFAULT_Z
 
@@ -493,8 +497,10 @@ def main():
                         print("[INFO] >>> TRACKING ACTIVATED <<<")
                         prev_particle_x = None
                         prev_particle_y = None
+                        prev_particle_z = None
                         prev_vx = 0.0
                         prev_vy = 0.0
+                        prev_vz = 0.0
                         prev_time_ctrl = time.time()
                     else:
                         print("[INFO] >>> TRACKING PAUSED (Center Fixed) <<<")
@@ -515,7 +521,8 @@ def main():
                                     "timestamp", "mode",
                                     "u_xy_px", "v_xy_px", "v_z_px",
                                     "x_mm", "y_mm", "z_mm",
-                                    "center_x_mm", "center_y_mm", "center_z_mm"
+                                    "center_x_mm", "center_y_mm", "center_z_mm",
+                                    "autd_target_x_mm", "autd_target_y_mm", "autd_target_z_mm"
                                 ])
                             log_file_initialized = True
                             print(f"[LOG] Log file initialized: {LOG_CSV_PATH}")
@@ -621,30 +628,11 @@ def main():
 
                 method = "XY+Z" if (detected_xy and detected_z) else "PARTIAL"
 
-                # 3. ログ
-                if (detected_xy or detected_z) and log_session_active and log_writer is not None:
-                    if use_affine:
-                        uv_homo_log = np.array([[u_xy, v_xy, 1.0]], dtype=np.float32).T
-                        xy_log = (A_affine @ uv_homo_log).flatten()
-                        x_log = base_center[0] + xy_log[0]
-                        y_log = base_center[1] + xy_log[1]
-                    else:
-                        x_log, y_log = float(base_center[0]), float(base_center[1])
+                # 3. 制御（XY: 予測PD / Z: 独立P + 見失い時保持）
+                loop_target_x = float(base_center[0])
+                loop_target_y = float(base_center[1])
+                loop_target_z = float(last_valid_target_z)
 
-                    if use_z_model:
-                        z_log = z_a * v_z + z_b
-                    else:
-                        z_log = DEFAULT_Z
-
-                    log_writer.writerow([
-                        f"{time.time():.4f}",
-                        log_session_mode,
-                        f"{u_xy:.2f}", f"{v_xy:.2f}", f"{v_z:.2f}",
-                        f"{x_log:.3f}", f"{y_log:.3f}", f"{z_log:.3f}",
-                        f"{base_center[0]:.3f}", f"{base_center[1]:.3f}", f"{DEFAULT_Z:.3f}",
-                    ])
-
-                # 4. 制御（XY: 予測PD / Z: 独立P + 見失い時保持）
                 if tracking_active:
                     target_x = base_center[0]
                     target_y = base_center[1]
@@ -677,25 +665,41 @@ def main():
                         x_pred = current_x + vx * DT_PRED_XY
                         y_pred = current_y + vy * DT_PRED_XY
 
+                        # 最終的に物体を留めておきたい目標位置 (AUTDの中心)
                         setpoint_x = base_center[0]
                         setpoint_y = base_center[1]
 
+                        # 目標位置 + (P制御: ズレの逆へ) + (D制御: 速度の逆へ)    
                         target_x = setpoint_x + K_P_XY * (setpoint_x - x_pred) - K_D_XY * vx
                         target_y = setpoint_y + K_P_XY * (setpoint_y - y_pred) - K_D_XY * vy
 
-                    # Z: 独立P
+                    # Z: 速度予測P（速度はxyと同様に平滑化）
                     if use_z_model and detected_z:
                         current_z = z_a * v_z + z_b
                         setpoint_z = DEFAULT_Z
 
+                        if prev_particle_z is not None and dt_ctrl > 0:
+                            raw_vz = (current_z - prev_particle_z) / dt_ctrl
+                            vz = 0.5 * prev_vz + 0.5 * raw_vz
+                        else:
+                            vz = 0.0
+
+                        prev_particle_z = current_z
+                        prev_vz = vz
+
+                        z_pred = current_z + vz * DT_PRED_Z
+
                         # 焦点を高くすると物体も高くなる系
-                        target_z = setpoint_z + K_P_Z * (setpoint_z - current_z)
+                        target_z = setpoint_z + K_P_Z * (setpoint_z - z_pred)
                         target_z = float(np.clip(target_z, Z_MIN, Z_MAX))
 
                         # 検出できたときだけ更新して保持
                         last_valid_target_z = target_z
 
                     set_shared_target_pos(target_x, target_y, target_z)
+                    loop_target_x = float(target_x)
+                    loop_target_y = float(target_y)
+                    loop_target_z = float(target_z)
 
                     if do_display:
                         cv2.putText(
@@ -716,6 +720,32 @@ def main():
                             (0, 255, 255),
                             2,
                         )
+
+                # 4. ログ（制御計算後のAUTD目標中心を毎ループ記録）
+                if log_session_active and log_writer is not None:
+                    x_log = np.nan
+                    y_log = np.nan
+                    z_log = np.nan
+
+                    if use_affine and detected_xy:
+                        uv_homo_log = np.array([[u_xy, v_xy, 1.0]], dtype=np.float32).T
+                        xy_log = (A_affine @ uv_homo_log).flatten()
+                        x_log = float(base_center[0] + xy_log[0])
+                        y_log = float(base_center[1] + xy_log[1])
+
+                    if use_z_model and detected_z:
+                        z_log = float(z_a * v_z + z_b)
+
+                    log_writer.writerow([
+                        f"{time.time():.4f}",
+                        log_session_mode,
+                        f"{u_xy:.2f}", f"{v_xy:.2f}", f"{v_z:.2f}",
+                        f"{x_log:.3f}" if np.isfinite(x_log) else "",
+                        f"{y_log:.3f}" if np.isfinite(y_log) else "",
+                        f"{z_log:.3f}" if np.isfinite(z_log) else "",
+                        f"{base_center[0]:.3f}", f"{base_center[1]:.3f}", f"{DEFAULT_Z:.3f}",
+                        f"{loop_target_x:.3f}", f"{loop_target_y:.3f}", f"{loop_target_z:.3f}",
+                    ])
 
                 # 5. FPS更新 & 表示
                 now = time.time()

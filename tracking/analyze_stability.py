@@ -25,6 +25,9 @@ EXPECTED_COLUMNS_NEW = [
     "center_x_mm",
     "center_y_mm",
     "center_z_mm",
+    "autd_target_x_mm",
+    "autd_target_y_mm",
+    "autd_target_z_mm",
 ]
 
 # 旧形式ログ
@@ -98,6 +101,9 @@ def normalize_log_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         "center_x_mm",
         "center_y_mm",
         "center_z_mm",
+        "autd_target_x_mm",
+        "autd_target_y_mm",
+        "autd_target_z_mm",
     ]
     for col in numeric_cols:
         if col in df.columns:
@@ -296,14 +302,15 @@ def print_improvement(results):
 
 
 def plot_single_file(df, results, out_path):
-    """Visualization for one file with x,y,z stability."""
+    """Visualization for one file with x,y,z stability and 3D spread."""
     colors = {"FIXED": "#e07b54", "PD": "#4c9be8"}
     labels = {"FIXED": "固定音場 (FIXED)", "PD": "制御あり (PD)"}
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig = plt.figure(figsize=(18, 10))
+    gs = fig.add_gridspec(2, 3)
 
     # 1. XY散布図
-    ax = axes[0, 0]
+    ax = fig.add_subplot(gs[0, 0])
     for mode, c in colors.items():
         sub = df[df["mode"] == mode]
         if len(sub) == 0:
@@ -318,7 +325,7 @@ def plot_single_file(df, results, out_path):
     ax.set_aspect("equal")
 
     # 2. z時系列
-    ax = axes[0, 1]
+    ax = fig.add_subplot(gs[0, 1])
     z_plotted = False
     for mode, c in colors.items():
         sub = df[(df["mode"] == mode) & (df["dz"].notna())].copy()
@@ -336,7 +343,7 @@ def plot_single_file(df, results, out_path):
         ax.text(0.5, 0.5, "zデータなし", ha="center", va="center", transform=ax.transAxes)
 
     # 3. XY距離時系列
-    ax = axes[1, 0]
+    ax = fig.add_subplot(gs[1, 0])
     for mode, c in colors.items():
         sub = df[df["mode"] == mode].copy()
         if len(sub) == 0:
@@ -349,7 +356,7 @@ def plot_single_file(df, results, out_path):
     ax.legend()
 
     # 4. sigma比較棒グラフ
-    ax = axes[1, 1]
+    ax = fig.add_subplot(gs[1, 1])
     metrics = ["sigma_x", "sigma_y", "sigma_z"]
     metric_labels = ["σx", "σy", "σz"]
     x = np.arange(len(metrics))
@@ -365,6 +372,45 @@ def plot_single_file(df, results, out_path):
     ax.set_ylabel("標準偏差 [mm]")
     ax.set_title("軸別安定性比較")
     ax.legend()
+
+    # 5. 3D散布図（dx, dy, dz）
+    ax = fig.add_subplot(gs[:, 2], projection="3d")
+    plotted_any = False
+    for mode, c in colors.items():
+        sub = df[(df["mode"] == mode) & (df["dz"].notna())]
+        if len(sub) == 0:
+            continue
+        ax.scatter(
+            sub["dx"],
+            sub["dy"],
+            sub["dz"],
+            s=6,
+            alpha=0.25,
+            color=c,
+            label=labels[mode],
+            depthshade=False,
+        )
+        plotted_any = True
+
+    ax.set_xlabel("dx [mm]")
+    ax.set_ylabel("dy [mm]")
+    ax.set_zlabel("dz [mm]")
+    ax.set_title("3D位置分布 (dx, dy, dz)")
+
+    if plotted_any:
+        # 見やすくするため各軸を同スケール近傍に揃える
+        xyz = df[["dx", "dy", "dz"]].dropna().to_numpy(dtype=np.float64)
+        if len(xyz) > 0:
+            center = xyz.mean(axis=0)
+            max_range = 0.5 * np.max(np.ptp(xyz, axis=0))
+            if max_range <= 1e-6:
+                max_range = 1.0
+            ax.set_xlim(center[0] - max_range, center[0] + max_range)
+            ax.set_ylim(center[1] - max_range, center[1] + max_range)
+            ax.set_zlim(center[2] - max_range, center[2] + max_range)
+        ax.legend(loc="upper left")
+    else:
+        ax.text2D(0.35, 0.5, "zデータなし", transform=ax.transAxes)
 
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
@@ -413,6 +459,52 @@ def plot_multi_file(summary_df, out_path):
 
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
+
+
+def plot_target_timeseries_single(df, out_path):
+    """Plot measured object position and AUTD target center trajectories for single file."""
+    target_cols = ["autd_target_x_mm", "autd_target_y_mm", "autd_target_z_mm"]
+    if not all(c in df.columns for c in target_cols):
+        return False
+
+    if not df[target_cols].notna().any().any():
+        return False
+
+    work = df.copy()
+    t0 = float(work["timestamp"].iloc[0])
+    t = work["timestamp"] - t0
+
+    fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
+
+    # X
+    ax = axes[0]
+    if "x_mm" in work.columns:
+        ax.plot(t, work["x_mm"], lw=0.8, alpha=0.75, color="#4c9be8", label="object x_mm")
+    ax.plot(t, work["autd_target_x_mm"], lw=1.0, alpha=0.9, color="#e07b54", label="target x_mm")
+    ax.set_ylabel("x [mm]")
+    ax.set_title("時系列: 物体位置とAUTD目標中心")
+    ax.legend(loc="upper right")
+
+    # Y
+    ax = axes[1]
+    if "y_mm" in work.columns:
+        ax.plot(t, work["y_mm"], lw=0.8, alpha=0.75, color="#4c9be8", label="object y_mm")
+    ax.plot(t, work["autd_target_y_mm"], lw=1.0, alpha=0.9, color="#e07b54", label="target y_mm")
+    ax.set_ylabel("y [mm]")
+    ax.legend(loc="upper right")
+
+    # Z
+    ax = axes[2]
+    if "z_mm" in work.columns:
+        ax.plot(t, work["z_mm"], lw=0.8, alpha=0.75, color="#4c9be8", label="object z_mm")
+    ax.plot(t, work["autd_target_z_mm"], lw=1.0, alpha=0.9, color="#e07b54", label="target z_mm")
+    ax.set_ylabel("z [mm]")
+    ax.set_xlabel("経過時間 [s]")
+    ax.legend(loc="upper right")
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    return True
 
 
 def main():
@@ -494,6 +586,12 @@ def main():
     if len(paths) == 1 and first_df is not None and first_results is not None:
         out_img = os.path.join(LOG_DIR, "stability_comparison.png")
         plot_single_file(first_df, first_results, out_img)
+
+        out_target_img = os.path.join(LOG_DIR, "stability_target_timeseries.png")
+        if plot_target_timeseries_single(first_df, out_target_img):
+            print(f"[INFO] AUTD目標中心の時系列図を保存しました: {out_target_img}")
+        else:
+            print("[INFO] AUTD目標中心列が無いため、時系列図の追加出力はスキップしました。")
     else:
         out_img = os.path.join(LOG_DIR, "stability_comparison_multi.png")
         plot_multi_file(summary_df, out_img)
