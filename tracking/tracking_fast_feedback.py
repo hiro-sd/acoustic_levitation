@@ -1,3 +1,4 @@
+from math import dist
 import os
 import time
 import sys
@@ -67,11 +68,11 @@ AUTD_LOOP_SLEEP_SEC = 0.001
 # XY制御（予測PD）
 K_P_XY = 0.15 # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
 K_D_XY = 0.015 # [D] 揺れを抑えるブレーキの強さ (速度に対する抵抗)
-DT_PRED_XY = 0.035  # 35 ms 先を予測
+DT_PRED_XY = 0.015 # 15 ms 先を予測
 
 # Z制御（予測P）
 K_P_Z = 0.1
-DT_PRED_Z = 0.05  # 50 ms 先を予測
+DT_PRED_Z = 0.015 # 15 ms 先を予測
 Z_MIN = 330.0
 Z_MAX = 470.0
 
@@ -117,7 +118,14 @@ autd_display_fps = 0.0
 pos_lock = threading.Lock()
 shared_target_seq = 0
 
-# 補助関数
+# 最新フレーム共有用
+latest_frame_xy = None
+latest_frame_z = None
+latest_frame_xy_time = 0.0
+latest_frame_z_time = 0.0
+frame_xy_lock = threading.Lock()
+frame_z_lock = threading.Lock()
+
 def init_ximea_camera(camera_sn: str, role: str):
     if xiapi is None:
         raise RuntimeError("XIMEA API not loaded")
@@ -310,6 +318,38 @@ def track_ball_cv(frame_rgb: np.ndarray, roi_rect):
     return (float(x1 + xc), float(y1 + yc), float(r)), bw
 
 
+def camera_capture_loop(cam, img, role, use_undistort, map1, map2, do_rotate=False, rotate_code=None):
+    global program_running
+    global latest_frame_xy, latest_frame_z
+    global latest_frame_xy_time, latest_frame_z_time
+
+    while program_running:
+        try:
+            cam.get_image(img)
+            frame = img.get_image_data_numpy()
+
+            if use_undistort:
+                frame = undistort_frame(frame, map1, map2)
+
+            if do_rotate:
+                frame = rotate_frame_if_needed(frame, True, rotate_code)
+
+            now_t = time.time()
+
+            if role == "xy":
+                with frame_xy_lock:
+                    latest_frame_xy = frame
+                    latest_frame_xy_time = now_t
+            else:
+                with frame_z_lock:
+                    latest_frame_z = frame
+                    latest_frame_z_time = now_t
+
+        except Exception as e:
+            print(f"[CAM {role} Thread Error] {e}")
+            time.sleep(0.01)
+
+
 def autd_control_loop(autd):
     global shared_target_pos, shared_target_seq, program_running, autd_display_fps
     print("[THREAD] AUTD Control Thread Started.")
@@ -404,6 +444,8 @@ def set_shared_target_pos(x: float, y: float, z: float):
 # メイン
 def main():
     global shared_target_pos, program_running
+    global latest_frame_xy, latest_frame_z
+    # global latest_frame_xy_time, latest_frame_z_time
 
     # affine 読み込み
     try:
@@ -505,6 +547,29 @@ def main():
             H_xy, W_xy = frame0.shape[:2]
             H_z, W_z = frame0_z.shape[:2]
 
+            # 最新フレームを初期投入
+            with frame_xy_lock:
+                latest_frame_xy = frame0.copy()
+                # latest_frame_xy_time = time.time()
+
+            with frame_z_lock:
+                latest_frame_z = frame0_z.copy()
+                # latest_frame_z_time = time.time()
+
+            # カメラ取得スレッド開始
+            t_cam_xy = threading.Thread(
+                target=camera_capture_loop,
+                args=(cam_xy, img_xy, "xy", use_undistort, map1_xy, map2_xy, False, None),
+                daemon=True,
+            )
+            t_cam_z = threading.Thread(
+                target=camera_capture_loop,
+                args=(cam_z, img_z, "z", use_undistort, map1_z, map2_z, ROTATE_Z_FRAME, ROTATE_Z_CODE),
+                daemon=True,
+            )
+            t_cam_xy.start()
+            t_cam_z.start()
+
             roi_cx_xy, roi_cy_xy = W_xy // 2, H_xy // 2
             roi_size_xy = ROI_INIT_SIZE
             roi_cx_z, roi_cy_z = W_z // 2, H_z // 2
@@ -598,20 +663,16 @@ def main():
                         log_writer = None
                     print(f"[LOG] DONE {log_session_mode} logging ({LOG_DURATION_SEC:.0f}s)")
 
-                # 1. フレーム取得（2カメラ）
-                cam_xy.get_image(img_xy)
-                frame_raw_xy = img_xy.get_image_data_numpy()
-                cam_z.get_image(img_z)
-                frame_raw_z = img_z.get_image_data_numpy()
+                # 1. 最新フレーム取得（2カメラは別スレッドで取得済み）
+                with frame_xy_lock:
+                    frame_xy = None if latest_frame_xy is None else latest_frame_xy.copy()
 
-                if use_undistort:
-                    frame_xy = undistort_frame(frame_raw_xy, map1_xy, map2_xy)
-                    frame_z = undistort_frame(frame_raw_z, map1_z, map2_z)
-                else:
-                    frame_xy = frame_raw_xy
-                    frame_z = frame_raw_z
+                with frame_z_lock:
+                    frame_z = None if latest_frame_z is None else latest_frame_z.copy()
 
-                frame_z = rotate_frame_if_needed(frame_z, ROTATE_Z_FRAME, ROTATE_Z_CODE)
+                if frame_xy is None or frame_z is None:
+                    time.sleep(0.001)
+                    continue
 
                 frame_count += 1
                 cam_fps_frame_count += 1
@@ -883,6 +944,12 @@ def main():
 
         if "t" in locals() and t.is_alive():
             t.join(timeout=1.0)
+
+        if "t_cam_xy" in locals() and t_cam_xy.is_alive():
+            t_cam_xy.join(timeout=1.0)
+
+        if "t_cam_z" in locals() and t_cam_z.is_alive():
+            t_cam_z.join(timeout=1.0)
 
         if "log_file" in locals() and log_file is not None:
             try:
