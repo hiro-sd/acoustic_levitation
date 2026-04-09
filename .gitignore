@@ -180,5 +180,3 @@ tracking/datasets/test/images/
 
 # calibration imgs
 tracking/calibration/stereo_images
-
-stability_log.csv

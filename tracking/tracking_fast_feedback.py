@@ -71,8 +71,17 @@ K_D_XY = 0.015 # [D] 揺れを抑えるブレーキの強さ (速度に対する
 DT_PRED_XY = 0.5 #  500ms 先を予測
 
 # Z制御（予測P）
-K_P_Z = 0.1
+# これの検証から
+K_P_Z = 0.3
+K_D_Z = 0.075
+Z_LP_ALPHA = 0.7
 DT_PRED_Z = 0.5 # 500 ms 先を予測
+
+# うまくいったパラメータ
+# K_P_Z = 0.3
+# K_D_Z = 0.05 
+# Z_LP_ALPHA = 0.7
+# DT_PRED_Z = 0.5 # 500 ms 先を予測
 Z_MIN = 330.0
 Z_MAX = 470.0
 
@@ -593,6 +602,7 @@ def main():
 
             # Z 速度予測用
             prev_particle_z = None
+            prev_particle_z_filt = None
             prev_vz = 0.0
             prev_z_meas_time = None
 
@@ -629,6 +639,7 @@ def main():
                         prev_particle_x = None
                         prev_particle_y = None
                         prev_particle_z = None
+                        prev_particle_z_filt = None
                         prev_vx = 0.0
                         prev_vy = 0.0
                         prev_vz = 0.0
@@ -813,26 +824,38 @@ def main():
                         last_valid_target_x = float(target_x)
                         last_valid_target_y = float(target_y)
 
-                    # Z: 速度予測P（速度はxyと同様に平滑化）
+                    # Z: 位置ローパス + 速度予測PD
                     if use_z_model and detected_z and is_new_z_frame:
                         current_z = z_a * v_z + z_b
                         setpoint_z = DEFAULT_Z
 
+                        # z位置そのものをローパス
+                        if prev_particle_z_filt is None:
+                            z_filt = current_z
+                        else:
+                            z_filt = Z_LP_ALPHA * prev_particle_z_filt + (1.0 - Z_LP_ALPHA) * current_z
+
+                        # z速度はローパス後の位置から計算し、さらに速度も平滑化
                         if prev_particle_z is not None and prev_z_meas_time is not None:
                             dt_z = max(1e-3, frame_z_time - prev_z_meas_time)
-                            raw_vz = (current_z - prev_particle_z) / dt_z
+                            raw_vz = (z_filt - prev_particle_z) / dt_z
                             vz = 0.5 * prev_vz + 0.5 * raw_vz
                         else:
                             vz = 0.0
 
-                        prev_particle_z = current_z
+                        prev_particle_z = z_filt
+                        prev_particle_z_filt = z_filt
                         prev_z_meas_time = frame_z_time
                         prev_vz = vz
 
-                        z_pred = current_z + vz * DT_PRED_Z
+                        z_pred = z_filt + vz * DT_PRED_Z
 
                         # 焦点を高くすると物体も高くなる系
-                        target_z = setpoint_z + K_P_Z * (setpoint_z - z_pred)
+                        target_z = (
+                            setpoint_z
+                            + K_P_Z * (setpoint_z - z_pred)
+                            - K_D_Z * vz
+                        )
                         target_z = float(np.clip(target_z, Z_MIN, Z_MAX))
 
                         # 検出できたときだけ更新して保持
