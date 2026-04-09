@@ -68,11 +68,11 @@ AUTD_LOOP_SLEEP_SEC = 0.001
 # XY制御（予測PD）
 K_P_XY = 0.15 # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
 K_D_XY = 0.015 # [D] 揺れを抑えるブレーキの強さ (速度に対する抵抗)
-DT_PRED_XY = 0.015 # 15 ms 先を予測
+DT_PRED_XY = 0.5 #  500ms 先を予測
 
 # Z制御（予測P）
 K_P_Z = 0.1
-DT_PRED_Z = 0.015 # 15 ms 先を予測
+DT_PRED_Z = 0.5 # 500 ms 先を予測
 Z_MIN = 330.0
 Z_MAX = 470.0
 
@@ -518,9 +518,13 @@ def main():
             window_tile = "Tracking"
             cv2.namedWindow(window_tile, cv2.WINDOW_NORMAL)
 
-            cam_fps_start_time = time.time()
-            cam_fps_frame_count = 0
-            cam_display_fps = 0.0
+            fps_start_time = time.time()
+            loop_fps_count = 0
+            new_xy_fps_count = 0
+            new_z_fps_count = 0
+            loop_display_fps = 0.0
+            new_xy_display_fps = 0.0
+            new_z_display_fps = 0.0
             frame_count = 0
 
             # 最初の1フレーム取得して画像サイズ確認
@@ -585,14 +589,23 @@ def main():
             prev_particle_y = None
             prev_vx = 0.0
             prev_vy = 0.0
-            prev_time_ctrl = time.time()
+            prev_xy_meas_time = None
 
             # Z 速度予測用
             prev_particle_z = None
             prev_vz = 0.0
+            prev_z_meas_time = None
 
             # Z見失い時保持用
             last_valid_target_z = DEFAULT_Z
+
+            # XY見失い・同一フレーム時保持用
+            last_valid_target_x = float(base_center[0])
+            last_valid_target_y = float(base_center[1])
+
+            # 新規フレーム判定用
+            last_processed_xy_time = -1.0
+            last_processed_z_time = -1.0
 
             # ログ制御
             log_file_initialized = False
@@ -619,7 +632,8 @@ def main():
                         prev_vx = 0.0
                         prev_vy = 0.0
                         prev_vz = 0.0
-                        prev_time_ctrl = time.time()
+                        prev_xy_meas_time = None
+                        prev_z_meas_time = None
                     else:
                         print("[INFO] >>> TRACKING PAUSED (Center Fixed) <<<")
                         set_shared_target_pos(base_center[0], base_center[1], DEFAULT_Z)
@@ -666,16 +680,27 @@ def main():
                 # 1. 最新フレーム取得（2カメラは別スレッドで取得済み）
                 with frame_xy_lock:
                     frame_xy = None if latest_frame_xy is None else latest_frame_xy.copy()
+                    frame_xy_time = latest_frame_xy_time
 
                 with frame_z_lock:
                     frame_z = None if latest_frame_z is None else latest_frame_z.copy()
+                    frame_z_time = latest_frame_z_time
 
                 if frame_xy is None or frame_z is None:
                     time.sleep(0.001)
                     continue
 
+                is_new_xy_frame = frame_xy_time > last_processed_xy_time
+                is_new_z_frame = frame_z_time > last_processed_z_time
+                if is_new_xy_frame:
+                    last_processed_xy_time = frame_xy_time
+                    new_xy_fps_count += 1
+                if is_new_z_frame:
+                    last_processed_z_time = frame_z_time
+                    new_z_fps_count += 1
+
                 frame_count += 1
-                cam_fps_frame_count += 1
+                loop_fps_count += 1
                 do_display = (frame_count % DISPLAY_EVERY_N_FRAMES == 0)
 
                 if do_display:
@@ -749,24 +774,21 @@ def main():
                 loop_target_z = float(last_valid_target_z)
 
                 if tracking_active:
-                    target_x = base_center[0]
-                    target_y = base_center[1]
+                    target_x = last_valid_target_x
+                    target_y = last_valid_target_y
                     target_z = last_valid_target_z
 
-                    now_ctrl = time.time()
-                    dt_ctrl = max(1e-3, now_ctrl - prev_time_ctrl)
-                    prev_time_ctrl = now_ctrl
-
                     # XY: 予測PD
-                    if use_affine and detected_xy:
+                    if use_affine and detected_xy and is_new_xy_frame:
                         uv_homo = np.array([[u_xy, v_xy, 1.0]], dtype=np.float32).T
                         xy_affine = (A_affine @ uv_homo).flatten()
                         current_x = base_center[0] + xy_affine[0]
                         current_y = base_center[1] + xy_affine[1]
 
-                        if prev_particle_x is not None and dt_ctrl > 0:
-                            raw_vx = (current_x - prev_particle_x) / dt_ctrl
-                            raw_vy = (current_y - prev_particle_y) / dt_ctrl
+                        if prev_particle_x is not None and prev_xy_meas_time is not None:
+                            dt_xy = max(1e-3, frame_xy_time - prev_xy_meas_time)
+                            raw_vx = (current_x - prev_particle_x) / dt_xy
+                            raw_vy = (current_y - prev_particle_y) / dt_xy
                             vx = 0.5 * prev_vx + 0.5 * raw_vx
                             vy = 0.5 * prev_vy + 0.5 * raw_vy
                         else:
@@ -774,6 +796,7 @@ def main():
 
                         prev_particle_x = current_x
                         prev_particle_y = current_y
+                        prev_xy_meas_time = frame_xy_time
                         prev_vx = vx
                         prev_vy = vy
 
@@ -787,19 +810,23 @@ def main():
                         # 目標位置 + (P制御: ズレの逆へ) + (D制御: 速度の逆へ)    
                         target_x = setpoint_x + K_P_XY * (setpoint_x - x_pred) - K_D_XY * vx
                         target_y = setpoint_y + K_P_XY * (setpoint_y - y_pred) - K_D_XY * vy
+                        last_valid_target_x = float(target_x)
+                        last_valid_target_y = float(target_y)
 
                     # Z: 速度予測P（速度はxyと同様に平滑化）
-                    if use_z_model and detected_z:
+                    if use_z_model and detected_z and is_new_z_frame:
                         current_z = z_a * v_z + z_b
                         setpoint_z = DEFAULT_Z
 
-                        if prev_particle_z is not None and dt_ctrl > 0:
-                            raw_vz = (current_z - prev_particle_z) / dt_ctrl
+                        if prev_particle_z is not None and prev_z_meas_time is not None:
+                            dt_z = max(1e-3, frame_z_time - prev_z_meas_time)
+                            raw_vz = (current_z - prev_particle_z) / dt_z
                             vz = 0.5 * prev_vz + 0.5 * raw_vz
                         else:
                             vz = 0.0
 
                         prev_particle_z = current_z
+                        prev_z_meas_time = frame_z_time
                         prev_vz = vz
 
                         z_pred = current_z + vz * DT_PRED_Z
@@ -864,10 +891,15 @@ def main():
 
                 # 5. FPS更新 & 表示
                 now = time.time()
-                if now - cam_fps_start_time >= 1.0:
-                    cam_display_fps = cam_fps_frame_count / (now - cam_fps_start_time)
-                    cam_fps_start_time = now
-                    cam_fps_frame_count = 0
+                if now - fps_start_time >= 1.0:
+                    elapsed = now - fps_start_time
+                    loop_display_fps = loop_fps_count / elapsed
+                    new_xy_display_fps = new_xy_fps_count / elapsed
+                    new_z_display_fps = new_z_fps_count / elapsed
+                    fps_start_time = now
+                    loop_fps_count = 0
+                    new_xy_fps_count = 0
+                    new_z_fps_count = 0
 
                 status_text = "ACTIVE" if tracking_active else "WAIT (Press ENTER)"
                 status_color = (0, 255, 0) if tracking_active else (0, 165, 255)
@@ -875,10 +907,10 @@ def main():
                 if do_display:
                     cv2.putText(
                         frame_xy_bgr,
-                        f"CAM FPS: {cam_display_fps:.1f} | AUTD FPS: {autd_display_fps:.1f} | {method}",
+                        f"Loop FPS: {loop_display_fps:.1f} | NewXY FPS: {new_xy_display_fps:.1f} | AUTD FPS: {autd_display_fps:.1f} | {method}",
                         (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
+                        0.6,
                         (255, 255, 255),
                         2,
                     )
@@ -893,10 +925,10 @@ def main():
                     )
                     cv2.putText(
                         frame_z_bgr,
-                        f"CAM FPS: {cam_display_fps:.1f} | v_z={v_z:.1f}",
+                        f"Loop FPS: {loop_display_fps:.1f} | NewZ FPS: {new_z_display_fps:.1f} | v_z={v_z:.1f}",
                         (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
+                        0.6,
                         (255, 255, 255),
                         2,
                     )
