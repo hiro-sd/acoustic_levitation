@@ -83,6 +83,43 @@ def load_log_dataframe(log_path: str) -> pd.DataFrame:
     return df
 
 
+def drop_consecutive_duplicate_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    連続する重複行だけを除去する。
+    timestamp は毎回違うので比較対象から外す。
+    mode が変わる行は別セッションの可能性があるため残す。
+    """
+    compare_cols = [
+        "mode",
+        "u_xy_px",
+        "v_xy_px",
+        "v_z_px",
+        "u_px",
+        "v_px",
+        "x_mm",
+        "y_mm",
+        "z_mm",
+        "center_x_mm",
+        "center_y_mm",
+        "center_z_mm",
+        "autd_target_x_mm",
+        "autd_target_y_mm",
+        "autd_target_z_mm",
+    ]
+    compare_cols = [c for c in compare_cols if c in df.columns]
+
+    if not compare_cols:
+        return df
+
+    prev = df[compare_cols].shift(1)
+    same_as_prev = df[compare_cols].eq(prev).all(axis=1)
+
+    # 先頭行は必ず残す
+    same_as_prev.iloc[0] = False
+
+    return df.loc[~same_as_prev].copy()
+
+
 def normalize_log_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize columns and drop invalid rows required for analysis."""
     if "mode" in df.columns:
@@ -122,6 +159,10 @@ def normalize_log_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         df["center_z_mm"] = np.nan
 
     df = df.dropna(subset=["timestamp", "x_mm", "y_mm"])
+
+    # 同一フレーム由来と思われる連続重複行を除去
+    df = drop_consecutive_duplicate_rows(df)
+
     return df
 
 
@@ -304,7 +345,7 @@ def print_improvement(results):
 def plot_single_file(df, results, out_path):
     """Visualization for one file with x,y,z stability and 3D spread."""
     colors = {"FIXED": "#e07b54", "PD": "#4c9be8"}
-    labels = {"FIXED": "固定音場 (FIXED)", "PD": "制御あり (PD)"}
+    labels = {"FIXED": "Control off (FIXED)", "PD": "Control on (PD)"}
 
     fig = plt.figure(figsize=(18, 10))
     gs = fig.add_gridspec(2, 3)
@@ -318,47 +359,87 @@ def plot_single_file(df, results, out_path):
         ax.scatter(sub["dx"], sub["dy"], s=5, alpha=0.35, color=c, label=labels[mode])
     ax.set_xlabel("dx [mm]")
     ax.set_ylabel("dy [mm]")
-    ax.set_title("位置分布 (XY散布図)")
+    ax.set_title("Position Scatter (xy plane)")
     ax.axhline(0, color="k", lw=0.5)
     ax.axvline(0, color="k", lw=0.5)
     ax.legend()
     ax.set_aspect("equal")
 
-    # 2. z時系列
+    # 2. XY距離時系列（実際の時系列順にそのまま表示）
+    ax = fig.add_subplot(gs[1, 0])
+
+    work = df.copy()
+    work["segment_id"] = (work["mode"] != work["mode"].shift(1)).cumsum()
+
+    plotted_label = {"FIXED": False, "PD": False}
+    t0_all = float(work["timestamp"].iloc[0])
+
+    for _, sub_seg in work.groupby("segment_id", sort=True):
+        mode = str(sub_seg["mode"].iloc[0]).upper()
+        if mode not in colors:
+            continue
+
+        label = labels[mode] if not plotted_label[mode] else None
+        ax.plot(
+            sub_seg["timestamp"] - t0_all,
+            sub_seg["r_xy"],
+            lw=0.7,
+            alpha=0.8,
+            color=colors[mode],
+            label=label,
+        )
+        plotted_label[mode] = True
+
+    ax.set_xlabel("Elapsed Time [s]")
+    ax.set_ylabel("r_xy [mm]")
+    ax.set_title("Time Series: XY Center Deviation")
+    ax.legend()
+
+    # 3. z時系列（実際の時系列順にそのまま表示）
     ax = fig.add_subplot(gs[0, 1])
     z_plotted = False
-    for mode, c in colors.items():
-        sub = df[(df["mode"] == mode) & (df["dz"].notna())].copy()
-        if len(sub) == 0:
+
+    # mode が切り替わるたびに別セグメントとして描く
+    work = df.copy()
+    work["segment_id"] = (work["mode"] != work["mode"].shift(1)).cumsum()
+
+    plotted_label = {"FIXED": False, "PD": False}
+
+    t0_all = float(work["timestamp"].iloc[0])
+
+    for _, sub_seg in work.groupby("segment_id", sort=True):
+        mode = str(sub_seg["mode"].iloc[0]).upper()
+        if mode not in colors:
             continue
-        t0 = sub["timestamp"].iloc[0]
-        ax.plot(sub["timestamp"] - t0, sub["dz"], lw=0.7, alpha=0.8, color=c, label=labels[mode])
+
+        sub_seg = sub_seg[sub_seg["dz"].notna()].copy()
+        if len(sub_seg) == 0:
+            continue
+
+        label = labels[mode] if not plotted_label[mode] else None
+        ax.plot(
+            sub_seg["timestamp"] - t0_all,
+            sub_seg["dz"],
+            lw=0.7,
+            alpha=0.8,
+            color=colors[mode],
+            label=label,
+        )
+        plotted_label[mode] = True
         z_plotted = True
-    ax.set_xlabel("経過時間 [s]")
+
+    ax.set_xlabel("Elapsed Time [s]")
     ax.set_ylabel("dz [mm]")
-    ax.set_title("時系列: z偏差")
+    ax.set_title("Time Series: z Deviation")
     if z_plotted:
         ax.legend()
     else:
         ax.text(0.5, 0.5, "zデータなし", ha="center", va="center", transform=ax.transAxes)
 
-    # 3. XY距離時系列
-    ax = fig.add_subplot(gs[1, 0])
-    for mode, c in colors.items():
-        sub = df[df["mode"] == mode].copy()
-        if len(sub) == 0:
-            continue
-        t0 = sub["timestamp"].iloc[0]
-        ax.plot(sub["timestamp"] - t0, sub["r_xy"], lw=0.7, alpha=0.8, color=c, label=labels[mode])
-    ax.set_xlabel("経過時間 [s]")
-    ax.set_ylabel("r_xy [mm]")
-    ax.set_title("時系列: XY中心偏差")
-    ax.legend()
-
     # 4. sigma比較棒グラフ
     ax = fig.add_subplot(gs[1, 1])
     metrics = ["sigma_x", "sigma_y", "sigma_z"]
-    metric_labels = ["σx", "σy", "σz"]
+    metric_labels = ["std_x", "std_y", "std_z"]
     x = np.arange(len(metrics))
     width = 0.35
 
@@ -369,8 +450,8 @@ def plot_single_file(df, results, out_path):
     ax.bar(x + width / 2, pd_vals, width, label="PD", color=colors["PD"])
     ax.set_xticks(x)
     ax.set_xticklabels(metric_labels)
-    ax.set_ylabel("標準偏差 [mm]")
-    ax.set_title("軸別安定性比較")
+    ax.set_ylabel("Standard Deviation [mm]")
+    ax.set_title("Axis-wise Stability Comparison")
     ax.legend()
 
     # 5. 3D散布図（dx, dy, dz）
@@ -395,7 +476,7 @@ def plot_single_file(df, results, out_path):
     ax.set_xlabel("dx [mm]")
     ax.set_ylabel("dy [mm]")
     ax.set_zlabel("dz [mm]")
-    ax.set_title("3D位置分布 (dx, dy, dz)")
+    ax.set_title("3D Position Distribution (dx, dy, dz)")
 
     if plotted_any:
         # 見やすくするため各軸を同スケール近傍に揃える
@@ -430,7 +511,7 @@ def plot_multi_file(summary_df, out_path):
         ax.scatter(sub["file_idx"], sub["sigma_xy"], s=45, alpha=0.8, color=colors[mode], label=mode)
     ax.set_xlabel("file index")
     ax.set_ylabel("sigma_xy [mm]")
-    ax.set_title("ファイル別 sigma_xy")
+    ax.set_title("File-wise sigma_xy")
     ax.legend()
 
     # 2) 各ファイルの sigma_z
@@ -442,7 +523,7 @@ def plot_multi_file(summary_df, out_path):
         ax.scatter(sub["file_idx"], sub["sigma_z"], s=45, alpha=0.8, color=colors[mode], label=mode)
     ax.set_xlabel("file index")
     ax.set_ylabel("sigma_z [mm]")
-    ax.set_title("ファイル別 sigma_z")
+    ax.set_title("File-wise sigma_z")
     ax.legend()
 
     # 3) モード別平均 sigma_xyz
@@ -455,7 +536,7 @@ def plot_multi_file(summary_df, out_path):
         for bar, val in zip(bars, vals):
             ax.text(bar.get_x() + bar.get_width() / 2, val + 0.01, f"{val:.3f}", ha="center", va="bottom")
     ax.set_ylabel("avg sigma_xyz [mm]")
-    ax.set_title("モード別平均 sigma_xyz")
+    ax.set_title("Mode-wise Average sigma_xyz")
 
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
@@ -482,7 +563,7 @@ def plot_target_timeseries_single(df, out_path):
         ax.plot(t, work["x_mm"], lw=0.8, alpha=0.75, color="#4c9be8", label="object x_mm")
     ax.plot(t, work["autd_target_x_mm"], lw=1.0, alpha=0.9, color="#e07b54", label="target x_mm")
     ax.set_ylabel("x [mm]")
-    ax.set_title("時系列: 物体位置とAUTD目標中心")
+    ax.set_title("Time Series: Object Position and AUTD Target Center")
     ax.legend(loc="upper right")
 
     # Y

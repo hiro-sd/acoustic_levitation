@@ -887,7 +887,7 @@ def main():
                         )
 
                 # 4. ログ（制御計算後のAUTD目標中心を毎ループ記録）
-                if log_session_active and log_writer is not None:
+                if log_session_active and log_writer is not None and (is_new_xy_frame or is_new_z_frame):
                     x_log = np.nan
                     y_log = np.nan
                     z_log = np.nan
