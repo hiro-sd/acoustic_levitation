@@ -90,12 +90,12 @@ CIRCLE_OFFSETS = np.array(
 
 # ログ設定
 LOG_ENABLED = True
-LOG_CSV_PATH = "stability_log.csv"
+LOG_CSV_PATH = "./tracking/stability_log.csv"
 LOG_DURATION_SEC = 30.0
 LOG_TRIGGER_KEY = "l"
 
 # CPUスレッド
-os.environ.setdefault("OMP_NUM_THREADS", "4")
+# os.environ.setdefault("OMP_NUM_THREADS", "4")
 
 # AUTD配置（3行×3列）
 autd_arrangement = [
@@ -133,8 +133,37 @@ def init_ximea_camera(camera_sn: str, role: str):
     except AttributeError:
         pass
 
+    if hasattr(cam, "disable_aeag"):
+        try:
+            cam.disable_aeag()
+        except Exception:
+            pass
+
     cam.set_exposure(EXPOSURE_US)
     print(f"[INFO] Exposure set to {EXPOSURE_US} us")
+
+    try:
+        framerate_min = cam.get_framerate_minimum()
+        framerate_max = cam.get_framerate_maximum()
+        framerate_inc = cam.get_framerate_increment()
+
+        target_framerate = framerate_max
+        if framerate_inc > 0:
+            target_framerate = np.floor(framerate_max / framerate_inc) * framerate_inc
+            if target_framerate < framerate_min:
+                target_framerate = framerate_max
+
+        cam.set_framerate(target_framerate)
+        applied_framerate = cam.get_framerate()
+        print(
+            f"[INFO] Frame rate set ({role}): "
+            f"min={framerate_min:.2f}, max={framerate_max:.2f}, "
+            f"inc={framerate_inc:.2f}, applied={applied_framerate:.2f} fps"
+        )
+    except AttributeError:
+        print(f"[WARN] Framerate API unavailable ({role}); skipped frame rate configuration.")
+    except Exception as e:
+        print(f"[WARN] Failed to configure framerate ({role}): {e}")
 
     img = xiapi.Image()
     cam.start_acquisition()
@@ -355,8 +384,6 @@ def autd_control_loop(autd):
             )
             fps_start_time = now
             fps_frame_count = 0
-
-        # time.sleep(AUTD_LOOP_SLEEP_SEC)
 
     print("[THREAD] AUTD Control Thread Stopped.")
 
