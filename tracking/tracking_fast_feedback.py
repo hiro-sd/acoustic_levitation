@@ -200,12 +200,28 @@ def clamp_roi(cx, cy, size, w, h):
     return x1, y1, x2, y2
 
 
-def undistort_frame(frame: np.ndarray, mtx: np.ndarray, dist: np.ndarray) -> np.ndarray:
+def build_undistort_maps(frame_shape, mtx: np.ndarray, dist: np.ndarray):
     """
-    フレーム全体を歪み補正する。
-    この補正済み画像上で検出した(u,v)を affine にそのまま入力する。
+    毎フレーム cv2.undistort() する代わりに、
+    最初に1回だけ remap 用テーブルを作る。
     """
-    return cv2.undistort(frame, mtx, dist)
+    h, w = frame_shape[:2]
+    map1, map2 = cv2.initUndistortRectifyMap(
+        mtx,
+        dist,
+        None,
+        mtx,
+        (w, h),
+        cv2.CV_16SC2,
+    )
+    return map1, map2
+
+
+def undistort_frame(frame: np.ndarray, map1: np.ndarray, map2: np.ndarray) -> np.ndarray:
+    """
+    事前計算済み remap テーブルで高速に歪み補正する。
+    """
+    return cv2.remap(frame, map1, map2, interpolation=cv2.INTER_LINEAR)
 
 
 def track_ball_cv(frame_rgb: np.ndarray, roi_rect):
@@ -440,16 +456,26 @@ def main():
 
             # 最初の1フレーム取得して画像サイズ確認
             cam_xy.get_image(img_xy)
-            frame0 = img_xy.get_image_data_numpy()
-            if use_undistort:
-                frame0 = undistort_frame(frame0, mtx_cam_xy, dist_cam_xy)
-            H_xy, W_xy = frame0.shape[:2]
+            frame0_raw_xy = img_xy.get_image_data_numpy()
 
             cam_z.get_image(img_z)
-            frame0_z = img_z.get_image_data_numpy()
+            frame0_raw_z = img_z.get_image_data_numpy()
+
             if use_undistort:
-                frame0_z = undistort_frame(frame0_z, mtx_cam_z, dist_cam_z)
+                map1_xy, map2_xy = build_undistort_maps(frame0_raw_xy.shape, mtx_cam_xy, dist_cam_xy)
+                map1_z, map2_z = build_undistort_maps(frame0_raw_z.shape, mtx_cam_z, dist_cam_z)
+
+                frame0 = undistort_frame(frame0_raw_xy, map1_xy, map2_xy)
+                frame0_z = undistort_frame(frame0_raw_z, map1_z, map2_z)
+            else:
+                map1_xy = map2_xy = None
+                map1_z = map2_z = None
+                frame0 = frame0_raw_xy
+                frame0_z = frame0_raw_z
+
             frame0_z = rotate_frame_if_needed(frame0_z, ROTATE_Z_FRAME, ROTATE_Z_CODE)
+
+            H_xy, W_xy = frame0.shape[:2]
             H_z, W_z = frame0_z.shape[:2]
 
             roi_cx_xy, roi_cy_xy = W_xy // 2, H_xy // 2
@@ -552,11 +578,12 @@ def main():
                 frame_raw_z = img_z.get_image_data_numpy()
 
                 if use_undistort:
-                    frame_xy = undistort_frame(frame_raw_xy, mtx_cam_xy, dist_cam_xy)
-                    frame_z = undistort_frame(frame_raw_z, mtx_cam_z, dist_cam_z)
+                    frame_xy = undistort_frame(frame_raw_xy, map1_xy, map2_xy)
+                    frame_z = undistort_frame(frame_raw_z, map1_z, map2_z)
                 else:
                     frame_xy = frame_raw_xy
                     frame_z = frame_raw_z
+
                 frame_z = rotate_frame_if_needed(frame_z, ROTATE_Z_FRAME, ROTATE_Z_CODE)
 
                 frame_count += 1
