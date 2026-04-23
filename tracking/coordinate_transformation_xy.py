@@ -16,7 +16,7 @@ try:
 except ImportError:
     print("[WARN] ximea モジュールなし。")
     xiapi = None
-
+    
 # AUTD
 from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static
 from pyautd3.link.twincat import TwinCAT
@@ -42,7 +42,7 @@ X_STEP_MM = 2.0
 Y_STEP_MM = 2.0
 
 # 取得設定
-CAPTURE_SECONDS = 10.0
+CAPTURE_SECONDS = 15.0
 MIN_SAMPLES_TO_SAVE = 30
 
 # CV設定

@@ -74,8 +74,10 @@ DT_PRED_XY = 0.5 #  500ms 先を予測
 # これの検証から
 K_P_Z = 0.3
 K_D_Z = 0.075
+K_I_Z = 0.1
 Z_LP_ALPHA = 0.7
 DT_PRED_Z = 0.5 # 500 ms 先を予測
+Z_INTEGRAL_CLAMP = 150.0
 
 # うまくいったパラメータ
 # K_P_Z = 0.3
@@ -605,6 +607,7 @@ def main():
             prev_particle_z_filt = None
             prev_vz = 0.0
             prev_z_meas_time = None
+            prev_z_error_int = 0.0
 
             # Z見失い時保持用
             last_valid_target_z = DEFAULT_Z
@@ -645,6 +648,7 @@ def main():
                         prev_vz = 0.0
                         prev_xy_meas_time = None
                         prev_z_meas_time = None
+                        prev_z_error_int = 0.0
                     else:
                         print("[INFO] >>> TRACKING PAUSED (Center Fixed) <<<")
                         set_shared_target_pos(base_center[0], base_center[1], DEFAULT_Z)
@@ -828,6 +832,8 @@ def main():
                     if use_z_model and detected_z and is_new_z_frame:
                         current_z = z_a * v_z + z_b
                         setpoint_z = DEFAULT_Z
+                        z_error = setpoint_z - current_z
+                        current_z_meas_time = frame_z_time
 
                         # z位置そのものをローパス
                         if prev_particle_z_filt is None:
@@ -845,8 +851,20 @@ def main():
 
                         prev_particle_z = z_filt
                         prev_particle_z_filt = z_filt
-                        prev_z_meas_time = frame_z_time
                         prev_vz = vz
+
+                        if prev_z_meas_time is None:
+                            dt_int = 0.0
+                        else:
+                            dt_int = max(1e-3, current_z_meas_time - prev_z_meas_time)
+                        prev_z_error_int = float(
+                            np.clip(
+                                prev_z_error_int + z_error * dt_int,
+                                -Z_INTEGRAL_CLAMP,
+                                Z_INTEGRAL_CLAMP,
+                            )
+                        )
+                        prev_z_meas_time = current_z_meas_time
 
                         z_pred = z_filt + vz * DT_PRED_Z
 
@@ -854,6 +872,7 @@ def main():
                         target_z = (
                             setpoint_z
                             + K_P_Z * (setpoint_z - z_pred)
+                            + K_I_Z * prev_z_error_int
                             - K_D_Z * vz
                         )
                         target_z = float(np.clip(target_z, Z_MIN, Z_MAX))
