@@ -11,6 +11,7 @@ import os
 
 LOG_DIR = os.path.dirname(__file__)
 LOG_PATH = os.path.join(LOG_DIR, "stability_log.csv")
+PLOT_OUT_DIR = os.path.join(LOG_DIR, "analyze_stability")
 
 # 新形式ログ
 EXPECTED_COLUMNS_NEW = [
@@ -342,159 +343,217 @@ def print_improvement(results):
     print()
 
 
-def plot_single_file(df, results, out_path):
-    """Visualization for one file with x,y,z stability and 3D spread."""
+def plot_single_file(df, results, out_dir):
+    """Save requested single-file charts as separate PNG images."""
     colors = {"FIXED": "#e07b54", "PD": "#4c9be8"}
     labels = {"FIXED": "Control off (FIXED)", "PD": "Control on (PD)"}
+    label_fs = 20
+    tick_fs = 20
+    legend_fs = 18
+    out_paths = []
 
-    fig = plt.figure(figsize=(18, 10))
-    gs = fig.add_gridspec(2, 3)
-
-    # 1. XY散布図
-    ax = fig.add_subplot(gs[0, 0])
+    # 1) Position Scatter
+    fig, ax = plt.subplots(figsize=(7.0, 6.0))
     for mode, c in colors.items():
         sub = df[df["mode"] == mode]
         if len(sub) == 0:
             continue
-        ax.scatter(sub["dx"], sub["dy"], s=5, alpha=0.35, color=c, label=labels[mode])
-    ax.set_xlabel("dx [mm]")
-    ax.set_ylabel("dy [mm]")
-    ax.set_title("Position Scatter (xy plane)")
+        ax.scatter(sub["dx"], sub["dy"], s=6, alpha=0.35, color=c, label=labels[mode])
+    ax.set_xlabel("dx [mm]", fontsize=label_fs)
+    ax.set_ylabel("dy [mm]", fontsize=label_fs)
     ax.axhline(0, color="k", lw=0.5)
     ax.axvline(0, color="k", lw=0.5)
-    ax.legend()
+    ax.tick_params(axis="both", which="major", labelsize=tick_fs)
+    ax.legend(fontsize=16)
     ax.set_aspect("equal")
+    plt.tight_layout()
+    out_scatter = os.path.join(out_dir, "stability_position_scatter.png")
+    plt.savefig(out_scatter, dpi=150)
+    plt.close(fig)
+    out_paths.append(out_scatter)
 
-    # 2. XY距離時系列（実際の時系列順にそのまま表示）
-    ax = fig.add_subplot(gs[1, 0])
+    # 1b) Position Scatter (dx, dz)
+    fig, ax = plt.subplots(figsize=(7.0, 6.0))
+    plotted_dz = False
+    for mode, c in colors.items():
+        sub = df[(df["mode"] == mode) & (df["dz"].notna())]
+        if len(sub) == 0:
+            continue
+        plotted_dz = True
+        ax.scatter(sub["dx"], sub["dz"], s=6, alpha=0.35, color=c, label=labels[mode])
+    ax.set_xlabel("dx [mm]", fontsize=label_fs)
+    ax.set_ylabel("dz [mm]", fontsize=label_fs)
+    ax.axhline(0, color="k", lw=0.5)
+    ax.axvline(0, color="k", lw=0.5)
+    ax.tick_params(axis="both", which="major", labelsize=tick_fs)
+    if plotted_dz:
+        ax.legend(fontsize=legend_fs)
+    else:
+        ax.text(0.5, 0.5, "zデータなし", ha="center", va="center", transform=ax.transAxes)
+    plt.tight_layout()
+    out_scatter_dx_dz = os.path.join(out_dir, "stability_position_scatter_dx_dz.png")
+    plt.savefig(out_scatter_dx_dz, dpi=150)
+    plt.close(fig)
+    out_paths.append(out_scatter_dx_dz)
 
+    # 1c) Position Scatter (dy, dz)
+    fig, ax = plt.subplots(figsize=(7.0, 6.0))
+    plotted_dz = False
+    for mode, c in colors.items():
+        sub = df[(df["mode"] == mode) & (df["dz"].notna())]
+        if len(sub) == 0:
+            continue
+        plotted_dz = True
+        ax.scatter(sub["dy"], sub["dz"], s=6, alpha=0.35, color=c, label=labels[mode])
+    ax.set_xlabel("dy [mm]", fontsize=label_fs)
+    ax.set_ylabel("dz [mm]", fontsize=label_fs)
+    ax.axhline(0, color="k", lw=0.5)
+    ax.axvline(0, color="k", lw=0.5)
+    ax.tick_params(axis="both", which="major", labelsize=tick_fs)
+    if plotted_dz:
+        ax.legend(fontsize=legend_fs)
+    else:
+        ax.text(0.5, 0.5, "zデータなし", ha="center", va="center", transform=ax.transAxes)
+    plt.tight_layout()
+    out_scatter_dy_dz = os.path.join(out_dir, "stability_position_scatter_dy_dz.png")
+    plt.savefig(out_scatter_dy_dz, dpi=150)
+    plt.close(fig)
+    out_paths.append(out_scatter_dy_dz)
+
+    # 2) Time Series: dx
+    fig, ax = plt.subplots(figsize=(10.5, 4.6))
     work = df.copy()
     work["segment_id"] = (work["mode"] != work["mode"].shift(1)).cumsum()
-
-    plotted_label = {"FIXED": False, "PD": False}
     t0_all = float(work["timestamp"].iloc[0])
 
-    for _, sub_seg in work.groupby("segment_id", sort=True):
-        mode = str(sub_seg["mode"].iloc[0]).upper()
-        if mode not in colors:
-            continue
+    # dx, dy, dz の3図で共通の縦軸レンジを使う
+    axis_cols = ["dx", "dy", "dz"]
+    stacked_vals = []
+    for col in axis_cols:
+        if col in work.columns:
+            vals = pd.to_numeric(work[col], errors="coerce").dropna().to_numpy(dtype=np.float64)
+            if len(vals) > 0:
+                stacked_vals.append(vals)
 
-        label = labels[mode] if not plotted_label[mode] else None
-        ax.plot(
-            sub_seg["timestamp"] - t0_all,
-            sub_seg["r_xy"],
-            lw=0.7,
-            alpha=0.8,
-            color=colors[mode],
-            label=label,
-        )
-        plotted_label[mode] = True
+    if len(stacked_vals) > 0:
+        shared_y_max = float(np.max(np.abs(np.concatenate(stacked_vals))))
+        if shared_y_max < 1e-6:
+            shared_y_max = 1.0
+    else:
+        shared_y_max = 1.0
+    shared_y_lim = (-shared_y_max, shared_y_max)
 
-    ax.set_xlabel("Elapsed Time [s]")
-    ax.set_ylabel("r_xy [mm]")
-    ax.set_title("Time Series: XY Center Deviation")
-    ax.legend()
+    def save_axis_timeseries(col, ylabel, out_name):
+        fig, ax = plt.subplots(figsize=(10.5, 4.6))
+        plotted_label = {"FIXED": False, "PD": False}
+        plotted_any = False
 
-    # 3. z時系列（実際の時系列順にそのまま表示）
-    ax = fig.add_subplot(gs[0, 1])
+        for _, sub_seg in work.groupby("segment_id", sort=True):
+            mode = str(sub_seg["mode"].iloc[0]).upper()
+            if mode not in colors:
+                continue
+
+            sub_seg_col = sub_seg[["timestamp", col]].copy()
+            sub_seg_col[col] = pd.to_numeric(sub_seg_col[col], errors="coerce")
+            sub_seg_col = sub_seg_col.dropna(subset=[col])
+            if len(sub_seg_col) == 0:
+                continue
+
+            label = labels[mode] if not plotted_label[mode] else None
+            ax.plot(
+                sub_seg_col["timestamp"] - t0_all,
+                sub_seg_col[col],
+                lw=0.8,
+                alpha=0.85,
+                color=colors[mode],
+                label=label,
+            )
+            plotted_label[mode] = True
+            plotted_any = True
+
+        ax.set_xlabel("Elapsed Time [s]", fontsize=label_fs)
+        ax.set_ylabel(ylabel, fontsize=label_fs)
+        ax.axhline(0, color="k", lw=0.8, alpha=0.8)
+        ax.set_ylim(shared_y_lim)
+        ax.tick_params(axis="both", which="major", labelsize=tick_fs)
+        if plotted_any:
+            ax.legend(fontsize=legend_fs)
+        else:
+            ax.text(0.5, 0.5, "データなし", ha="center", va="center", transform=ax.transAxes)
+
+        plt.tight_layout()
+        out_path = os.path.join(out_dir, out_name)
+        plt.savefig(out_path, dpi=150)
+        plt.close(fig)
+        out_paths.append(out_path)
+
+    save_axis_timeseries("dx", "dx [mm]", "stability_time_series_dx.png")
+    save_axis_timeseries("dy", "dy [mm]", "stability_time_series_dy.png")
+    save_axis_timeseries("dz", "dz [mm]", "stability_time_series_dz.png")
+
+    # 3) Time Series: Z Deviation
+    fig, ax = plt.subplots(figsize=(10.5, 4.6))
     z_plotted = False
-
-    # mode が切り替わるたびに別セグメントとして描く
     work = df.copy()
     work["segment_id"] = (work["mode"] != work["mode"].shift(1)).cumsum()
-
     plotted_label = {"FIXED": False, "PD": False}
-
     t0_all = float(work["timestamp"].iloc[0])
 
     for _, sub_seg in work.groupby("segment_id", sort=True):
         mode = str(sub_seg["mode"].iloc[0]).upper()
         if mode not in colors:
             continue
-
         sub_seg = sub_seg[sub_seg["dz"].notna()].copy()
         if len(sub_seg) == 0:
             continue
-
         label = labels[mode] if not plotted_label[mode] else None
         ax.plot(
             sub_seg["timestamp"] - t0_all,
             sub_seg["dz"],
-            lw=0.7,
-            alpha=0.8,
+            lw=0.8,
+            alpha=0.85,
             color=colors[mode],
             label=label,
         )
         plotted_label[mode] = True
         z_plotted = True
 
-    ax.set_xlabel("Elapsed Time [s]")
-    ax.set_ylabel("dz [mm]")
-    ax.set_title("Time Series: z Deviation")
+    ax.set_xlabel("Elapsed Time [s]", fontsize=label_fs)
+    ax.set_ylabel("dz [mm]", fontsize=label_fs)
+    ax.axhline(0, color="k", lw=0.8, alpha=0.8)
+    ax.tick_params(axis="both", which="major", labelsize=tick_fs)
     if z_plotted:
-        ax.legend()
+        ax.legend(fontsize=legend_fs)
     else:
         ax.text(0.5, 0.5, "zデータなし", ha="center", va="center", transform=ax.transAxes)
+    plt.tight_layout()
+    out_z = os.path.join(out_dir, "stability_time_series_z_deviation.png")
+    plt.savefig(out_z, dpi=150)
+    plt.close(fig)
+    out_paths.append(out_z)
 
-    # 4. sigma比較棒グラフ
-    ax = fig.add_subplot(gs[1, 1])
-    metrics = ["sigma_x", "sigma_y", "sigma_z"]
-    metric_labels = ["std_x", "std_y", "std_z"]
+    # 4) Axis-wise Stability Comparison
+    fig, ax = plt.subplots(figsize=(7.5, 5.5))
+    metrics = ["sigma_x", "sigma_y", "sigma_z", "sigma_xyz"]
+    metric_labels = ["std_x", "std_y", "std_z", "std_xyz"]
     x = np.arange(len(metrics))
     width = 0.35
-
     fixed_vals = [results["FIXED"].get(m, np.nan) if "FIXED" in results else np.nan for m in metrics]
     pd_vals = [results["PD"].get(m, np.nan) if "PD" in results else np.nan for m in metrics]
-
     ax.bar(x - width / 2, fixed_vals, width, label="FIXED", color=colors["FIXED"])
     ax.bar(x + width / 2, pd_vals, width, label="PD", color=colors["PD"])
     ax.set_xticks(x)
-    ax.set_xticklabels(metric_labels)
-    ax.set_ylabel("Standard Deviation [mm]")
-    ax.set_title("Axis-wise Stability Comparison")
-    ax.legend()
-
-    # 5. 3D散布図（dx, dy, dz）
-    ax = fig.add_subplot(gs[:, 2], projection="3d")
-    plotted_any = False
-    for mode, c in colors.items():
-        sub = df[(df["mode"] == mode) & (df["dz"].notna())]
-        if len(sub) == 0:
-            continue
-        ax.scatter(
-            sub["dx"],
-            sub["dy"],
-            sub["dz"],
-            s=6,
-            alpha=0.25,
-            color=c,
-            label=labels[mode],
-            depthshade=False,
-        )
-        plotted_any = True
-
-    ax.set_xlabel("dx [mm]")
-    ax.set_ylabel("dy [mm]")
-    ax.set_zlabel("dz [mm]")
-    ax.set_title("3D Position Distribution (dx, dy, dz)")
-
-    if plotted_any:
-        # 見やすくするため各軸を同スケール近傍に揃える
-        xyz = df[["dx", "dy", "dz"]].dropna().to_numpy(dtype=np.float64)
-        if len(xyz) > 0:
-            center = xyz.mean(axis=0)
-            max_range = 0.5 * np.max(np.ptp(xyz, axis=0))
-            if max_range <= 1e-6:
-                max_range = 1.0
-            ax.set_xlim(center[0] - max_range, center[0] + max_range)
-            ax.set_ylim(center[1] - max_range, center[1] + max_range)
-            ax.set_zlim(center[2] - max_range, center[2] + max_range)
-        ax.legend(loc="upper left")
-    else:
-        ax.text2D(0.35, 0.5, "zデータなし", transform=ax.transAxes)
-
+    ax.set_xticklabels(metric_labels, fontsize=tick_fs)
+    ax.set_ylabel("Standard Deviation [mm]", fontsize=label_fs)
+    ax.tick_params(axis="y", which="major", labelsize=tick_fs)
+    ax.legend(fontsize=legend_fs)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    out_axis = os.path.join(out_dir, "stability_axis_wise_stability_comparison.png")
+    plt.savefig(out_axis, dpi=150)
+    plt.close(fig)
+    out_paths.append(out_axis)
+
+    return out_paths
 
 
 def plot_multi_file(summary_df, out_path):
@@ -610,6 +669,8 @@ def main():
         print("        例: python tracking/analyze_stability.py tracking/stability_log*.csv")
         sys.exit(1)
 
+    os.makedirs(PLOT_OUT_DIR, exist_ok=True)
+
     print(f"[INFO] Input files: {len(paths)}")
 
     all_rows = []
@@ -665,19 +726,20 @@ def main():
     print(agg)
 
     if len(paths) == 1 and first_df is not None and first_results is not None:
-        out_img = os.path.join(LOG_DIR, "stability_comparison.png")
-        plot_single_file(first_df, first_results, out_img)
+        out_imgs = plot_single_file(first_df, first_results, PLOT_OUT_DIR)
 
-        out_target_img = os.path.join(LOG_DIR, "stability_target_timeseries.png")
+        out_target_img = os.path.join(PLOT_OUT_DIR, "stability_target_timeseries.png")
         if plot_target_timeseries_single(first_df, out_target_img):
             print(f"[INFO] AUTD目標中心の時系列図を保存しました: {out_target_img}")
         else:
             print("[INFO] AUTD目標中心列が無いため、時系列図の追加出力はスキップしました。")
-    else:
-        out_img = os.path.join(LOG_DIR, "stability_comparison_multi.png")
-        plot_multi_file(summary_df, out_img)
 
-    print(f"[INFO] 図を保存しました: {out_img}")
+        for out_img in out_imgs:
+            print(f"[INFO] 図を保存しました: {out_img}")
+    else:
+        out_img = os.path.join(PLOT_OUT_DIR, "stability_comparison_multi.png")
+        plot_multi_file(summary_df, out_img)
+        print(f"[INFO] 図を保存しました: {out_img}")
 
     if not args.no_show:
         plt.show()
