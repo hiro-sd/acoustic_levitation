@@ -65,25 +65,21 @@ RADIUS = 23.5
 DEFAULT_Z = 400.0
 AUTD_LOOP_SLEEP_SEC = 0.001
 
-# XY制御（予測PD）
-K_P_XY = 0.15 # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
-K_D_XY = 0.015 # [D] 揺れを抑えるブレーキの強さ (速度に対する抵抗)
-DT_PRED_XY = 0.5 #  500ms 先を予測
+# XY制御（予測PID）
+K_P_XY = 0.3 # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
+K_D_XY = 0.05 # [D] 揺れを抑えるブレーキの強さ (速度に対する抵抗)
+K_I_XY = 0.1 # [I] ゆっくりと中心に引き戻す力 (積分項)
+DT_PRED_XY = 0.01 #  10 ms 先を予測
+XY_INTEGRAL_CLAMP = 150.0
 
-# Z制御（予測P）
-# これの検証から
-K_P_Z = 0.3
-K_D_Z = 0.075
+# Z制御（重力考慮の予測PID）
+K_P_Z = 0.6
+K_D_Z = 0.15
 K_I_Z = 0.1
 Z_LP_ALPHA = 0.7
-DT_PRED_Z = 0.5 # 500 ms 先を予測
+DT_PRED_Z = 0.01 # 10 ms 先を予測
 Z_INTEGRAL_CLAMP = 150.0
-
-# うまくいったパラメータ
-# K_P_Z = 0.3
-# K_D_Z = 0.05 
-# Z_LP_ALPHA = 0.7
-# DT_PRED_Z = 0.5 # 500 ms 先を予測
+GRAVITY_MM_S2 = 9.80665 * 1000.0
 Z_MIN = 330.0
 Z_MAX = 470.0
 
@@ -595,7 +591,7 @@ def main():
             prev_enter_state = False
             prev_log_trigger_state = False
 
-            # XY 予測PD用
+            # XY 予測PID用
             prev_particle_x = None
             prev_particle_y = None
             prev_vx = 0.0
@@ -615,6 +611,10 @@ def main():
             # XY見失い・同一フレーム時保持用
             last_valid_target_x = float(base_center[0])
             last_valid_target_y = float(base_center[1])
+
+            # XY積分項初期化
+            prev_xy_error_int_x = 0.0
+            prev_xy_error_int_y = 0.0
 
             # 新規フレーム判定用
             last_processed_xy_time = -1.0
@@ -648,6 +648,8 @@ def main():
                         prev_vz = 0.0
                         prev_xy_meas_time = None
                         prev_z_meas_time = None
+                        prev_xy_error_int_x = 0.0
+                        prev_xy_error_int_y = 0.0
                         prev_z_error_int = 0.0
                     else:
                         print("[INFO] >>> TRACKING PAUSED (Center Fixed) <<<")
@@ -677,7 +679,7 @@ def main():
                         log_file = open(LOG_CSV_PATH, "a", newline="", encoding="utf-8")
                         log_writer = csv.writer(log_file)
                         log_session_active = True
-                        log_session_mode = "PD" if tracking_active else "FIXED"
+                        log_session_mode = "PID" if tracking_active else "FIXED"
                         now_log = time.time()
                         log_session_end_time = now_log + LOG_DURATION_SEC
                         print(f"[LOG] START {log_session_mode} logging for {LOG_DURATION_SEC:.0f}s")
@@ -783,7 +785,7 @@ def main():
 
                 method = "XY+Z" if (detected_xy and detected_z) else "PARTIAL"
 
-                # 3. 制御（XY: 予測PD / Z: 独立P + 見失い時保持）
+                # 3. 制御（XY: 予測PID / Z: 独立P + 見失い時保持）
                 loop_target_x = float(base_center[0])
                 loop_target_y = float(base_center[1])
                 loop_target_z = float(last_valid_target_z)
@@ -793,7 +795,7 @@ def main():
                     target_y = last_valid_target_y
                     target_z = last_valid_target_z
 
-                    # XY: 予測PD
+                    # XY: 予測PID
                     if use_affine and detected_xy and is_new_xy_frame:
                         uv_homo = np.array([[u_xy, v_xy, 1.0]], dtype=np.float32).T
                         xy_affine = (A_affine @ uv_homo).flatten()
@@ -822,13 +824,38 @@ def main():
                         setpoint_x = base_center[0]
                         setpoint_y = base_center[1]
 
-                        # 目標位置 + (P制御: ズレの逆へ) + (D制御: 速度の逆へ)    
-                        target_x = setpoint_x + K_P_XY * (setpoint_x - x_pred) - K_D_XY * vx
-                        target_y = setpoint_y + K_P_XY * (setpoint_y - y_pred) - K_D_XY * vy
+                        # エラー計算
+                        x_error = setpoint_x - x_pred
+                        y_error = setpoint_y - y_pred
+
+                        # 積分項の計算
+                        if prev_xy_meas_time is None:
+                            dt_int_xy = 0.0
+                        else:
+                            dt_int_xy = max(1e-3, frame_xy_time - prev_xy_meas_time)
+
+                        prev_xy_error_int_x = float(
+                            np.clip(
+                                prev_xy_error_int_x + x_error * dt_int_xy,
+                                -XY_INTEGRAL_CLAMP,
+                                XY_INTEGRAL_CLAMP,
+                            )
+                        )
+                        prev_xy_error_int_y = float(
+                            np.clip(
+                                prev_xy_error_int_y + y_error * dt_int_xy,
+                                -XY_INTEGRAL_CLAMP,
+                                XY_INTEGRAL_CLAMP,
+                            )
+                        )
+
+                        # PID制御: 目標位置 + (P制御: ズレの逆へ) + (I制御: 積分項) + (D制御: 速度の逆へ)    
+                        target_x = setpoint_x + K_P_XY * x_error + K_I_XY * prev_xy_error_int_x - K_D_XY * vx
+                        target_y = setpoint_y + K_P_XY * y_error + K_I_XY * prev_xy_error_int_y - K_D_XY * vy
                         last_valid_target_x = float(target_x)
                         last_valid_target_y = float(target_y)
 
-                    # Z: 位置ローパス + 速度予測PD
+                    # Z: 位置ローパス + 速度予測PID
                     if use_z_model and detected_z and is_new_z_frame:
                         current_z = z_a * v_z + z_b
                         setpoint_z = DEFAULT_Z
@@ -866,7 +893,9 @@ def main():
                         )
                         prev_z_meas_time = current_z_meas_time
 
-                        z_pred = z_filt + vz * DT_PRED_Z
+                        # 重力で下向きに加速すると仮定した予測
+                        # z_pred = z + v*dt + 0.5*a*dt^2, a = -g
+                        z_pred = z_filt + vz * DT_PRED_Z - 0.5 * GRAVITY_MM_S2 * (DT_PRED_Z ** 2)
 
                         # 焦点を高くすると物体も高くなる系
                         target_z = (

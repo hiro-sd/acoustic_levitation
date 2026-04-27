@@ -7,7 +7,7 @@ import sys
 import os
 
 # stability_log.csv を読み込み、
-# FIXED vs PD の安定性を x, y, z の各方向および総合距離で比較する
+# FIXED vs PID の安定性を x, y, z の各方向および総合距離で比較する
 
 LOG_DIR = os.path.dirname(__file__)
 LOG_PATH = os.path.join(LOG_DIR, "stability_log.csv")
@@ -125,6 +125,7 @@ def normalize_log_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize columns and drop invalid rows required for analysis."""
     if "mode" in df.columns:
         df["mode"] = df["mode"].astype(str).str.strip().str.upper()
+        df["mode"] = df["mode"].replace({"PD": "PID"})
 
     numeric_cols = [
         "timestamp",
@@ -207,7 +208,7 @@ def compute_metrics(df: pd.DataFrame):
         out["r_xyz"] = np.nan
 
     results = {}
-    for mode in ["FIXED", "PD"]:
+    for mode in ["FIXED", "PID"]:
         sub = out[out["mode"] == mode]
         if len(sub) == 0:
             continue
@@ -286,7 +287,7 @@ def resolve_input_paths(inputs):
 
 
 def print_mode_results(results):
-    for mode in ["FIXED", "PD"]:
+    for mode in ["FIXED", "PID"]:
         if mode not in results:
             print(f"[WARN] mode={mode} のデータがありません。")
             continue
@@ -318,21 +319,21 @@ def print_mode_results(results):
 
 
 def print_improvement(results):
-    if "FIXED" not in results or "PD" not in results:
+    if "FIXED" not in results or "PID" not in results:
         return
 
     fixed = results["FIXED"]
-    pdm = results["PD"]
+    pidm = results["PID"]
 
     def ratio_msg(key, label):
         a = fixed.get(key, np.nan)
-        b = pdm.get(key, np.nan)
+        b = pidm.get(key, np.nan)
         if not (np.isfinite(a) and np.isfinite(b) and b > 0):
             return
         ratio = a / b
         print(
-            f"[RESULT] {label}: FIXED / PD = {ratio:.2f} "
-            f"({'PD改善' if ratio > 1 else 'PD悪化'})"
+            f"[RESULT] {label}: FIXED / PID = {ratio:.2f} "
+            f"({'PID改善' if ratio > 1 else 'PID悪化'})"
         )
 
     ratio_msg("sigma_x", "sigma_x")
@@ -345,8 +346,8 @@ def print_improvement(results):
 
 def plot_single_file(df, results, out_dir):
     """Save requested single-file charts as separate PNG images."""
-    colors = {"FIXED": "#e07b54", "PD": "#4c9be8"}
-    labels = {"FIXED": "Control off (FIXED)", "PD": "Control on (PD)"}
+    colors = {"FIXED": "#e07b54", "PID": "#4c9be8"}
+    labels = {"FIXED": "Control off (FIXED)", "PID": "Control on (PID)"}
     label_fs = 20
     tick_fs = 20
     legend_fs = 18
@@ -445,7 +446,7 @@ def plot_single_file(df, results, out_dir):
 
     def save_axis_timeseries(col, ylabel, out_name):
         fig, ax = plt.subplots(figsize=(10.5, 4.6))
-        plotted_label = {"FIXED": False, "PD": False}
+        plotted_label = {"FIXED": False, "PID": False}
         plotted_any = False
 
         for _, sub_seg in work.groupby("segment_id", sort=True):
@@ -491,57 +492,16 @@ def plot_single_file(df, results, out_dir):
     save_axis_timeseries("dy", "dy [mm]", "stability_time_series_dy.png")
     save_axis_timeseries("dz", "dz [mm]", "stability_time_series_dz.png")
 
-    # 3) Time Series: Z Deviation
-    fig, ax = plt.subplots(figsize=(10.5, 4.6))
-    z_plotted = False
-    work = df.copy()
-    work["segment_id"] = (work["mode"] != work["mode"].shift(1)).cumsum()
-    plotted_label = {"FIXED": False, "PD": False}
-    t0_all = float(work["timestamp"].iloc[0])
-
-    for _, sub_seg in work.groupby("segment_id", sort=True):
-        mode = str(sub_seg["mode"].iloc[0]).upper()
-        if mode not in colors:
-            continue
-        sub_seg = sub_seg[sub_seg["dz"].notna()].copy()
-        if len(sub_seg) == 0:
-            continue
-        label = labels[mode] if not plotted_label[mode] else None
-        ax.plot(
-            sub_seg["timestamp"] - t0_all,
-            sub_seg["dz"],
-            lw=0.8,
-            alpha=0.85,
-            color=colors[mode],
-            label=label,
-        )
-        plotted_label[mode] = True
-        z_plotted = True
-
-    ax.set_xlabel("Elapsed Time [s]", fontsize=label_fs)
-    ax.set_ylabel("dz [mm]", fontsize=label_fs)
-    ax.axhline(0, color="k", lw=0.8, alpha=0.8)
-    ax.tick_params(axis="both", which="major", labelsize=tick_fs)
-    if z_plotted:
-        ax.legend(fontsize=legend_fs)
-    else:
-        ax.text(0.5, 0.5, "zデータなし", ha="center", va="center", transform=ax.transAxes)
-    plt.tight_layout()
-    out_z = os.path.join(out_dir, "stability_time_series_z_deviation.png")
-    plt.savefig(out_z, dpi=150)
-    plt.close(fig)
-    out_paths.append(out_z)
-
-    # 4) Axis-wise Stability Comparison
+    # 3) Axis-wise Stability Comparison
     fig, ax = plt.subplots(figsize=(7.5, 5.5))
     metrics = ["sigma_x", "sigma_y", "sigma_z", "sigma_xyz"]
     metric_labels = ["std_x", "std_y", "std_z", "std_xyz"]
     x = np.arange(len(metrics))
     width = 0.35
     fixed_vals = [results["FIXED"].get(m, np.nan) if "FIXED" in results else np.nan for m in metrics]
-    pd_vals = [results["PD"].get(m, np.nan) if "PD" in results else np.nan for m in metrics]
+    pid_vals = [results["PID"].get(m, np.nan) if "PID" in results else np.nan for m in metrics]
     ax.bar(x - width / 2, fixed_vals, width, label="FIXED", color=colors["FIXED"])
-    ax.bar(x + width / 2, pd_vals, width, label="PD", color=colors["PD"])
+    ax.bar(x + width / 2, pid_vals, width, label="PID", color=colors["PID"])
     ax.set_xticks(x)
     ax.set_xticklabels(metric_labels, fontsize=tick_fs)
     ax.set_ylabel("Standard Deviation [mm]", fontsize=label_fs)
@@ -558,12 +518,12 @@ def plot_single_file(df, results, out_dir):
 
 def plot_multi_file(summary_df, out_path):
     """Visualization for multiple files comparison."""
-    colors = {"FIXED": "#e07b54", "PD": "#4c9be8"}
+    colors = {"FIXED": "#e07b54", "PID": "#4c9be8"}
     fig, axes = plt.subplots(1, 3, figsize=(17, 5))
 
     # 1) 各ファイルの sigma_xy
     ax = axes[0]
-    for mode in ["FIXED", "PD"]:
+    for mode in ["FIXED", "PID"]:
         sub = summary_df[summary_df["mode"] == mode]
         if len(sub) == 0:
             continue
@@ -575,7 +535,7 @@ def plot_multi_file(summary_df, out_path):
 
     # 2) 各ファイルの sigma_z
     ax = axes[1]
-    for mode in ["FIXED", "PD"]:
+    for mode in ["FIXED", "PID"]:
         sub = summary_df[(summary_df["mode"] == mode) & (summary_df["sigma_z"].notna())]
         if len(sub) == 0:
             continue
@@ -588,7 +548,7 @@ def plot_multi_file(summary_df, out_path):
     # 3) モード別平均 sigma_xyz
     ax = axes[2]
     mode_means = summary_df.groupby("mode")["sigma_xyz"].mean()
-    labels = [m for m in ["FIXED", "PD"] if m in mode_means.index and np.isfinite(mode_means[m])]
+    labels = [m for m in ["FIXED", "PID"] if m in mode_means.index and np.isfinite(mode_means[m])]
     vals = [float(mode_means[m]) for m in labels]
     if labels:
         bars = ax.bar(labels, vals, color=[colors[m] for m in labels], width=0.5)
@@ -649,7 +609,7 @@ def plot_target_timeseries_single(df, out_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="stability log(s) を解析して FIXED / PD の安定性を比較します"
+        description="stability log(s) を解析して FIXED / PID の安定性を比較します"
     )
     parser.add_argument(
         "inputs",
