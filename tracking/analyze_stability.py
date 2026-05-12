@@ -354,12 +354,22 @@ def plot_single_file(df, results, out_dir):
     out_paths = []
 
     # 1) Position Scatter
-    fig, ax = plt.subplots(figsize=(7.0, 6.0))
+    fig, ax = plt.subplots(figsize=(7.0, 7.0))
     for mode, c in colors.items():
         sub = df[df["mode"] == mode]
         if len(sub) == 0:
             continue
         ax.scatter(sub["dx"], sub["dy"], s=6, alpha=0.35, color=c, label=labels[mode])
+    
+    # Make plot square by setting equal axis limits
+    dx_range = df["dx"].max() - df["dx"].min()
+    dy_range = df["dy"].max() - df["dy"].min()
+    shared_range = max(dx_range, dy_range) * 0.55
+    center_x = (df["dx"].max() + df["dx"].min()) / 2
+    center_y = (df["dy"].max() + df["dy"].min()) / 2
+    ax.set_xlim(center_x - shared_range, center_x + shared_range)
+    ax.set_ylim(center_y - shared_range, center_y + shared_range)
+    
     ax.set_xlabel("dx [mm]", fontsize=label_fs)
     ax.set_ylabel("dy [mm]", fontsize=label_fs)
     ax.axhline(0, color="k", lw=0.5)
@@ -491,6 +501,61 @@ def plot_single_file(df, results, out_dir):
     save_axis_timeseries("dx", "dx [mm]", "stability_time_series_dx.png")
     save_axis_timeseries("dy", "dy [mm]", "stability_time_series_dy.png")
     save_axis_timeseries("dz", "dz [mm]", "stability_time_series_dz.png")
+
+    # 2b) Combined Time Series: dx, dy, dz in one figure
+    fig, axes = plt.subplots(3, 1, figsize=(10.5, 10.0), sharex=True)
+    axis_specs = [
+        ("dx", "dx [mm]", "データなし"),
+        ("dy", "dy [mm]", "データなし"),
+        ("dz", "dz [mm]", "zデータなし"),
+    ]
+
+    plotted_label = {"FIXED": False, "PID": False}
+
+    for i, (col, ylabel, empty_msg) in enumerate(axis_specs):
+        ax = axes[i]
+        plotted_any = False
+
+        for _, sub_seg in work.groupby("segment_id", sort=True):
+            mode = str(sub_seg["mode"].iloc[0]).upper()
+            if mode not in colors:
+                continue
+
+            sub_seg_col = sub_seg[["timestamp", col]].copy()
+            sub_seg_col[col] = pd.to_numeric(sub_seg_col[col], errors="coerce")
+            sub_seg_col = sub_seg_col.dropna(subset=[col])
+            if len(sub_seg_col) == 0:
+                continue
+
+            label = labels[mode] if not plotted_label[mode] else None
+            ax.plot(
+                sub_seg_col["timestamp"] - t0_all,
+                sub_seg_col[col],
+                lw=0.8,
+                alpha=0.85,
+                color=colors[mode],
+                label=label,
+            )
+            plotted_label[mode] = True
+            plotted_any = True
+
+        ax.set_ylabel(ylabel, fontsize=label_fs)
+        ax.axhline(0, color="k", lw=0.8, alpha=0.8)
+        ax.set_ylim(shared_y_lim)
+        ax.tick_params(axis="both", which="major", labelsize=tick_fs)
+        if not plotted_any:
+            ax.text(0.5, 0.5, empty_msg, ha="center", va="center", transform=ax.transAxes)
+
+    handles, legend_labels = axes[0].get_legend_handles_labels()
+    if handles:
+        axes[0].legend(handles, legend_labels, fontsize=legend_fs, loc="upper right")
+    axes[-1].set_xlabel("Elapsed Time [s]", fontsize=label_fs)
+
+    plt.tight_layout()
+    out_combined = os.path.join(out_dir, "stability_time_series.png")
+    plt.savefig(out_combined, dpi=150)
+    plt.close(fig)
+    out_paths.append(out_combined)
 
     # 3) Axis-wise Stability Comparison
     fig, ax = plt.subplots(figsize=(7.5, 5.5))
@@ -679,10 +744,26 @@ def main():
     print("=" * 72)
     print(f"[INFO] サマリーCSVを保存しました: {out_csv}")
 
+    # 各サンプルの統計を表示
+    print()
+    print("=" * 72)
+    print("[INFO] 各サンプルの統計")
+    print("=" * 72)
+    cols_display = ["file_idx", "file_name", "mode", "n", "sigma_x", "sigma_y", "sigma_z", "sigma_xy", "sigma_xyz"]
+    cols_display = [c for c in cols_display if c in summary_df.columns]
+    for mode in ["FIXED", "PD"]:
+        sub = summary_df[summary_df["mode"] == mode][cols_display]
+        if len(sub) > 0:
+            label = "固定音場 (FIXED)" if mode == "FIXED" else "制御あり (PD)"
+            print(f"\n--- {label} ---")
+            print(sub.to_string(index=False))
+    print()
+    print("=" * 72)
+    print("[INFO] 全ファイル集計（mode別統計）")
+    print("=" * 72)
     agg_cols = ["sigma_x", "sigma_y", "sigma_xy", "sigma_z", "sigma_xyz", "mean_r_xy", "mean_r_xyz"]
     agg_cols = [c for c in agg_cols if c in summary_df.columns]
     agg = summary_df.groupby("mode")[agg_cols].agg(["mean", "std", "count"])
-    print("[INFO] 全ファイル集計（mode別平均）")
     print(agg)
 
     if len(paths) == 1 and first_df is not None and first_results is not None:
