@@ -28,8 +28,8 @@ from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static, Focus, Foc
 from pyautd3.link.twincat import TwinCAT
 
 # 設定
-AFFINE_XY_JSON = "./tracking/affine_uv_to_xy.json"
-AFFINE_Z_JSON = "./tracking/affine_v_to_z.json"
+AFFINE_XY_JSON = "./tracking/ball1_calibration_data/affine_uv_to_xy.json"
+AFFINE_Z_JSON = "./tracking/ball1_calibration_data/affine_v_to_z.json"
 
 INTRINSIC_XY_NPZ = "./tracking/calibration/intrinsic_charuco_cam1.npz"
 INTRINSIC_Z_NPZ = "./tracking/calibration/intrinsic_charuco_cam2.npz"
@@ -1012,16 +1012,14 @@ def main():
                         status_color,
                         2,
                     )
-                    if frame_xy_bgr.shape[0] != frame_z_bgr.shape[0]:
-                        target_h = frame_xy_bgr.shape[0]
-                        scale = target_h / frame_z_bgr.shape[0]
-                        resized_w = max(1, int(frame_z_bgr.shape[1] * scale))
-                        frame_z_disp = cv2.resize(frame_z_bgr, (resized_w, target_h), interpolation=cv2.INTER_LINEAR)
-                    else:
-                        frame_z_disp = frame_z_bgr
+                    display_h = max(frame_xy_bgr.shape[0], frame_z_bgr.shape[0])
+                    display_w = max(frame_xy_bgr.shape[1], frame_z_bgr.shape[1])
 
-                    tiled = np.hstack([frame_xy_bgr, frame_z_disp])
-                    split_x = frame_xy_bgr.shape[1]
+                    frame_xy_disp = cv2.resize(frame_xy_bgr, (display_w, display_h), interpolation=cv2.INTER_LINEAR)
+                    frame_z_disp = cv2.resize(frame_z_bgr, (display_w, display_h), interpolation=cv2.INTER_LINEAR)
+
+                    tiled = np.hstack([frame_xy_disp, frame_z_disp])
+                    split_x = frame_xy_disp.shape[1]
                     cv2.line(tiled, (split_x, 0), (split_x, tiled.shape[0] - 1), (255, 255, 255), 1)
                     cv2.putText(tiled, "XY", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                     cv2.putText(tiled, "Z", (split_x + 10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
