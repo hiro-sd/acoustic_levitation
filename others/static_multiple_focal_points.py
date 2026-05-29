@@ -1,12 +1,10 @@
 import numpy as np, os, keyboard
 from pyautd3 import (
-    AUTD3, Controller, ControlPoint, ControlPoints, EmitIntensity, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Phase, Silencer, Static,
+    AUTD3, Controller, ControlPoint, ControlPoints, Intensity, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Phase, Silencer, Static,
 )
-from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, NalgebraBackend, Pa
+from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, Pa
 # from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
 from pyautd3.link.twincat import TwinCAT # TwinCATを使用するために追加した
-from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
-from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
 
 autd_arrangement = [
     AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]), 
@@ -45,7 +43,7 @@ if __name__ == "__main__":
         m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
 
         point_num = 8
-        radius = 19.0 # 円の半径
+        radius = 23.5 # 円の半径
         x, y, z = 0.0, 0.0, 400.0 # x,y,z座標の初期値
         x_min, x_max = -100.0, 100.0 # x座標の最小値と最大値
         y_min, y_max = -150.0, 150.0 # y座標の最小値と最大値
@@ -85,16 +83,15 @@ if __name__ == "__main__":
                 # GSPATで8焦点を作成する
                 points = [
                     center + radius * np.array([np.cos(theta), np.sin(theta), 0.0])
-                    for theta in (np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num))
+                    for theta in (np.pi / 8 + 2.0 * np.pi * i / point_num for i in range(point_num))
                 ] 
 
                 g = GSPAT(
                     foci= [(p, 5e5 * Pa) for p in points],
                     option = GSPATOption(
                         repeat = 100,
-                        constraint = EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
+                        constraint = EmissionConstraint.Clamp(Intensity.MIN, Intensity.MAX),
                         ),
-                    backend = NalgebraBackend(),
                     )
 
                 autd.send((m, g))
