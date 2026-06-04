@@ -55,13 +55,11 @@ EXPOSURE_US = 5000
 
 # AUTD物理設定
 POINT_NUM = 8
-RADIUS = 23.5
+RADIUS = 19.0
 DEFAULT_Z = 400.0
 AUTD_LOOP_SLEEP_SEC = 0.001
-BASE_MOVE_SPEED_MM_S = 60.0
-BASE_MOVE_STEP_MM = 5.0
-BASE_Z_MOVE_SPEED_MM_S = 60.0
-BASE_Z_MOVE_STEP_MM = 5.0
+BASE_MOVE_SPEED_MM_S = 35.0
+BASE_Z_MOVE_SPEED_MM_S = 35.0
 
 # XY制御（予測PID）
 K_P_XY = 0.3 # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
@@ -75,11 +73,11 @@ K_P_Z = 0.6 # [P] 高さを維持する強さ (0.0 なら自然な復元力の�
 K_D_Z = 0.15 # [D] 高さの揺れを抑えるブレーキの強さ (速度に対する抵抗)
 K_I_Z = 0.1 # [I] ゆっくりと高さを維持する力 (積分項)
 Z_LP_ALPHA = 0.7 
-DT_PRED_Z = 0.01 # 10 ms 先を予
+DT_PRED_Z = 0.01 # 10 ms 先を予測
 Z_INTEGRAL_CLAMP = 150.0
 GRAVITY_MM_S2 = 9.80665 * 1000.0
-Z_MIN = 330.0
-Z_MAX = 470.0
+Z_MIN = 250.0
+Z_MAX = 550.0
 
 # 円周点オフセットを事前計算
 CIRCLE_OFFSETS = np.array(
@@ -393,22 +391,20 @@ def autd_control_loop(autd):
             # 事前計算済みオフセットを加える
             foci = center_vec[None, :] + CIRCLE_OFFSETS
 
-            t1 = time.perf_counter()
-
             # generator ではなく list で渡す
             stm = FociSTM(
                 foci=[foci[i] for i in range(foci.shape[0])],
                 config=100 * Hz,
             ).into_nearest()
 
-            t2 = time.perf_counter()
+            t1 = time.perf_counter()
 
             autd.send(stm)
 
-            t3 = time.perf_counter()
+            t2 = time.perf_counter()
 
-            build_ms = (t2 - t0) * 1000.0
-            send_ms = (t3 - t2) * 1000.0
+            build_ms = (t1 - t0) * 1000.0
+            send_ms = (t2 - t1) * 1000.0
             build_time_ema_ms = 0.9 * build_time_ema_ms + 0.1 * build_ms
             send_time_ema_ms = 0.9 * send_time_ema_ms + 0.1 * send_ms
 
@@ -447,35 +443,22 @@ def set_shared_target_pos(x: float, y: float, z: float):
         shared_target_seq += 1
 
 
-def update_base_position_once(
-    home_x: float,
-    home_y: float,
-    home_z: float,
-    current_left: bool,
-    current_right: bool,
-    current_up: bool,
-    current_down: bool,
-    current_page_up: bool,
-    current_page_down: bool,
-    prev_left: bool,
-    prev_right: bool,
-    prev_up: bool,
-    prev_down: bool,
-    prev_page_up: bool,
-    prev_page_down: bool,
-):
-    if current_left and not prev_left:
-        home_x -= BASE_MOVE_STEP_MM
-    if current_right and not prev_right:
-        home_x += BASE_MOVE_STEP_MM
-    if current_up and not prev_up:
-        home_y += BASE_MOVE_STEP_MM
-    if current_down and not prev_down:
-        home_y -= BASE_MOVE_STEP_MM
-    if current_page_up and not prev_page_up:
-        home_z += BASE_Z_MOVE_STEP_MM
-    if current_page_down and not prev_page_down:
-        home_z -= BASE_Z_MOVE_STEP_MM
+def update_base_position(home_x: float, home_y: float, home_z: float, dt_sec: float):
+    step_xy = BASE_MOVE_SPEED_MM_S * max(0.0, dt_sec)
+    step_z = BASE_Z_MOVE_SPEED_MM_S * max(0.0, dt_sec)
+
+    if keyboard.is_pressed("left"):
+        home_x -= step_xy
+    if keyboard.is_pressed("right"):
+        home_x += step_xy
+    if keyboard.is_pressed("up"):
+        home_y += step_xy
+    if keyboard.is_pressed("down"):
+        home_y -= step_xy
+    if keyboard.is_pressed("page up"):
+        home_z += step_z
+    if keyboard.is_pressed("page down"):
+        home_z -= step_z
     return home_x, home_y, home_z
 
 # メイン
@@ -535,12 +518,15 @@ def main():
         ) as autd:
 
             autd.send(Silencer())
-            autd.send(Static(intensity=int(0xFF * 0.9)))
+            autd.send(Static(intensity=int(0xFF * 0.6)))
 
             base_center = autd.center()
             home_x = float(base_center[0])
             home_y = float(base_center[1])
             home_z = float(DEFAULT_Z)
+            display_origin_x = float(home_x)
+            display_origin_y = float(home_y)
+            display_origin_z = float(home_z)
             set_shared_target_pos(home_x, home_y, home_z)
 
             t = threading.Thread(target=autd_control_loop, args=(autd,))
@@ -550,7 +536,7 @@ def main():
             print("=================================================")
             print("  READY TO LEVITATE.")
             print("  Press [ENTER] to START dynamic tracking.")
-            print("  Press [ENTER] again to PAUSE (Return to center).")
+            print("  Press [ENTER] again to PAUSE (Return to base position).")
             print("  Use [Arrow keys] to move the base center continuously.")
             print("  Use [PageUp/PageDown] to move the base Z continuously.")
             print(f"  Press [{LOG_TRIGGER_KEY.upper()}] to START {LOG_DURATION_SEC:.0f}s logging in current mode.")
@@ -662,47 +648,20 @@ def main():
             log_session_mode = ""
             log_file = None
             log_writer = None
-            prev_left_state = False
-            prev_right_state = False
-            prev_up_state = False
-            prev_down_state = False
-            prev_page_up_state = False
-            prev_page_down_state = False
+            prev_base_move_time = time.time()
 
             while True:
                 if keyboard.is_pressed("esc"):
                     break
 
-                current_left_state = keyboard.is_pressed("left")
-                current_right_state = keyboard.is_pressed("right")
-                current_up_state = keyboard.is_pressed("up")
-                current_down_state = keyboard.is_pressed("down")
-                current_page_up_state = keyboard.is_pressed("page up")
-                current_page_down_state = keyboard.is_pressed("page down")
-
-                home_x, home_y, home_z = update_base_position_once(
+                now_base_move = time.time()
+                home_x, home_y, home_z = update_base_position(
                     home_x,
                     home_y,
                     home_z,
-                    current_left_state,
-                    current_right_state,
-                    current_up_state,
-                    current_down_state,
-                    current_page_up_state,
-                    current_page_down_state,
-                    prev_left_state,
-                    prev_right_state,
-                    prev_up_state,
-                    prev_down_state,
-                    prev_page_up_state,
-                    prev_page_down_state,
+                    now_base_move - prev_base_move_time,
                 )
-                prev_left_state = current_left_state
-                prev_right_state = current_right_state
-                prev_up_state = current_up_state
-                prev_down_state = current_down_state
-                prev_page_up_state = current_page_up_state
-                prev_page_down_state = current_page_down_state
+                prev_base_move_time = now_base_move
 
                 # Enterで追従ON/OFF
                 current_enter_state = keyboard.is_pressed("enter")
@@ -724,7 +683,10 @@ def main():
                         prev_xy_error_int_y = 0.0
                         prev_z_error_int = 0.0
                     else:
-                        print("[INFO] >>> TRACKING PAUSED (Center Fixed) <<<")
+                        print("[INFO] >>> TRACKING PAUSED (Return to base position) <<<")
+                        home_x = float(base_center[0])
+                        home_y = float(base_center[1])
+                        home_z = float(DEFAULT_Z)
                         set_shared_target_pos(home_x, home_y, home_z)
                 prev_enter_state = current_enter_state
 
@@ -990,7 +952,7 @@ def main():
                         cv2.putText(
                             frame_xy_bgr,
                             f"TGT XY: {target_x:.1f}, {target_y:.1f}",
-                            (10, 60),
+                            (10, 90),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
                             (0, 255, 255),
@@ -999,7 +961,7 @@ def main():
                         cv2.putText(
                             frame_z_bgr,
                             f"TGT Z: {target_z:.1f}",
-                            (10, 60),
+                            (10, 90),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
                             (0, 255, 255),
@@ -1059,6 +1021,15 @@ def main():
                     )
                     cv2.putText(
                         frame_xy_bgr,
+                        f"BASE REL: ({home_x - display_origin_x:.1f}, {home_y - display_origin_y:.1f}, {home_z - display_origin_z + 400.0:.1f})",
+                        (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
+                        2,
+                    )
+                    cv2.putText(
+                        frame_xy_bgr,
                         f"STATUS: {status_text}",
                         (10, H_xy - 20),
                         cv2.FONT_HERSHEY_SIMPLEX,
@@ -1073,6 +1044,15 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.6,
                         (255, 255, 255),
+                        2,
+                    )
+                    cv2.putText(
+                        frame_z_bgr,
+                        f"BASE REL: ({home_x - display_origin_x:.1f}, {home_y - display_origin_y:.1f}, {home_z - display_origin_z + 400.0:.1f})",
+                        (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
                         2,
                     )
                     cv2.putText(

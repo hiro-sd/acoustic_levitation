@@ -9,12 +9,6 @@ import cv2
 import keyboard
 import json
 
-# 高速カメラで物体の位置をトラッキングしつつ、別スレッドでAUTDの焦点を更新するコード
-#   - affine_uv_to_xy.json は「補正済みピクセル座標 (u, v)」前提
-#   - よって、このコードでは毎フレーム画像を先に undistort し、
-#     その補正済み画像で球検出を行う
-#   - 検出した (u, v) に対して undistortPoints はもう掛けない
-
 # XIMEA設定
 sys.path.append(r"C:\Users\Hiroto Yoshida\Desktop\XIMEA\API\Python\v3")
 try:
@@ -24,7 +18,7 @@ except ImportError:
     xiapi = None
 
 # AUTD関連
-from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static, Focus, FocusOption, Intensity, Phase
+from pyautd3 import AUTD3, Controller, FociSTM, Hz, Silencer, Static, OutputMask, Focus, FocusOption, Intensity, Phase
 from pyautd3.link.twincat import TwinCAT
 
 # 設定
@@ -61,9 +55,11 @@ EXPOSURE_US = 5000
 
 # AUTD物理設定
 POINT_NUM = 8
-RADIUS = 23.5
+RADIUS = 19.0
 DEFAULT_Z = 400.0
 AUTD_LOOP_SLEEP_SEC = 0.001
+BASE_MOVE_SPEED_MM_S = 35.0
+BASE_Z_MOVE_SPEED_MM_S = 35.0
 
 # XY制御（予測PID）
 K_P_XY = 0.3 # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
@@ -77,11 +73,11 @@ K_P_Z = 0.6 # [P] 高さを維持する強さ (0.0 なら自然な復元力の�
 K_D_Z = 0.15 # [D] 高さの揺れを抑えるブレーキの強さ (速度に対する抵抗)
 K_I_Z = 0.1 # [I] ゆっくりと高さを維持する力 (積分項)
 Z_LP_ALPHA = 0.7 
-DT_PRED_Z = 0.01 # 10 ms 先を予
+DT_PRED_Z = 0.01 # 10 ms 先を予測
 Z_INTEGRAL_CLAMP = 150.0
 GRAVITY_MM_S2 = 9.80665 * 1000.0
-Z_MIN = 330.0
-Z_MAX = 470.0
+Z_MIN = 250.0
+Z_MAX = 550.0
 
 # 円周点オフセットを事前計算
 CIRCLE_OFFSETS = np.array(
@@ -446,6 +442,25 @@ def set_shared_target_pos(x: float, y: float, z: float):
         shared_target_pos = (float(x), float(y), float(z))
         shared_target_seq += 1
 
+
+def update_base_position(home_x: float, home_y: float, home_z: float, dt_sec: float):
+    step_xy = BASE_MOVE_SPEED_MM_S * max(0.0, dt_sec)
+    step_z = BASE_Z_MOVE_SPEED_MM_S * max(0.0, dt_sec)
+
+    if keyboard.is_pressed("left"):
+        home_x -= step_xy
+    if keyboard.is_pressed("right"):
+        home_x += step_xy
+    if keyboard.is_pressed("up"):
+        home_y += step_xy
+    if keyboard.is_pressed("down"):
+        home_y -= step_xy
+    if keyboard.is_pressed("page up"):
+        home_z += step_z
+    if keyboard.is_pressed("page down"):
+        home_z -= step_z
+    return home_x, home_y, home_z
+
 # メイン
 def main():
     global shared_target_pos, program_running
@@ -503,10 +518,16 @@ def main():
         ) as autd:
 
             autd.send(Silencer())
-            autd.send(Static(intensity=int(0xFF * 0.9)))
+            autd.send(Static(intensity=int(0xFF)))
 
             base_center = autd.center()
-            set_shared_target_pos(base_center[0], base_center[1], DEFAULT_Z)
+            home_x = float(base_center[0])
+            home_y = float(base_center[1])
+            home_z = float(DEFAULT_Z)
+            display_origin_x = float(home_x)
+            display_origin_y = float(home_y)
+            display_origin_z = float(home_z)
+            set_shared_target_pos(home_x, home_y, home_z)
 
             t = threading.Thread(target=autd_control_loop, args=(autd,))
             t.start()
@@ -515,7 +536,9 @@ def main():
             print("=================================================")
             print("  READY TO LEVITATE.")
             print("  Press [ENTER] to START dynamic tracking.")
-            print("  Press [ENTER] again to PAUSE (Return to center).")
+            print("  Press [ENTER] again to PAUSE (Return to base position).")
+            print("  Use [Arrow keys] to move the base center continuously.")
+            print("  Use [PageUp/PageDown] to move the base Z continuously.")
             print(f"  Press [{LOG_TRIGGER_KEY.upper()}] to START {LOG_DURATION_SEC:.0f}s logging in current mode.")
             print("  Press [ESC] to EXIT and STOP ultrasound.")
             print("=================================================")
@@ -604,11 +627,11 @@ def main():
             prev_z_error_int = 0.0
 
             # Z見失い時保持用
-            last_valid_target_z = DEFAULT_Z
+            last_valid_target_z = home_z
 
             # XY見失い・同一フレーム時保持用
-            last_valid_target_x = float(base_center[0])
-            last_valid_target_y = float(base_center[1])
+            last_valid_target_x = float(home_x)
+            last_valid_target_y = float(home_y)
 
             # XY積分項初期化
             prev_xy_error_int_x = 0.0
@@ -625,10 +648,20 @@ def main():
             log_session_mode = ""
             log_file = None
             log_writer = None
+            prev_base_move_time = time.time()
 
             while True:
                 if keyboard.is_pressed("esc"):
                     break
+
+                now_base_move = time.time()
+                home_x, home_y, home_z = update_base_position(
+                    home_x,
+                    home_y,
+                    home_z,
+                    now_base_move - prev_base_move_time,
+                )
+                prev_base_move_time = now_base_move
 
                 # Enterで追従ON/OFF
                 current_enter_state = keyboard.is_pressed("enter")
@@ -650,8 +683,11 @@ def main():
                         prev_xy_error_int_y = 0.0
                         prev_z_error_int = 0.0
                     else:
-                        print("[INFO] >>> TRACKING PAUSED (Center Fixed) <<<")
-                        set_shared_target_pos(base_center[0], base_center[1], DEFAULT_Z)
+                        print("[INFO] >>> TRACKING PAUSED (Return to base position) <<<")
+                        home_x = float(base_center[0])
+                        home_y = float(base_center[1])
+                        home_z = float(DEFAULT_Z)
+                        set_shared_target_pos(home_x, home_y, home_z)
                 prev_enter_state = current_enter_state
 
                 # ログ開始
@@ -784,8 +820,8 @@ def main():
                 method = "XY+Z" if (detected_xy and detected_z) else "PARTIAL"
 
                 # 3. 制御（XY: 予測PID / Z: 独立P + 見失い時保持）
-                loop_target_x = float(base_center[0])
-                loop_target_y = float(base_center[1])
+                loop_target_x = float(home_x)
+                loop_target_y = float(home_y)
                 loop_target_z = float(last_valid_target_z)
 
                 if tracking_active:
@@ -797,8 +833,8 @@ def main():
                     if use_affine and detected_xy and is_new_xy_frame:
                         uv_homo = np.array([[u_xy, v_xy, 1.0]], dtype=np.float32).T
                         xy_affine = (A_affine @ uv_homo).flatten()
-                        current_x = base_center[0] + xy_affine[0]
-                        current_y = base_center[1] + xy_affine[1]
+                        current_x = home_x + xy_affine[0]
+                        current_y = home_y + xy_affine[1]
 
                         if prev_particle_x is not None and prev_xy_meas_time is not None:
                             dt_xy = max(1e-3, frame_xy_time - prev_xy_meas_time)
@@ -819,8 +855,8 @@ def main():
                         y_pred = current_y + vy * DT_PRED_XY
 
                         # 最終的に物体を留めておきたい目標位置 (AUTDの中心)
-                        setpoint_x = base_center[0]
-                        setpoint_y = base_center[1]
+                        setpoint_x = home_x
+                        setpoint_y = home_y
 
                         # エラー計算
                         x_error = setpoint_x - x_pred
@@ -856,7 +892,7 @@ def main():
                     # Z: 位置ローパス + 速度予測PID
                     if use_z_model and detected_z and is_new_z_frame:
                         current_z = z_a * v_z + z_b
-                        setpoint_z = DEFAULT_Z
+                        setpoint_z = home_z
                         z_error = setpoint_z - current_z
                         current_z_meas_time = frame_z_time
 
@@ -916,7 +952,7 @@ def main():
                         cv2.putText(
                             frame_xy_bgr,
                             f"TGT XY: {target_x:.1f}, {target_y:.1f}",
-                            (10, 60),
+                            (10, 90),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
                             (0, 255, 255),
@@ -925,7 +961,7 @@ def main():
                         cv2.putText(
                             frame_z_bgr,
                             f"TGT Z: {target_z:.1f}",
-                            (10, 60),
+                            (10, 90),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
                             (0, 255, 255),
@@ -941,8 +977,8 @@ def main():
                     if use_affine and detected_xy:
                         uv_homo_log = np.array([[u_xy, v_xy, 1.0]], dtype=np.float32).T
                         xy_log = (A_affine @ uv_homo_log).flatten()
-                        x_log = float(base_center[0] + xy_log[0])
-                        y_log = float(base_center[1] + xy_log[1])
+                        x_log = float(home_x + xy_log[0])
+                        y_log = float(home_y + xy_log[1])
 
                     if use_z_model and detected_z:
                         z_log = float(z_a * v_z + z_b)
@@ -954,7 +990,7 @@ def main():
                         f"{x_log:.3f}" if np.isfinite(x_log) else "",
                         f"{y_log:.3f}" if np.isfinite(y_log) else "",
                         f"{z_log:.3f}" if np.isfinite(z_log) else "",
-                        f"{base_center[0]:.3f}", f"{base_center[1]:.3f}", f"{DEFAULT_Z:.3f}",
+                        f"{home_x:.3f}", f"{home_y:.3f}", f"{home_z:.3f}",
                         f"{loop_target_x:.3f}", f"{loop_target_y:.3f}", f"{loop_target_z:.3f}",
                     ])
 
@@ -985,6 +1021,15 @@ def main():
                     )
                     cv2.putText(
                         frame_xy_bgr,
+                        f"BASE REL: ({home_x - display_origin_x:.1f}, {home_y - display_origin_y:.1f}, {home_z - display_origin_z + 400.0:.1f})",
+                        (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
+                        2,
+                    )
+                    cv2.putText(
+                        frame_xy_bgr,
                         f"STATUS: {status_text}",
                         (10, H_xy - 20),
                         cv2.FONT_HERSHEY_SIMPLEX,
@@ -999,6 +1044,15 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.6,
                         (255, 255, 255),
+                        2,
+                    )
+                    cv2.putText(
+                        frame_z_bgr,
+                        f"BASE REL: ({home_x - display_origin_x:.1f}, {home_y - display_origin_y:.1f}, {home_z - display_origin_z + 400.0:.1f})",
+                        (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
                         2,
                     )
                     cv2.putText(
