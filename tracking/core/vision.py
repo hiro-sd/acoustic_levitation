@@ -1,0 +1,333 @@
+import os
+import sys
+import threading
+import time
+import json
+from dataclasses import dataclass
+
+import numpy as np
+import cv2
+
+from .config import AppConfig
+
+
+def load_ximea_api(cfg: AppConfig):
+    """
+    XIMEA API を import する。
+    Windows上のSDKパスを cfg.ximea_python_path から追加する。
+    """
+    if cfg.ximea_python_path and cfg.ximea_python_path not in sys.path:
+        sys.path.append(cfg.ximea_python_path)
+
+    try:
+        from ximea import xiapi
+        return xiapi
+    except ImportError:
+        print("[WARN] ximea モジュールなし。")
+        return None
+
+def init_ximea_camera(xiapi, camera_sn: str, role: str, cfg: AppConfig):
+    """
+    XIMEAカメラを開き、露光・フレームレートを設定して acquisition を開始する。
+    """
+    if xiapi is None:
+        raise RuntimeError("XIMEA API not loaded")
+
+    cam = xiapi.Camera()
+    cam.open_device_by_SN(camera_sn)
+    print(f"[INFO] XIMEA camera opened ({role}) SN={camera_sn}.")
+
+    cam.set_imgdataformat("XI_RGB24")
+
+    try:
+        cam.enable_auto_wb()
+    except AttributeError:
+        pass
+
+    if hasattr(cam, "disable_aeag"):
+        try:
+            cam.disable_aeag()
+        except Exception:
+            pass
+
+    cam.set_exposure(cfg.exposure_us)
+    print(f"[INFO] Exposure set to {cfg.exposure_us} us")
+
+    try:
+        framerate_min = cam.get_framerate_minimum()
+        framerate_max = cam.get_framerate_maximum()
+        framerate_inc = cam.get_framerate_increment()
+
+        target_framerate = framerate_max
+        if framerate_inc > 0:
+            target_framerate = np.floor(framerate_max / framerate_inc) * framerate_inc
+            if target_framerate < framerate_min:
+                target_framerate = framerate_max
+
+        cam.set_framerate(target_framerate)
+        applied_framerate = cam.get_framerate()
+
+        print(
+            f"[INFO] Frame rate set ({role}): "
+            f"min={framerate_min:.2f}, max={framerate_max:.2f}, "
+            f"inc={framerate_inc:.2f}, applied={applied_framerate:.2f} fps"
+        )
+    except AttributeError:
+        print(f"[WARN] Framerate API unavailable ({role}); skipped frame rate configuration.")
+    except Exception as e:
+        print(f"[WARN] Failed to configure framerate ({role}): {e}")
+
+    img = xiapi.Image()
+    cam.start_acquisition()
+    print(f"[INFO] XIMEA acquisition started ({role}).")
+
+    return cam, img
+
+
+def load_intrinsic(npz_path: str, role: str):
+    data = np.load(npz_path, allow_pickle=True)
+
+    if "camera_matrix" in data and "dist_coeffs" in data:
+        mtx = data["camera_matrix"].astype(np.float32)
+        dist = data["dist_coeffs"].astype(np.float32)
+    elif "mtx" in data and "dist" in data:
+        mtx = data["mtx"].astype(np.float32)
+        dist = data["dist"].astype(np.float32)
+    else:
+        keys = ", ".join(data.files)
+        raise KeyError(
+            f"Unsupported intrinsic keys for {role}: {keys}. "
+            "Expected (camera_matrix, dist_coeffs) or (mtx, dist)."
+        )
+    
+    print(f"[INFO] Loaded intrinsic parameters ({role}) from {npz_path}")
+    return mtx, dist
+
+
+def load_affine_matrix(json_path: str):
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    A = np.array(data["A_2x3"], dtype=np.float32)
+    uv_type = data.get("input_uv_type", "unknown")
+    
+    return A, uv_type
+
+
+def load_z_model(json_path: str):
+    if not os.path.exists(json_path):
+        raise FileNotFoundError(f"Z model JSON not found: {json_path}")
+
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    a = float(data["a"])
+    b = float(data["b"])
+
+    print(f"[INFO] Loaded z model from {json_path}: z = {a:.6f} * v + {b:.6f}")
+    return a, b
+
+
+def rotate_frame_if_needed(frame: np.ndarray, do_rotate: bool, rotate_code: int) -> np.ndarray:
+    if not do_rotate:
+        return frame
+    return cv2.rotate(frame, rotate_code)
+
+
+def build_undistort_maps(frame_shape, mtx: np.ndarray, dist: np.ndarray):
+    """
+    毎フレーム cv2.undistort() する代わりに、
+    最初に1回だけ remap 用テーブルを作る。
+    """
+    h, w = frame_shape[:2]
+
+    map1, map2 = cv2.initUndistortRectifyMap(
+        mtx,
+        dist,
+        None,
+        mtx,
+        (w, h),
+        cv2.CV_16SC2,
+    )
+
+    return map1, map2
+
+
+def undistort_frame(frame: np.ndarray, map1: np.ndarray, map2: np.ndarray) -> np.ndarray:
+    """
+    事前計算済み remap テーブルで高速に歪み補正する。
+    """
+    return cv2.remap(frame, map1, map2, interpolation=cv2.INTER_LINEAR)
+
+
+def clamp_roi(cx, cy, size, w, h, cfg: AppConfig):
+    size = int(max(cfg.roi_min_size, min(cfg.roi_max_size, size)))
+    half = size // 2
+
+    x1 = int(max(0, cx - half))
+    y1 = int(max(0, cy - half))
+    x2 = int(min(w, cx + half))
+    y2 = int(min(h, cy + half))
+
+    if (x2 - x1) < size:
+        if x1 == 0:
+            x2 = min(w, x1 + size)
+        elif x2 == w:
+            x1 = max(0, x2 - size)
+
+    if (y2 - y1) < size:
+        if y1 == 0:
+            y2 = min(h, y1 + size)
+        elif y2 == h:
+            y1 = max(0, y2 - size)
+
+    return x1, y1, x2, y2
+
+
+def track_ball_cv(frame_rgb: np.ndarray, roi_rect, cfg: AppConfig):
+    """
+    ROI内で白い球を検出する。
+    戻り値:
+        detection: (u, v, r) or None
+        bw: 二値画像
+    """
+    x1, y1, x2, y2 = roi_rect
+    roi = frame_rgb[y1:y2, x1:x2]
+
+    gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY) if roi.ndim == 3 else roi
+
+    if cfg.blur_ksize > 1:
+        gray = cv2.GaussianBlur(gray, (cfg.blur_ksize, cfg.blur_ksize), 0)
+
+    if cfg.use_otsu:
+        _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    else:
+        _, bw = cv2.threshold(gray, cfg.fixed_thresh, 255, cv2.THRESH_BINARY)
+
+    kernel = np.ones((3, 3), np.uint8)
+    bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel, iterations=1)
+    bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours:
+        return None, bw
+
+    roi_cx = (x2 - x1) / 2.0
+    roi_cy = (y2 - y1) / 2.0
+
+    best = None
+    best_score = -1e18
+
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+
+        if area < cfg.min_area_px or area > cfg.max_area_px:
+            continue
+
+        perimeter = cv2.arcLength(cnt, True)
+        if perimeter <= 0:
+            continue
+
+        circularity = 4 * np.pi * (area / (perimeter * perimeter))
+        if circularity < 0.6:
+            continue
+
+        M = cv2.moments(cnt)
+        if M["m00"] <= 1e-6:
+            continue
+
+        cx = M["m10"] / M["m00"]
+        cy = M["m01"] / M["m00"]
+
+        dist2 = (cx - roi_cx) ** 2 + (cy - roi_cy) ** 2
+        score = area - 0.8 * dist2
+
+        if score > best_score:
+            best_score = score
+            best = cnt
+
+    if best is None:
+        return None, bw
+
+    (xc, yc), r = cv2.minEnclosingCircle(best)
+
+    return (float(x1 + xc), float(y1 + yc), float(r)), bw
+
+
+@dataclass
+class SharedFrameBuffer:
+    """
+    2台カメラスレッドから最新フレームを受け渡すためのクラス。
+    これで global latest_frame_xy などを減らす。
+    """
+    latest_frame_xy: np.ndarray | None = None
+    latest_frame_z: np.ndarray | None = None
+    latest_frame_xy_time: float = 0.0
+    latest_frame_z_time: float = 0.0
+
+    def __post_init__(self):
+        self.xy_lock = threading.Lock()
+        self.z_lock = threading.Lock()
+
+    def set_xy(self, frame: np.ndarray, t: float):
+        with self.xy_lock:
+            self.latest_frame_xy = frame
+            self.latest_frame_xy_time = t
+
+    def set_z(self, frame: np.ndarray, t: float):
+        with self.z_lock:
+            self.latest_frame_z = frame
+            self.latest_frame_z_time = t
+
+    def get_xy(self):
+        with self.xy_lock:
+            if self.latest_frame_xy is None:
+                return None, self.latest_frame_xy_time
+            return self.latest_frame_xy.copy(), self.latest_frame_xy_time
+
+    def get_z(self):
+        with self.z_lock:
+            if self.latest_frame_z is None:
+                return None, self.latest_frame_z_time
+            return self.latest_frame_z.copy(), self.latest_frame_z_time
+
+
+def camera_capture_loop(
+    cam,
+    img,
+    role: str,
+    cfg: AppConfig,
+    frame_buffer: SharedFrameBuffer,
+    running_event: threading.Event,
+    use_undistort: bool,
+    map1,
+    map2,
+):
+    """
+    カメラごとの取得スレッド。
+    role は "xy" または "z"。
+    """
+    while running_event.is_set():
+        try:
+            cam.get_image(img)
+            frame = img.get_image_data_numpy()
+
+            if use_undistort:
+                frame = undistort_frame(frame, map1, map2)
+
+            if role == "z" and cfg.rotate_z_frame:
+                frame = rotate_frame_if_needed(frame, True, cfg.rotate_z_code)
+
+            now_t = time.time()
+
+            if role == "xy":
+                frame_buffer.set_xy(frame, now_t)
+            elif role == "z":
+                frame_buffer.set_z(frame, now_t)
+            else:
+                raise ValueError(f"Unknown camera role: {role}")
+
+        except Exception as e:
+            print(f"[CAM {role} Thread Error] {e}")
+            time.sleep(0.01)

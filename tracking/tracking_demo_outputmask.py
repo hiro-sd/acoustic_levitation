@@ -61,6 +61,14 @@ AUTD_LOOP_SLEEP_SEC = 0.001
 BASE_MOVE_SPEED_MM_S = 35.0
 BASE_Z_MOVE_SPEED_MM_S = 35.0
 
+# OutputMask設定
+USE_OUTPUT_MASK = True
+OUTPUT_MASK_RADIUS_MM = 170
+
+# マスク中心がこの距離以上変わったときだけOutputMaskを再送する
+# 毎回送るとAUTD送信負荷が増えるため
+OUTPUT_MASK_UPDATE_EPS_MM = 0.5
+
 # XY制御（予測PID）
 K_P_XY = 0.3 # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
 K_D_XY = 0.05 # [D] 揺れを抑えるブレーキの強さ (速度に対する抵抗)
@@ -116,6 +124,7 @@ autd_arrangement = [
 
 # スレッド共有変数
 shared_target_pos = None  # (x, y, z) [mm]
+shared_mask_center_xy = None  # (x, y) [mm]
 program_running = True
 autd_display_fps = 0.0
 pos_lock = threading.Lock()
@@ -361,18 +370,23 @@ def autd_control_loop(autd):
     fps_frame_count = 0
     last_seq = -1
 
+    last_mask_center_x = None
+    last_mask_center_y = None
+
     # 計測用
     send_time_ema_ms = 0.0
     build_time_ema_ms = 0.0
 
     while program_running:
         tgt = None
+        mask_center_xy = None
         seq = last_seq
 
-        # 最新ターゲットだけ取得
+        # 最新ターゲットとマスク中心を取得
         with pos_lock:
             if shared_target_pos is not None:
                 tgt = shared_target_pos
+                mask_center_xy = shared_mask_center_xy
                 seq = shared_target_seq
 
         # 新しいターゲットがまだ無ければ少し待つ
@@ -398,6 +412,34 @@ def autd_control_loop(autd):
             ).into_nearest()
 
             t1 = time.perf_counter()
+
+            if USE_OUTPUT_MASK and mask_center_xy is not None:
+                mask_x, mask_y = mask_center_xy
+
+                need_update_mask = (
+                    last_mask_center_x is None
+                    or last_mask_center_y is None
+                    or np.hypot(mask_x - last_mask_center_x, mask_y - last_mask_center_y)
+                    >= OUTPUT_MASK_UPDATE_EPS_MM
+                )
+
+                if need_update_mask:
+                    autd.send(
+                        make_circular_output_mask(
+                            mask_x,
+                            mask_y,
+                            OUTPUT_MASK_RADIUS_MM,
+                        )
+                    )
+                    last_mask_center_x = float(mask_x)
+                    last_mask_center_y = float(mask_y)
+            else:
+                # マスクを使わない場合は全振動子ON
+                # 毎回送る必要はないが、シンプルに戻すならここで送る
+                if last_mask_center_x is not None:
+                    autd.send(OutputMask(lambda _dev: lambda _tr: True))
+                    last_mask_center_x = None
+                    last_mask_center_y = None
 
             autd.send(stm)
 
@@ -436,10 +478,81 @@ def load_affine_matrix(json_path):
     uv_type = data.get("input_uv_type", "unknown")
     return A, uv_type
 
-def set_shared_target_pos(x: float, y: float, z: float):
-    global shared_target_pos, shared_target_seq
+def _get_vec_coord(v, idx: int, name: str) -> float:
+    """
+    pyautd3 の Vector3 風オブジェクト / numpy array / list のどれでも座標を取れるようにする。
+    """
+    if hasattr(v, name):
+        return float(getattr(v, name))
+    return float(v[idx])
+
+
+def get_transducer_xy(dev, tr):
+    """
+    振動子のXY座標を取得する。
+
+    多くの pyautd3 では tr.position() で振動子位置が取れる想定。
+    もし環境によってAPI名が違う場合は、ここだけ調整する。
+    """
+    # まず tr.position() を試す
+    if hasattr(tr, "position"):
+        p_attr = tr.position
+        p = p_attr() if callable(p_attr) else p_attr
+        x = _get_vec_coord(p, 0, "x")
+        y = _get_vec_coord(p, 1, "y")
+        return x, y
+
+    # 念のため別名候補
+    if hasattr(tr, "pos"):
+        p_attr = tr.pos
+        p = p_attr() if callable(p_attr) else p_attr
+        x = _get_vec_coord(p, 0, "x")
+        y = _get_vec_coord(p, 1, "y")
+        return x, y
+
+    raise AttributeError(
+        "Transducer position API not found. "
+        "Please check dir(tr) inside OutputMask."
+    )
+
+
+def make_circular_output_mask(center_x: float, center_y: float, radius_mm: float):
+    """
+    center_x, center_y を中心とした半径 radius_mm 以内の振動子だけ出力する OutputMask を作る。
+    """
+    cx = float(center_x)
+    cy = float(center_y)
+    r2 = float(radius_mm) ** 2
+
+    def device_mask(dev):
+        def transducer_mask(tr):
+            try:
+                tx, ty = get_transducer_xy(dev, tr)
+                d2 = (tx - cx) ** 2 + (ty - cy) ** 2
+                return d2 <= r2
+            except Exception:
+                # 位置取得に失敗した場合、危険側としてOFFにする
+                return False
+
+        return transducer_mask
+
+    return OutputMask(device_mask)
+
+def set_shared_target_pos(
+    x: float,
+    y: float,
+    z: float,
+    mask_center_x: float | None = None,
+    mask_center_y: float | None = None,
+):
+    global shared_target_pos, shared_mask_center_xy, shared_target_seq
+
     with pos_lock:
         shared_target_pos = (float(x), float(y), float(z))
+
+        if mask_center_x is not None and mask_center_y is not None:
+            shared_mask_center_xy = (float(mask_center_x), float(mask_center_y))
+
         shared_target_seq += 1
 
 
@@ -527,7 +640,7 @@ def main():
             display_origin_x = float(home_x)
             display_origin_y = float(home_y)
             display_origin_z = float(home_z)
-            set_shared_target_pos(home_x, home_y, home_z)
+            set_shared_target_pos(home_x, home_y, home_z, home_x, home_y)
 
             t = threading.Thread(target=autd_control_loop, args=(autd,))
             t.start()
@@ -687,7 +800,7 @@ def main():
                         home_x = float(base_center[0])
                         home_y = float(base_center[1])
                         home_z = float(DEFAULT_Z)
-                        set_shared_target_pos(home_x, home_y, home_z)
+                        set_shared_target_pos(home_x, home_y, home_z, home_x, home_y)
                 prev_enter_state = current_enter_state
 
                 # ログ開始
@@ -943,7 +1056,7 @@ def main():
                         # 検出できたときだけ更新して保持
                         last_valid_target_z = target_z
 
-                    set_shared_target_pos(target_x, target_y, target_z)
+                    set_shared_target_pos(home_x, home_y, home_z, home_x, home_y)
                     loop_target_x = float(target_x)
                     loop_target_y = float(target_y)
                     loop_target_z = float(target_z)

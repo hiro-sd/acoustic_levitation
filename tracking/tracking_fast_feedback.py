@@ -1,4 +1,3 @@
-from math import dist
 import os
 import time
 import sys
@@ -101,9 +100,6 @@ LOG_ENABLED = True
 LOG_CSV_PATH = "./tracking/stability_log.csv"
 LOG_DURATION_SEC = 30.0
 LOG_TRIGGER_KEY = "l"
-
-# CPUスレッド
-# os.environ.setdefault("OMP_NUM_THREADS", "4")
 
 # AUTD配置（3行×3列）
 autd_arrangement = [

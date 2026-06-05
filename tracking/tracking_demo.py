@@ -55,11 +55,11 @@ EXPOSURE_US = 5000
 
 # AUTD物理設定
 POINT_NUM = 8
-RADIUS = 19.0
+RADIUS = 23.5
 DEFAULT_Z = 400.0
 AUTD_LOOP_SLEEP_SEC = 0.001
-BASE_MOVE_SPEED_MM_S = 35.0
-BASE_Z_MOVE_SPEED_MM_S = 35.0
+BASE_MOVE_SPEED_MM_S = 60.0
+BASE_Z_MOVE_SPEED_MM_S = 80.0
 
 # XY制御（予測PID）
 K_P_XY = 0.3 # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
@@ -518,7 +518,7 @@ def main():
         ) as autd:
 
             autd.send(Silencer())
-            autd.send(Static(intensity=int(0xFF * 0.6)))
+            autd.send(Static(intensity=int(0xFF * 0.9)))
 
             base_center = autd.center()
             home_x = float(base_center[0])
