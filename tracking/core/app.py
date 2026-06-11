@@ -9,6 +9,7 @@ import numpy as np
 
 from pyautd3 import Controller, Silencer, Static
 from pyautd3.link.twincat import TwinCAT
+from ultralytics import cfg
 
 from .config import AppConfig
 from .vision import (
@@ -39,7 +40,7 @@ from .controller import (
 
 def update_base_position(home: HomePosition, cfg: AppConfig, dt_sec: float) -> HomePosition:
     """
-    tracking_demo.py 系で使っていた矢印キーによる基準位置移動。
+    矢印キーによる基準位置移動。
     cfg.enable_base_move=True のときだけ使う。
     """
     if not cfg.enable_base_move:
@@ -75,15 +76,134 @@ def _sender_set_target(
     target_y: float,
     target_z: float,
     home: HomePosition,
+    radius: float | None = None,
+    intensity_ratio: float | None = None,
 ):
     """
-    OutputMaskあり/なしの差をここに閉じ込める。
-    OutputMaskありの場合は、home.x, home.y をマスク中心として渡す。
+    OutputMaskあり/なしの差、動的radius、動的intensityをここに閉じ込める。
     """
     if cfg.use_output_mask:
-        sender.set_target(target_x, target_y, target_z, home.x, home.y)
+        sender.set_target(
+            target_x,
+            target_y,
+            target_z,
+            home.x,
+            home.y,
+            radius=radius,
+            intensity_ratio=intensity_ratio,
+        )
     else:
-        sender.set_target(target_x, target_y, target_z)
+        sender.set_target(
+            target_x,
+            target_y,
+            target_z,
+            radius=radius,
+            intensity_ratio=intensity_ratio,
+        )
+
+
+def limit_step(new_val: float, old_val: float, max_step: float) -> float:
+    return old_val + float(np.clip(new_val - old_val, -max_step, max_step))
+
+
+def move_towards(current: float, target: float, max_step: float) -> float:
+    diff = target - current
+    if abs(diff) <= max_step:
+        return float(target)
+    return float(current + np.sign(diff) * max_step)
+
+
+def should_enter_fall_recovery(
+    cfg: AppConfig,
+    home_z: float,
+    z_mm: float | None,
+    vz: float,
+) -> bool:
+    if z_mm is None:
+        return False
+
+    z_drop = home_z - z_mm
+
+    return (
+        z_drop >= cfg.fall_drop_threshold_mm
+        and vz <= cfg.fall_vz_threshold_mm_s
+    )
+
+
+# def is_capture_stable(
+#     cfg: AppConfig,
+#     vx: float,
+#     vy: float,
+#     vz: float,
+# ) -> bool:
+#     # speed_xy = float(np.hypot(vx, vy))
+
+#     return (
+#         # speed_xy <= cfg.fall_captured_speed_xy_mm_s
+#         abs(vz) <= cfg.fall_captured_vz_mm_s
+#     )
+
+
+def is_return_home_done(
+    cfg: AppConfig,
+    home: HomePosition,
+    z_mm: float | None,
+    x_mm: float | None,
+    y_mm: float | None,
+    vx: float,
+    vy: float,
+    vz: float,
+) -> bool:
+    if x_mm is None or y_mm is None or z_mm is None:
+        return False
+
+    err_xy = float(np.hypot(x_mm - home.x, y_mm - home.y))
+    err_z = abs(z_mm - home.z)
+    speed_xy = float(np.hypot(vx, vy))
+
+    return (
+        err_xy <= cfg.return_home_done_error_xy_mm
+        and err_z <= cfg.return_home_done_error_z_mm
+        and speed_xy <= cfg.return_home_done_speed_xy_mm_s
+        and abs(vz) <= cfg.return_home_done_vz_mm_s
+    )
+
+
+def compute_z_intensity_boost_ratio(
+    cfg: AppConfig,
+    home_z: float,
+    z_mm: float | None,
+) -> float:
+    """
+    z方向の落下量に応じて intensity_ratio の目標値を返す。
+
+    - zが home_z から 1.5mm以内なら base
+    - zが home_z から 5mm以上下がったら max
+    - その間は線形補間
+    """
+    base = float(cfg.intensity_base_ratio)
+    max_ratio = float(cfg.intensity_max_ratio)
+
+    if z_mm is None:
+        return base
+
+    drop_mm = float(home_z - z_mm)
+
+    # 下がっていない、または1.5mm以内なら通常強度
+    if drop_mm <= cfg.z_boost_release_mm:
+        return base
+
+    # 5mm以上下がったら最大強度
+    if drop_mm >= cfg.z_boost_full_drop_mm:
+        return max_ratio
+
+    # 1.5mm〜5mmの間は線形補間
+    denom = cfg.z_boost_full_drop_mm - cfg.z_boost_release_mm
+    if denom <= 1e-6:
+        return max_ratio
+
+    s = (drop_mm - cfg.z_boost_release_mm) / denom
+    return base + s * (max_ratio - base)
 
 
 def _start_log_session(cfg: AppConfig, mode: str):
@@ -296,7 +416,10 @@ def run_tracking_app(cfg: AppConfig):
             )
 
             sender = AutdSender(autd, cfg)
-            _sender_set_target(sender, cfg, home.x, home.y, home.z, home)
+            current_radius = float(cfg.radius)
+            current_intensity_ratio = float(cfg.intensity_base_ratio)
+            target_intensity_ratio = float(cfg.intensity_base_ratio)
+            _sender_set_target(sender, cfg, home.x, home.y, home.z, home, current_radius, current_intensity_ratio)
             sender.start()
 
             controller = PredictionPIDController(cfg)
@@ -306,6 +429,16 @@ def run_tracking_app(cfg: AppConfig):
             tracking_active = False
             prev_enter_pressed = False
             prev_log_trigger_pressed = False
+
+            control_mode = "NORMAL_HOLD"
+
+            fall_recovery_start_time = None
+
+            return_setpoint = HomePosition(
+                x=home.x,
+                y=home.y,
+                z=home.z,
+            )
 
             roi_cx_xy, roi_cy_xy = W_xy // 2, H_xy // 2
             roi_size_xy = cfg.roi_init_size
@@ -371,10 +504,23 @@ def run_tracking_app(cfg: AppConfig):
                         print("[INFO] >>> TRACKING ACTIVATED <<<")
                         controller.reset(last_target)
                     else:
-                        print("[INFO] >>> TRACKING PAUSED: Return to home <<<")
-                        controller.reset(Target3D(home.x, home.y, home.z))
+                        print("[INFO] >>> TRACKING PAUSED: Return to initial base position <<<")
+                        control_mode = "NORMAL_HOLD"
+                        fall_recovery_start_time = None
+
+                        home = HomePosition(
+                            x=float(display_origin.x),
+                            y=float(display_origin.y),
+                            z=float(display_origin.z),
+                        )
+                        return_setpoint = HomePosition(
+                            x=home.x,
+                            y=home.y,
+                            z=home.z,
+                        )
                         last_target = Target3D(home.x, home.y, home.z)
-                        _sender_set_target(sender, cfg, home.x, home.y, home.z, home)
+                        controller.reset(last_target)
+                        _sender_set_target(sender, cfg, home.x, home.y, home.z, home, current_radius, current_intensity_ratio)
 
                     time.sleep(0.2)
 
@@ -385,7 +531,26 @@ def run_tracking_app(cfg: AppConfig):
 
                     if not tracking_active:
                         last_target = Target3D(home.x, home.y, home.z)
-                        _sender_set_target(sender, cfg, home.x, home.y, home.z, home)
+                        _sender_set_target(sender, cfg, home.x, home.y, home.z, home, current_radius, current_intensity_ratio)
+
+                if cfg.enable_radius_change:
+                    radius_step = cfg.radius_change_speed_mm_s * dt_loop
+
+                    # 右 or 上でradiusを大きくする
+                    if keyboard.is_pressed("right") or keyboard.is_pressed("up"):
+                        current_radius += radius_step
+
+                    # 左 or 下でradiusを小さくする
+                    if keyboard.is_pressed("left") or keyboard.is_pressed("down"):
+                        current_radius -= radius_step
+
+                    current_radius = float(
+                        np.clip(
+                            current_radius,
+                            cfg.radius_min,
+                            cfg.radius_max,
+                        )
+                    )
 
                 if cfg.log_enabled:
                     log_trigger_pressed = keyboard.is_pressed(cfg.log_trigger_key)
@@ -610,6 +775,32 @@ def run_tracking_app(cfg: AppConfig):
                             2,
                         )
                 
+                if cfg.enable_fall_recovery and control_mode == "FALL_RECOVERY":
+                    target_intensity_ratio = float(cfg.fall_recovery_intensity_ratio)
+
+                elif cfg.enable_z_intensity_boost and tracking_active:
+                    target_intensity_ratio = compute_z_intensity_boost_ratio(
+                        cfg,
+                        home.z,
+                        z_mm,
+                    )
+
+                else:
+                    target_intensity_ratio = float(cfg.intensity_base_ratio)
+
+                current_intensity_ratio = (
+                    cfg.intensity_lpf_alpha * current_intensity_ratio
+                    + (1.0 - cfg.intensity_lpf_alpha) * target_intensity_ratio
+                )
+
+                current_intensity_ratio = float(
+                    np.clip(
+                        current_intensity_ratio,
+                        cfg.intensity_base_ratio,
+                        cfg.intensity_max_ratio,
+                    )
+                )
+                
                 method = "XY+Z" if (detected_xy and detected_z) else "PARTIAL"
 
                 # Control
@@ -625,15 +816,197 @@ def run_tracking_app(cfg: AppConfig):
                     )
 
                     if meas.detected_xy or meas.detected_z:
-                        target, debug = controller.update(meas, home)
+                        # ====================================================
+                        # 1. RETURN_TO_HOME中は一時基準位置をゆっくりhomeへ戻す
+                        # ====================================================
+                        if control_mode == "RETURN_TO_HOME":
+                            return_setpoint = HomePosition(
+                                x=move_towards(
+                                    return_setpoint.x,
+                                    home.x,
+                                    cfg.return_home_speed_xy_mm_s * dt_loop,
+                                ),
+                                y=move_towards(
+                                    return_setpoint.y,
+                                    home.y,
+                                    cfg.return_home_speed_xy_mm_s * dt_loop,
+                                ),
+                                z=move_towards(
+                                    return_setpoint.z,
+                                    home.z,
+                                    cfg.return_home_speed_z_mm_s * dt_loop,
+                                ),
+                            )
+
+                            control_home = return_setpoint
+                        else:
+                            control_home = home
+
+                        # ====================================================
+                        # 2. まず通常PIDを計算
+                        #    FALL_RECOVERY中は後でtargetを上書きする
+                        # ====================================================
+                        target, debug = controller.update(meas, control_home)
+
+                        vx_now = float(debug.vx)
+                        vy_now = float(debug.vy)
+                        vz_now = float(debug.vz)
+
+                        # ====================================================
+                        # 3. NORMAL_HOLD / RETURN_TO_HOME中に落下検知したら
+                        #    FALL_RECOVERYへ入る
+                        # ====================================================
+                        if cfg.enable_fall_recovery:
+                            if control_mode in ["NORMAL_HOLD", "RETURN_TO_HOME"]:
+                                if should_enter_fall_recovery(cfg, home.z, z_mm, vz_now):
+                                    control_mode = "FALL_RECOVERY"
+                                    fall_recovery_start_time = time.time()
+
+                                    print("[RECOVERY] -> FALL_RECOVERY")
+
+                        # ====================================================
+                        # 4. FALL_RECOVERY中は0.5秒だけ物体を追従
+                        # ====================================================
+                        if control_mode == "FALL_RECOVERY":
+                            elapsed_recovery = 0.0
+                            if fall_recovery_start_time is not None:
+                                elapsed_recovery = time.time() - fall_recovery_start_time
+
+                            # 0.5秒未満なら、物体の現在位置/予測位置へ追従
+                            if elapsed_recovery < cfg.fall_recovery_hold_time_s:
+                                if x_mm is not None and y_mm is not None:
+                                    catch_x = x_mm + vx_now * cfg.fall_recovery_dt_pred_xy
+                                    catch_y = y_mm + vy_now * cfg.fall_recovery_dt_pred_xy
+
+                                    catch_x = last_target.x + float(
+                                        np.clip(
+                                            catch_x - last_target.x,
+                                            -cfg.fall_recovery_target_xy_step_mm,
+                                            cfg.fall_recovery_target_xy_step_mm,
+                                        )
+                                    )
+                                    catch_y = last_target.y + float(
+                                        np.clip(
+                                            catch_y - last_target.y,
+                                            -cfg.fall_recovery_target_xy_step_mm,
+                                            cfg.fall_recovery_target_xy_step_mm,
+                                        )
+                                    )
+                                else:
+                                    catch_x = last_target.x
+                                    catch_y = last_target.y
+
+                                if z_mm is not None:
+                                    catch_z = (
+                                        z_mm
+                                        + vz_now * cfg.fall_recovery_dt_pred_z
+                                        + cfg.fall_recovery_z_offset_mm
+                                    )
+
+                                    catch_z = float(np.clip(catch_z, cfg.z_min, cfg.z_max))
+
+                                    catch_z = last_target.z + float(
+                                        np.clip(
+                                            catch_z - last_target.z,
+                                            -cfg.fall_recovery_target_z_step_mm,
+                                            cfg.fall_recovery_target_z_step_mm,
+                                        )
+                                    )
+                                else:
+                                    catch_z = last_target.z
+
+                                target = Target3D(
+                                    x=float(catch_x),
+                                    y=float(catch_y),
+                                    z=float(catch_z),
+                                )
+
+                            # 0.5秒経過したら、その時点の物体位置でPIDへ移行
+                            else:
+                                sx = x_mm if x_mm is not None else last_target.x
+                                sy = y_mm if y_mm is not None else last_target.y
+                                sz = z_mm if z_mm is not None else last_target.z
+
+                                return_setpoint = HomePosition(
+                                    x=float(sx),
+                                    y=float(sy),
+                                    z=float(sz),
+                                )
+
+                                control_mode = "RETURN_TO_HOME"
+                                fall_recovery_start_time = None
+
+                                # 捕捉位置を基準にPIDを再開するためリセット
+                                controller.reset(
+                                    Target3D(
+                                        return_setpoint.x,
+                                        return_setpoint.y,
+                                        return_setpoint.z,
+                                    )
+                                )
+
+                                target = Target3D(
+                                    x=return_setpoint.x,
+                                    y=return_setpoint.y,
+                                    z=return_setpoint.z,
+                                )
+
+                                print(
+                                    f"[RECOVERY] FALL_RECOVERY -> RETURN_TO_HOME "
+                                    f"setpoint=({return_setpoint.x:.1f}, "
+                                    f"{return_setpoint.y:.1f}, {return_setpoint.z:.1f})"
+                                )
+
+                        # ====================================================
+                        # 5. RETURN_TO_HOME完了判定
+                        # ====================================================
+                        if control_mode == "RETURN_TO_HOME":
+                            if is_return_home_done(
+                                cfg,
+                                home,
+                                z_mm,
+                                x_mm,
+                                y_mm,
+                                vx_now,
+                                vy_now,
+                                vz_now,
+                            ):
+                                control_mode = "NORMAL_HOLD"
+
+                                return_setpoint = HomePosition(
+                                    x=home.x,
+                                    y=home.y,
+                                    z=home.z,
+                                )
+
+                                controller.reset(
+                                    Target3D(
+                                        home.x,
+                                        home.y,
+                                        home.z,
+                                    )
+                                )
+
+                                print("[RECOVERY] RETURN_TO_HOME -> NORMAL_HOLD")
+
                         last_target = target
-                        _sender_set_target(sender, cfg, target.x, target.y, target.z, home)
+
+                        _sender_set_target(
+                            sender,
+                            cfg,
+                            target.x,
+                            target.y,
+                            target.z,
+                            home,
+                            current_radius,
+                            current_intensity_ratio,
+                        )
 
                     if do_display:
                         cv2.putText(
                             frame_xy_bgr,
                             f"TGT XY: {last_target.x:.1f}, {last_target.y:.1f}",
-                            (10, 90),
+                            (10, 180),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
                             (0, 255, 255),
@@ -642,7 +1015,7 @@ def run_tracking_app(cfg: AppConfig):
                         cv2.putText(
                             frame_z_bgr,
                             f"TGT Z: {last_target.z:.1f}",
-                            (10, 90),
+                            (10, 180),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
                             (0, 255, 255),
@@ -717,6 +1090,34 @@ def run_tracking_app(cfg: AppConfig):
                     )
                     cv2.putText(
                         frame_xy_bgr,
+                        # f"RADIUS: {current_radius:.1f} mm",
+                        f"return setpoint: ({return_setpoint.x:.1f}, {return_setpoint.y:.1f}, {return_setpoint.z:.1f})",
+                        (10, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
+                        2,
+                    )
+                    cv2.putText(
+                        frame_xy_bgr,
+                        f"INTENSITY: {current_intensity_ratio:.3f}",
+                        (10, 120),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
+                        2,
+                    )
+                    cv2.putText(
+                        frame_xy_bgr,
+                        f"MODE: {control_mode}",
+                        (10, 150),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255) if control_mode == "FALL_RECOVERY" else (255, 255, 255),
+                        2,
+                    )
+                    cv2.putText(
+                        frame_xy_bgr,
                         f"STATUS: {status_text}",
                         (10, H_xy - 20),
                         cv2.FONT_HERSHEY_SIMPLEX,
@@ -741,6 +1142,33 @@ def run_tracking_app(cfg: AppConfig):
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.6,
                         (0, 255, 255),
+                        2,
+                    )
+                    cv2.putText(
+                        frame_z_bgr,
+                        f"RADIUS: {current_radius:.1f} mm",
+                        (10, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
+                        2,
+                    )
+                    cv2.putText(
+                        frame_z_bgr,
+                        f"INTENSITY: {current_intensity_ratio:.3f}",
+                        (10, 120),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
+                        2,
+                    )
+                    cv2.putText(
+                        frame_z_bgr,
+                        f"MODE: {control_mode}",
+                        (10, 150),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255) if control_mode == "FALL_RECOVERY" else (255, 255, 255),
                         2,
                     )
                     cv2.putText(

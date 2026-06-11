@@ -47,6 +47,12 @@ class AppConfig:
     stm_freq_hz: float = 100.0
     static_intensity_ratio: float = 0.9
 
+    # Runtime radius change settings
+    enable_radius_change: bool = False
+    radius_min: float = 20.0
+    radius_max: float = 28.0
+    radius_change_speed_mm_s: float = 1.0 # 矢印キーを押し続けたときの半径変更速度 [mm/s]
+
     # Base movement by keyboard
     enable_base_move: bool = False
     base_move_speed_mm_s: float = 60.0
@@ -78,8 +84,59 @@ class AppConfig:
     z_min: float = 250.0
     z_max: float = 550.0
 
+    # Z intensity boost
+    enable_z_intensity_boost: bool = True
+
+    intensity_base_ratio: float = 0.90
+    intensity_max_ratio: float = 1.00
+
+    # zがこの値以上下がったら最大ブースト
+    z_boost_full_drop_mm: float = 5.0
+
+    # z偏差がこの値以内なら通常強度へ戻す
+    z_boost_release_mm: float = 1.5
+
+    # intensity_ratio のローパス
+    # 大きいほど変化がゆっくり
+    intensity_lpf_alpha: float = 0.90
+
+    # この差以上変わったときだけAUTDへStaticを再送する
+    intensity_update_eps: float = 0.005
+
     # Logging
     log_enabled: bool = True
     log_csv_path: str = "./tracking/stability_log.csv"
     log_duration_sec: float = 30.0
     log_trigger_key: str = "l"
+
+    # Fall recovery / return-to-home settings
+    enable_fall_recovery: bool = False
+
+    fall_drop_threshold_mm: float = 6.0
+    fall_vz_threshold_mm_s: float = -50.0
+
+    fall_recovery_dt_pred_z: float = 0.02
+    fall_recovery_z_offset_mm: float = 0.0
+
+    fall_recovery_intensity_ratio: float = 1.0
+
+    fall_recovery_dt_pred_xy: float = 0
+    fall_recovery_target_xy_step_mm: float = 10.0
+    fall_recovery_target_z_step_mm: float = 10.0
+
+    fall_recovery_hold_time_s: float = 1.0
+
+    # 捕捉できたと判断する条件
+    # fall_captured_speed_xy_mm_s: float = 50.0
+    # fall_captured_vz_mm_s: float = 40.0
+    # fall_captured_stable_time_s: float = 0.05
+
+    # RETURN_TO_HOME中、一時目標をhomeへ戻す速度
+    return_home_speed_xy_mm_s: float = 8.0
+    return_home_speed_z_mm_s: float = 5.0
+
+    # RETURN_TO_HOME完了条件
+    return_home_done_error_xy_mm: float = 2.0
+    return_home_done_error_z_mm: float = 2.0
+    return_home_done_speed_xy_mm_s: float = 30.0
+    return_home_done_vz_mm_s: float = 30.0

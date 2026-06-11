@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from pyautd3 import AUTD3, FociSTM, Hz, OutputMask
+from pyautd3 import AUTD3, FociSTM, Hz, OutputMask, Static
 
 from .config import AppConfig
 
@@ -26,13 +26,18 @@ def make_autd_arrangement():
     ]
 
 
-def make_circle_offsets(cfg: AppConfig):
-    # STM円軌道の8点オフセットを作る
+def make_circle_offsets(cfg: AppConfig, radius: float | None = None):
+    """
+    STM円軌道のオフセットを作る。
+    radiusを指定しない場合はcfg.radiusを使う。
+    """
+    r = float(cfg.radius if radius is None else radius)
+
     return np.array(
         [
             [
-                cfg.radius * np.cos(np.pi / 8 + 2.0 * np.pi * i / cfg.point_num),
-                cfg.radius * np.sin(np.pi / 8 + 2.0 * np.pi * i / cfg.point_num),
+                r * np.cos(np.pi / 8 + 2.0 * np.pi * i / cfg.point_num),
+                r * np.sin(np.pi / 8 + 2.0 * np.pi * i / cfg.point_num),
                 0.0,
             ]
             for i in range(cfg.point_num)
@@ -100,6 +105,8 @@ class TargetCommand:
     z: float
     mask_center_x: float | None = None
     mask_center_y: float | None = None
+    radius: float | None = None
+    intensity_ratio: float | None = None
 
 
 class AutdSender:
@@ -111,7 +118,8 @@ class AutdSender:
     def __init__(self, autd, cfg: AppConfig):
         self.autd = autd
         self.cfg = cfg
-        self.circle_offsets = make_circle_offsets(cfg)
+        self._last_radius = float(cfg.radius)
+        self.circle_offsets = make_circle_offsets(cfg, self._last_radius)
 
         self._lock = threading.Lock()
         self._target: TargetCommand | None = None
@@ -127,17 +135,21 @@ class AutdSender:
         self._last_mask_center_x = None
         self._last_mask_center_y = None
 
+        self._last_intensity_ratio = None
+
     def set_target(
-        self,
-        x: float,
-        y: float,
-        z: float,
-        mask_center_x: float | None = None,
-        mask_center_y: float | None = None,
+    self,
+    x: float,
+    y: float,
+    z: float,
+    mask_center_x: float | None = None,
+    mask_center_y: float | None = None,
+    radius: float | None = None,
+    intensity_ratio: float | None = None,
     ):
         """
         メインスレッドから呼ぶ。
-        STM中心と、必要ならOutputMask中心を更新する。
+        STM中心、OutputMask中心、STM円軌道半径、出力強度を更新する。
         """
         with self._lock:
             self._target = TargetCommand(
@@ -146,6 +158,8 @@ class AutdSender:
                 z=float(z),
                 mask_center_x=None if mask_center_x is None else float(mask_center_x),
                 mask_center_y=None if mask_center_y is None else float(mask_center_y),
+                radius=None if radius is None else float(radius),
+                intensity_ratio=None if intensity_ratio is None else float(intensity_ratio),
             )
             self._seq += 1
 
@@ -202,6 +216,31 @@ class AutdSender:
             self._last_mask_center_x = mask_x
             self._last_mask_center_y = mask_y
 
+    def _send_intensity_if_needed(self, target: TargetCommand):
+        """
+        intensity_ratio が変わったときだけ Static を再送する。
+        """ 
+        if target.intensity_ratio is None:
+            return
+
+        ratio = float(np.clip(target.intensity_ratio, 0.0, 1.0))
+
+        need_update = (
+            self._last_intensity_ratio is None
+            or abs(ratio - self._last_intensity_ratio) >= self.cfg.intensity_update_eps
+        )
+
+        if not need_update:
+            return
+
+        self.autd.send(
+            Static(
+                intensity=int(0xFF * ratio)
+            )
+        )
+
+        self._last_intensity_ratio = ratio
+
     def _loop(self):
         print("[THREAD] AUTD Control Thread Started.")
 
@@ -219,6 +258,12 @@ class AutdSender:
             try:
                 t0 = time.perf_counter()
 
+                radius = float(self.cfg.radius if target.radius is None else target.radius)
+
+                if abs(radius - self._last_radius) > 1e-6:
+                    self.circle_offsets = make_circle_offsets(self.cfg, radius)
+                    self._last_radius = radius
+
                 center_vec = np.array([target.x, target.y, target.z], dtype=np.float32)
                 foci = center_vec[None, :] + self.circle_offsets
 
@@ -230,6 +275,7 @@ class AutdSender:
                 t1 = time.perf_counter()
 
                 self._send_output_mask_if_needed(target)
+                self._send_intensity_if_needed(target)
                 self.autd.send(stm)
 
                 t2 = time.perf_counter()
