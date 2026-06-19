@@ -62,8 +62,8 @@ class AppConfig:
 
     # Base movement by keyboard
     enable_base_move: bool = False
-    base_move_speed_mm_s: float = 60.0
-    base_z_move_speed_mm_s: float = 80.0
+    base_move_speed_mm_s: float = 50.0
+    base_z_move_speed_mm_s: float = 50.0
 
     # outputmask settings
     use_output_mask: bool = False
