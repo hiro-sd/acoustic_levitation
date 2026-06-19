@@ -1,10 +1,7 @@
-import csv
-import os
 import time
 import threading
 
 import cv2
-import keyboard
 import numpy as np
 
 from pyautd3 import Controller, Silencer, Static
@@ -20,238 +17,31 @@ from .vision import (
     build_undistort_maps,
     undistort_frame,
     rotate_frame_if_needed,
-    clamp_roi,
-    track_ball_cv,
     SharedFrameBuffer,
     camera_capture_loop,
+    safe_close_camera,
 )
+from .ball_tracker import RoiBallTracker, draw_ball_detection
 from .autd_sender import (
     make_autd_arrangement,
     AutdSender,
+    set_tracking_target,
 )
-from .controller import (
-    PredictionPIDController,
-    HomePosition,
-    Measurement3D,
-    Target3D,
+from .controller import PredictionPIDController
+from .models import HomePosition, Measurement3D, Target3D
+from .control.intensity import compute_z_intensity_boost_ratio
+from .control.recovery import (
+    is_return_home_done,
+    move_towards,
+    should_enter_fall_recovery,
 )
-
-
-def update_base_position(home: HomePosition, cfg: AppConfig, dt_sec: float) -> HomePosition:
-    """
-    矢印キーによる基準位置移動。
-    cfg.enable_base_move=True のときだけ使う。
-    """
-    if not cfg.enable_base_move:
-        return home
-
-    step_xy = cfg.base_move_speed_mm_s * max(0.0, dt_sec)
-    step_z = cfg.base_z_move_speed_mm_s * max(0.0, dt_sec)
-
-    x = float(home.x)
-    y = float(home.y)
-    z = float(home.z)
-
-    if keyboard.is_pressed("left"):
-        x -= step_xy
-    if keyboard.is_pressed("right"):
-        x += step_xy
-    if keyboard.is_pressed("up"):
-        y += step_xy
-    if keyboard.is_pressed("down"):
-        y -= step_xy
-    if keyboard.is_pressed("page up"):
-        z += step_z
-    if keyboard.is_pressed("page down"):
-        z -= step_z
-
-    return HomePosition(x=x, y=y, z=z)
-
-
-def _sender_set_target(
-    sender: AutdSender,
-    cfg: AppConfig,
-    target_x: float,
-    target_y: float,
-    target_z: float,
-    home: HomePosition,
-    radius: float | None = None,
-    intensity_ratio: float | None = None,
-):
-    """
-    OutputMaskあり/なしの差、動的radius、動的intensityをここに閉じ込める。
-    """
-    if cfg.use_output_mask:
-        sender.set_target(
-            target_x,
-            target_y,
-            target_z,
-            home.x,
-            home.y,
-            radius=radius,
-            intensity_ratio=intensity_ratio,
-        )
-    else:
-        sender.set_target(
-            target_x,
-            target_y,
-            target_z,
-            radius=radius,
-            intensity_ratio=intensity_ratio,
-        )
-
-
-def limit_step(new_val: float, old_val: float, max_step: float) -> float:
-    return old_val + float(np.clip(new_val - old_val, -max_step, max_step))
-
-
-def move_towards(current: float, target: float, max_step: float) -> float:
-    diff = target - current
-    if abs(diff) <= max_step:
-        return float(target)
-    return float(current + np.sign(diff) * max_step)
-
-
-def should_enter_fall_recovery(
-    cfg: AppConfig,
-    home_z: float,
-    z_mm: float | None,
-    vz: float,
-) -> bool:
-    if z_mm is None:
-        return False
-
-    z_drop = home_z - z_mm
-
-    return (
-        z_drop >= cfg.fall_drop_threshold_mm
-        and vz <= cfg.fall_vz_threshold_mm_s
-    )
-
-
-# def is_capture_stable(
-#     cfg: AppConfig,
-#     vx: float,
-#     vy: float,
-#     vz: float,
-# ) -> bool:
-#     # speed_xy = float(np.hypot(vx, vy))
-
-#     return (
-#         # speed_xy <= cfg.fall_captured_speed_xy_mm_s
-#         abs(vz) <= cfg.fall_captured_vz_mm_s
-#     )
-
-
-def is_return_home_done(
-    cfg: AppConfig,
-    home: HomePosition,
-    z_mm: float | None,
-    x_mm: float | None,
-    y_mm: float | None,
-    vx: float,
-    vy: float,
-    vz: float,
-) -> bool:
-    if x_mm is None or y_mm is None or z_mm is None:
-        return False
-
-    err_xy = float(np.hypot(x_mm - home.x, y_mm - home.y))
-    err_z = abs(z_mm - home.z)
-    speed_xy = float(np.hypot(vx, vy))
-
-    return (
-        err_xy <= cfg.return_home_done_error_xy_mm
-        and err_z <= cfg.return_home_done_error_z_mm
-        and speed_xy <= cfg.return_home_done_speed_xy_mm_s
-        and abs(vz) <= cfg.return_home_done_vz_mm_s
-    )
-
-
-def compute_z_intensity_boost_ratio(
-    cfg: AppConfig,
-    home_z: float,
-    z_mm: float | None,
-) -> float:
-    """
-    z方向の落下量に応じて intensity_ratio の目標値を返す。
-
-    - zが home_z から 1.5mm以内なら base
-    - zが home_z から 5mm以上下がったら max
-    - その間は線形補間
-    """
-    base = float(cfg.static_intensity_ratio)
-    max_ratio = float(cfg.intensity_max_ratio)
-
-    if z_mm is None:
-        return base
-
-    drop_mm = float(home_z - z_mm)
-
-    # 下がっていない、または1.5mm以内なら通常強度
-    if drop_mm <= cfg.z_boost_release_mm:
-        return base
-
-    # 5mm以上下がったら最大強度
-    if drop_mm >= cfg.z_boost_full_drop_mm:
-        return max_ratio
-
-    # 1.5mm〜5mmの間は線形補間
-    denom = cfg.z_boost_full_drop_mm - cfg.z_boost_release_mm
-    if denom <= 1e-6:
-        return max_ratio
-
-    s = (drop_mm - cfg.z_boost_release_mm) / denom
-    return base + s * (max_ratio - base)
-
-
-def _start_log_session(cfg: AppConfig, mode: str):
-    """
-    30秒ログ開始。
-    analyze_stability.py で読める列構成に合わせる。
-    """
-    os.makedirs(os.path.dirname(cfg.log_csv_path), exist_ok=True)
-
-    file_exists = os.path.exists(cfg.log_csv_path)
-    log_file = open(cfg.log_csv_path, "a", newline="", encoding="utf-8")
-    writer = csv.writer(log_file)
-
-    if not file_exists:
-        writer.writerow(
-            [
-                "timestamp",
-                "mode",
-                "u_xy_px",
-                "v_xy_px",
-                "v_z_px",
-                "x_mm",
-                "y_mm",
-                "z_mm",
-                "center_x_mm",
-                "center_y_mm",
-                "center_z_mm",
-                "autd_target_x_mm",
-                "autd_target_y_mm",
-                "autd_target_z_mm",
-            ]
-        )
-
-    end_time = time.time() + cfg.log_duration_sec
-    print(f"[LOG] Start {cfg.log_duration_sec:.1f}s logging: mode={mode}")
-
-    return log_file, writer, end_time
-
-
-def _safe_close_camera(cam):
-    try:
-        cam.stop_acquisition()
-    except Exception:
-        pass
-
-    try:
-        cam.close_device()
-    except Exception:
-        pass
+from .runtime.display import (
+    DisplayControlState,
+    DisplayMetrics,
+    render_tracking_window,
+)
+from .runtime.logging import StabilityLogger
+from .runtime.input import is_key_pressed, update_base_position
 
 
 def run_tracking_app(cfg: AppConfig):
@@ -321,8 +111,8 @@ def run_tracking_app(cfg: AppConfig):
         frame0_raw_z = img_z.get_image_data_numpy()
     except Exception as e:
         print(f"[ERROR] Failed to get first camera frame: {e}")
-        _safe_close_camera(cam_xy)
-        _safe_close_camera(cam_z)
+        safe_close_camera(cam_xy)
+        safe_close_camera(cam_z)
         return
 
     if use_undistort:
@@ -390,8 +180,7 @@ def run_tracking_app(cfg: AppConfig):
     print("[INFO] Opening AUTD Controller...")
 
     sender = None
-    log_file = None
-    log_writer = None
+    logger = StabilityLogger(cfg)
 
     try:
         with Controller.open(
@@ -420,7 +209,7 @@ def run_tracking_app(cfg: AppConfig):
             current_radius = float(cfg.radius)
             current_intensity_ratio = float(cfg.static_intensity_ratio)
             target_intensity_ratio = float(cfg.static_intensity_ratio)
-            _sender_set_target(sender, cfg, home.x, home.y, home.z, home, current_radius, current_intensity_ratio)
+            set_tracking_target(sender, cfg, home.x, home.y, home.z, home, current_radius, current_intensity_ratio)
             sender.start()
 
             controller = PredictionPIDController(cfg)
@@ -441,15 +230,8 @@ def run_tracking_app(cfg: AppConfig):
                 z=home.z,
             )
 
-            roi_cx_xy, roi_cy_xy = W_xy // 2, H_xy // 2
-            roi_size_xy = cfg.roi_init_size
-
-            roi_cx_z, roi_cy_z = W_z // 2, H_z // 2
-            roi_size_z = cfg.roi_init_size
-
-            last_u_xy = W_xy / 2
-            last_v_xy = H_xy / 2
-            last_v_z = H_z / 2
+            tracker_xy = RoiBallTracker(W_xy, H_xy, cfg)
+            tracker_z = RoiBallTracker(W_z, H_z, cfg)
 
             last_target = Target3D(home.x, home.y, home.z)
 
@@ -464,12 +246,6 @@ def run_tracking_app(cfg: AppConfig):
 
             prev_loop_time = time.time()
             last_synced_pair_time = time.perf_counter()
-
-            log_session_active = False
-            log_session_mode = ""
-            log_session_end_time = 0.0
-            last_logged_xy_time = None
-            last_logged_z_time = None
 
             window_title = "Tracking App"
             cv2.namedWindow(window_title, cv2.WINDOW_NORMAL)
@@ -492,11 +268,11 @@ def run_tracking_app(cfg: AppConfig):
                 prev_loop_time = now_loop
 
                 # Key handling
-                if keyboard.is_pressed("esc"):
+                if is_key_pressed("esc"):
                     print("[INFO] ESC pressed. Exit.")
                     break
 
-                enter_pressed = keyboard.is_pressed("enter")
+                enter_pressed = is_key_pressed("enter")
                 if enter_pressed and not prev_enter_pressed:
                     tracking_active = not tracking_active
 
@@ -520,7 +296,7 @@ def run_tracking_app(cfg: AppConfig):
                         )
                         last_target = Target3D(home.x, home.y, home.z)
                         controller.reset(last_target)
-                        _sender_set_target(sender, cfg, home.x, home.y, home.z, home, current_radius, current_intensity_ratio)
+                        set_tracking_target(sender, cfg, home.x, home.y, home.z, home, current_radius, current_intensity_ratio)
 
                     time.sleep(0.2)
 
@@ -531,17 +307,17 @@ def run_tracking_app(cfg: AppConfig):
 
                     if not tracking_active:
                         last_target = Target3D(home.x, home.y, home.z)
-                        _sender_set_target(sender, cfg, home.x, home.y, home.z, home, current_radius, current_intensity_ratio)
+                        set_tracking_target(sender, cfg, home.x, home.y, home.z, home, current_radius, current_intensity_ratio)
 
                 if cfg.enable_radius_change:
                     radius_step = cfg.radius_change_speed_mm_s * dt_loop
 
                     # 右 or 上でradiusを大きくする
-                    if keyboard.is_pressed("right") or keyboard.is_pressed("up"):
+                    if is_key_pressed("right") or is_key_pressed("up"):
                         current_radius += radius_step
 
                     # 左 or 下でradiusを小さくする
-                    if keyboard.is_pressed("left") or keyboard.is_pressed("down"):
+                    if is_key_pressed("left") or is_key_pressed("down"):
                         current_radius -= radius_step
 
                     current_radius = float(
@@ -553,27 +329,14 @@ def run_tracking_app(cfg: AppConfig):
                     )
 
                 if cfg.log_enabled:
-                    log_trigger_pressed = keyboard.is_pressed(cfg.log_trigger_key)
+                    log_trigger_pressed = is_key_pressed(cfg.log_trigger_key)
 
-                    if log_trigger_pressed and not prev_log_trigger_pressed and not log_session_active:
-                        log_session_mode = "PID" if tracking_active else "FIXED"
-                        log_file, log_writer, log_session_end_time = _start_log_session(
-                            cfg,
-                            log_session_mode,
-                        )
-                        log_session_active = True
-                        last_logged_xy_time = None
-                        last_logged_z_time = None
+                    if log_trigger_pressed and not prev_log_trigger_pressed and not logger.active:
+                        logger.start("PID" if tracking_active else "FIXED")
 
                     prev_log_trigger_pressed = log_trigger_pressed
 
-                if log_session_active and time.time() >= log_session_end_time:
-                    log_session_active = False
-                    if log_file is not None:
-                        log_file.close()
-                        log_file = None
-                        log_writer = None
-                    print("[LOG] Finished logging.")
+                logger.stop_if_finished()
 
                 # Camera watchdog and software-synchronized frame pair
                 now_camera = time.perf_counter()
@@ -647,60 +410,15 @@ def run_tracking_app(cfg: AppConfig):
                     fps_start_time = now_fps
 
                 # Detection XY
-                x1_xy, y1_xy, x2_xy, y2_xy = clamp_roi(
-                    roi_cx_xy,
-                    roi_cy_xy,
-                    roi_size_xy,
-                    W_xy,
-                    H_xy,
-                    cfg,
-                )
-
-                det_xy, _ = track_ball_cv(
-                    frame_xy,
-                    (x1_xy, y1_xy, x2_xy, y2_xy),
-                    cfg,
-                )
-
-                detected_xy = det_xy is not None
-
+                det_xy = tracker_xy.detect(frame_xy)
+                detected_xy = det_xy.detected
                 u_xy = np.nan
                 v_xy = np.nan
                 x_mm = None
                 y_mm = None
 
                 if detected_xy:
-                    u_xy, v_xy, r_xy_px = det_xy
-                    
-                    # ROI中心を検出された球の中心へ移動
-                    roi_cx_xy, roi_cy_xy = int(u_xy), int(v_xy)
-
-                    # 元コードと同じROIサイズ更新
-                    desired_xy = int(2 * (2.5 * r_xy_px + cfg.roi_margin))
-                    roi_size_xy = int(0.7 * roi_size_xy + 0.3 * desired_xy)
-                    roi_size_xy = int(
-                        max(
-                            cfg.roi_min_size,
-                            min(cfg.roi_max_size, roi_size_xy),
-                        )
-                    )
-
-                    if do_display:
-                        color = (0, 255, 0) if tracking_active else (200, 200, 200)
-                        cv2.circle(
-                            frame_xy_bgr,
-                            (int(u_xy), int(v_xy)),
-                            int(max(2, r_xy_px)),
-                            color,
-                            2,
-                        )
-                        cv2.rectangle(
-                            frame_xy_bgr,
-                            (x1_xy, y1_xy),
-                            (x2_xy, y2_xy),
-                            (255, 255, 0),
-                            2,
-                        )
+                    u_xy, v_xy = det_xy.center
 
                     if use_affine:
                         uv_homo = np.array([[u_xy, v_xy, 1.0]], dtype=np.float32).T
@@ -710,94 +428,23 @@ def run_tracking_app(cfg: AppConfig):
                         x_mm = float(display_origin.x + xy_local[0])
                         y_mm = float(display_origin.y + xy_local[1])
 
-                else:
-                    roi_size_xy = int(
-                        min(
-                            cfg.roi_max_size,
-                            roi_size_xy * cfg.roi_expand_on_lost,
-                        )
-                    )
-
-                    if do_display:
-                        cv2.rectangle(
-                            frame_xy_bgr,
-                            (x1_xy, y1_xy),
-                            (x2_xy, y2_xy),
-                            (0, 255, 255),
-                            2,
-                        )
+                if do_display:
+                    draw_ball_detection(frame_xy_bgr, det_xy, tracking_active)
 
                 # Detection Z
-                x1_z, y1_z, x2_z, y2_z = clamp_roi(
-                    roi_cx_z,
-                    roi_cy_z,
-                    roi_size_z,
-                    W_z,
-                    H_z,
-                    cfg,
-                )
-
-                det_z, _ = track_ball_cv(
-                    frame_z,
-                    (x1_z, y1_z, x2_z, y2_z),
-                    cfg,
-                )
-
-                detected_z = det_z is not None
-
+                det_z = tracker_z.detect(frame_z)
+                detected_z = det_z.detected
                 v_z = np.nan
                 z_mm = None
 
                 if detected_z:
-                    u_z, v_z, r_z_px = det_z
-
-                    roi_cx_z, roi_cy_z = int(u_z), int(v_z)
-
-                    desired_z = int(2 * (2.5 * r_z_px + cfg.roi_margin))
-                    roi_size_z = int(0.7 * roi_size_z + 0.3 * desired_z)
-                    roi_size_z = int(
-                        max(
-                            cfg.roi_min_size,
-                            min(cfg.roi_max_size, roi_size_z),
-                        )
-                    )
-
-                    if do_display:
-                        color = (0, 255, 0) if tracking_active else (200, 200, 200)
-                        cv2.circle(
-                            frame_z_bgr,
-                            (int(u_z), int(v_z)),
-                            int(max(2, r_z_px)),
-                            color,
-                            2,
-                        )
-                        cv2.rectangle(
-                            frame_z_bgr,
-                            (x1_z, y1_z),
-                            (x2_z, y2_z),
-                            (255, 255, 0),
-                            2,
-                        )
+                    _, v_z = det_z.center
 
                     if use_z_model:
                         z_mm = float(z_a * v_z + z_b)
 
-                else:
-                    roi_size_z = int(
-                        min(
-                            cfg.roi_max_size,
-                            roi_size_z * cfg.roi_expand_on_lost,
-                        )
-                    )
-
-                    if do_display:
-                        cv2.rectangle(
-                            frame_z_bgr,
-                            (x1_z, y1_z),
-                            (x2_z, y2_z),
-                            (0, 255, 255),
-                            2,
-                        )
+                if do_display:
+                    draw_ball_detection(frame_z_bgr, det_z, tracking_active)
                 
                 if cfg.enable_fall_recovery and control_mode == "FALL_RECOVERY":
                     target_intensity_ratio = float(cfg.fall_recovery_intensity_ratio)
@@ -840,9 +487,7 @@ def run_tracking_app(cfg: AppConfig):
                     )
 
                     if meas.detected_xy or meas.detected_z:
-                        # ====================================================
                         # 1. RETURN_TO_HOME中は一時基準位置をゆっくりhomeへ戻す
-                        # ====================================================
                         if control_mode == "RETURN_TO_HOME":
                             return_setpoint = HomePosition(
                                 x=move_towards(
@@ -866,20 +511,16 @@ def run_tracking_app(cfg: AppConfig):
                         else:
                             control_home = home
 
-                        # ====================================================
                         # 2. まず通常PIDを計算
                         #    FALL_RECOVERY中は後でtargetを上書きする
-                        # ====================================================
                         target, debug = controller.update(meas, control_home)
 
                         vx_now = float(debug.vx)
                         vy_now = float(debug.vy)
                         vz_now = float(debug.vz)
 
-                        # ====================================================
                         # 3. NORMAL_HOLD / RETURN_TO_HOME中に落下検知したら
                         #    FALL_RECOVERYへ入る
-                        # ====================================================
                         if cfg.enable_fall_recovery:
                             if control_mode in ["NORMAL_HOLD", "RETURN_TO_HOME"]:
                                 if should_enter_fall_recovery(cfg, home.z, z_mm, vz_now):
@@ -888,9 +529,7 @@ def run_tracking_app(cfg: AppConfig):
 
                                     print("[RECOVERY] -> FALL_RECOVERY")
 
-                        # ====================================================
                         # 4. FALL_RECOVERY中は0.5秒だけ物体を追従
-                        # ====================================================
                         if control_mode == "FALL_RECOVERY":
                             elapsed_recovery = 0.0
                             if fall_recovery_start_time is not None:
@@ -981,9 +620,7 @@ def run_tracking_app(cfg: AppConfig):
                                     f"{return_setpoint.y:.1f}, {return_setpoint.z:.1f})"
                                 )
 
-                        # ====================================================
                         # 5. RETURN_TO_HOME完了判定
-                        # ====================================================
                         if control_mode == "RETURN_TO_HOME":
                             if is_return_home_done(
                                 cfg,
@@ -1015,7 +652,7 @@ def run_tracking_app(cfg: AppConfig):
 
                         last_target = target
 
-                        _sender_set_target(
+                        set_tracking_target(
                             sender,
                             cfg,
                             target.x,
@@ -1046,193 +683,44 @@ def run_tracking_app(cfg: AppConfig):
                             2,
                         )
 
-                # Logging
-                if log_session_active and log_writer is not None:
-                    # 同じフレームの重複ログを避ける
-                    should_log = (
-                        last_logged_xy_time != frame_xy_time
-                        or last_logged_z_time != frame_z_time
-                    )
-
-                    if should_log:
-                        last_logged_xy_time = frame_xy_time
-                        last_logged_z_time = frame_z_time
-
-                        log_writer.writerow(
-                            [
-                                f"{time.time():.4f}",
-                                log_session_mode,
-                                f"{u_xy:.2f}" if np.isfinite(u_xy) else "",
-                                f"{v_xy:.2f}" if np.isfinite(v_xy) else "",
-                                f"{v_z:.2f}" if np.isfinite(v_z) else "",
-                                f"{x_mm:.3f}" if x_mm is not None else "",
-                                f"{y_mm:.3f}" if y_mm is not None else "",
-                                f"{z_mm:.3f}" if z_mm is not None else "",
-                                f"{home.x:.3f}",
-                                f"{home.y:.3f}",
-                                f"{home.z:.3f}",
-                                f"{last_target.x:.3f}",
-                                f"{last_target.y:.3f}",
-                                f"{last_target.z:.3f}",
-                            ]
-                        )
+                logger.write(
+                    frame_xy_time=frame_xy_time,
+                    frame_z_time=frame_z_time,
+                    u_xy=u_xy,
+                    v_xy=v_xy,
+                    v_z=v_z,
+                    x_mm=x_mm,
+                    y_mm=y_mm,
+                    z_mm=z_mm,
+                    home=home,
+                    target=last_target,
+                )
                 
-                now = time.time()
-                if now - fps_start_time >= 1.0:
-                    elapsed = now - fps_start_time
-                    loop_display_fps = loop_fps_count / elapsed
-                    new_xy_display_fps = new_xy_fps_count / elapsed
-                    new_z_display_fps = new_z_fps_count / elapsed
-
-                    fps_start_time = now
-                    loop_fps_count = 0
-                    new_xy_fps_count = 0
-                    new_z_fps_count = 0
-
-                # Display
-                status_text = "ACTIVE" if tracking_active else "WAIT (Press ENTER)"
-                status_color = (0, 255, 0) if tracking_active else (0, 165, 255)
-
                 if do_display:
-                    cv2.putText(
+                    exit_requested = render_tracking_window(
+                        window_title,
                         frame_xy_bgr,
-                        f"Loop FPS: {loop_display_fps:.1f} | Pair FPS: {new_xy_display_fps:.1f} | Sync: {frame_sync_skew * 1000.0:.2f} ms | AUTD FPS: {sender.display_fps:.1f} | {method}",
-                        (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (255, 255, 255),
-                        2,
-                    )
-                    cv2.putText(
-                        frame_xy_bgr,
-                        f"Ref Point: ({home.x - display_origin.x:.1f}, {home.y - display_origin.y:.1f}, {home.z - display_origin.z + 400.0:.1f})",
-                        (10, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 255, 255),
-                        2,
-                    )
-                    cv2.putText(
-                        frame_xy_bgr,
-                        # f"RADIUS: {current_radius:.1f} mm",
-                        f"return setpoint: ({return_setpoint.x:.1f}, {return_setpoint.y:.1f}, {return_setpoint.z:.1f})",
-                        (10, 90),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 255, 255),
-                        2,
-                    )
-                    cv2.putText(
-                        frame_xy_bgr,
-                        f"INTENSITY: {current_intensity_ratio:.3f}",
-                        (10, 120),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 255, 255),
-                        2,
-                    )
-                    cv2.putText(
-                        frame_xy_bgr,
-                        f"MODE: {control_mode}",
-                        (10, 150),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 255, 255) if control_mode == "FALL_RECOVERY" else (255, 255, 255),
-                        2,
-                    )
-                    cv2.putText(
-                        frame_xy_bgr,
-                        f"STATUS: {status_text}",
-                        (10, H_xy - 20),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8,
-                        status_color,
-                        2,
-                    )
-
-                    cv2.putText(
                         frame_z_bgr,
-                        f"Loop FPS: {loop_display_fps:.1f} | NewZ FPS: {new_z_display_fps:.1f} | v_z={v_z:.1f}",
-                        (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (255, 255, 255),
-                        2,
+                        DisplayMetrics(
+                            loop_fps=loop_display_fps,
+                            pair_fps=new_xy_display_fps,
+                            z_fps=new_z_display_fps,
+                            sync_skew_sec=frame_sync_skew,
+                            autd_fps=sender.display_fps,
+                            method=method,
+                            v_z_px=v_z,
+                        ),
+                        DisplayControlState(
+                            tracking_active=tracking_active,
+                            control_mode=control_mode,
+                            home=home,
+                            origin=display_origin,
+                            return_setpoint=return_setpoint,
+                            radius=current_radius,
+                            intensity_ratio=current_intensity_ratio,
+                        ),
                     )
-                    cv2.putText(
-                        frame_z_bgr,
-                        f"Ref Point: ({home.x - display_origin.x:.1f}, {home.y - display_origin.y:.1f}, {home.z - display_origin.z + 400.0:.1f})",
-                        (10, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 255, 255),
-                        2,
-                    )
-                    cv2.putText(
-                        frame_z_bgr,
-                        f"RADIUS: {current_radius:.1f} mm",
-                        (10, 90),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 255, 255),
-                        2,
-                    )
-                    cv2.putText(
-                        frame_z_bgr,
-                        f"INTENSITY: {current_intensity_ratio:.3f}",
-                        (10, 120),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 255, 255),
-                        2,
-                    )
-                    cv2.putText(
-                        frame_z_bgr,
-                        f"MODE: {control_mode}",
-                        (10, 150),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 255, 255) if control_mode == "FALL_RECOVERY" else (255, 255, 255),
-                        2,
-                    )
-                    cv2.putText(
-                        frame_z_bgr,
-                        f"STATUS: {status_text}",
-                        (10, H_z - 20),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8,
-                        status_color,
-                        2,
-                    )
-
-                    display_h = max(frame_xy_bgr.shape[0], frame_z_bgr.shape[0])
-                    display_w = max(frame_xy_bgr.shape[1], frame_z_bgr.shape[1])
-
-                    frame_xy_disp = cv2.resize(
-                        frame_xy_bgr,
-                        (display_w, display_h),
-                        interpolation=cv2.INTER_LINEAR,
-                    )
-                    frame_z_disp = cv2.resize(
-                        frame_z_bgr,
-                        (display_w, display_h),
-                        interpolation=cv2.INTER_LINEAR,
-                    )
-
-                    tiled = np.hstack([frame_xy_disp, frame_z_disp])
-                    split_x = frame_xy_disp.shape[1]
-
-                    cv2.line(
-                        tiled,
-                        (split_x, 0),
-                        (split_x, tiled.shape[0] - 1),
-                        (255, 255, 255),
-                        1,
-                    )
-
-                    cv2.imshow(window_title, tiled)
-
-                    if cv2.waitKey(1) & 0xFF == 27:
+                    if exit_requested:
                         break
 
     except KeyboardInterrupt:
@@ -1244,11 +732,7 @@ def run_tracking_app(cfg: AppConfig):
     finally:
         print("[INFO] stopping...")
 
-        if log_file is not None:
-            try:
-                log_file.close()
-            except Exception:
-                pass
+        logger.close()
 
         running_event.clear()
 
@@ -1264,8 +748,8 @@ def run_tracking_app(cfg: AppConfig):
             except Exception:
                 pass
 
-        _safe_close_camera(cam_xy)
-        _safe_close_camera(cam_z)
+        safe_close_camera(cam_xy)
+        safe_close_camera(cam_z)
 
         cv2.destroyAllWindows()
 

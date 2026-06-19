@@ -379,3 +379,16 @@ def camera_capture_loop(
         except Exception as e:
             print(f"[CAM {role} Thread Error] {e}")
             time.sleep(0.01)
+
+
+def safe_close_camera(cam):
+    """Best-effort shutdown shared by normal exit and initialization errors."""
+    try:
+        cam.stop_acquisition()
+    except Exception:
+        pass
+
+    try:
+        cam.close_device()
+    except Exception:
+        pass

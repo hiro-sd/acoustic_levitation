@@ -5,7 +5,6 @@ from typing import Tuple
 import numpy as np
 
 
-# =========================================================
 # 回転済み side camera の CSV から
 # v_mean -> z_mm の線形変換を推定して JSON 保存する
 #
@@ -15,7 +14,6 @@ import numpy as np
 #
 # モデル:
 #   z_mm = a * v + b
-# =========================================================
 
 CSV_PATH = "./tracking/z_calib_points.csv"
 OUT_JSON = "./tracking/affine_v_to_z.json"

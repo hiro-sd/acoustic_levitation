@@ -7,6 +7,7 @@ import numpy as np
 from pyautd3 import AUTD3, FociSTM, Hz, OutputMask, Static
 
 from .config import AppConfig
+from .models import HomePosition
 
 
 def make_autd_arrangement():
@@ -307,3 +308,34 @@ class AutdSender:
                 fps_frame_count = 0
 
         print("[THREAD] AUTD Control Thread Stopped.")
+
+
+def set_tracking_target(
+    sender: AutdSender,
+    cfg: AppConfig,
+    target_x: float,
+    target_y: float,
+    target_z: float,
+    home: HomePosition,
+    radius: float | None = None,
+    intensity_ratio: float | None = None,
+):
+    """Send a target while keeping OutputMask-specific arguments out of app.py."""
+    if cfg.use_output_mask:
+        sender.set_target(
+            target_x,
+            target_y,
+            target_z,
+            home.x,
+            home.y,
+            radius=radius,
+            intensity_ratio=intensity_ratio,
+        )
+    else:
+        sender.set_target(
+            target_x,
+            target_y,
+            target_z,
+            radius=radius,
+            intensity_ratio=intensity_ratio,
+        )

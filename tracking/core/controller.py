@@ -1,64 +1,7 @@
-from dataclasses import dataclass
 import numpy as np
 
 from .config import AppConfig
-
-
-@dataclass
-class HomePosition:
-    x: float
-    y: float
-    z: float
-
-
-@dataclass
-class Measurement3D:
-    """
-    カメラから得た現在の測定値。
-    XYとZは別カメラなので、検出有無と時刻を分ける。
-    """
-    detected_xy: bool
-    detected_z: bool
-
-    x: float | None = None
-    y: float | None = None
-    z: float | None = None
-
-    t_xy: float | None = None
-    t_z: float | None = None
-
-
-@dataclass
-class Target3D:
-    x: float
-    y: float
-    z: float
-
-
-@dataclass
-class ControllerDebug:
-    """
-    ログや画面表示に使うための内部状態。
-    """
-    current_x: float | None = None
-    current_y: float | None = None
-    current_z: float | None = None
-
-    vx: float = 0.0
-    vy: float = 0.0
-    vz: float = 0.0
-
-    x_pred: float | None = None
-    y_pred: float | None = None
-    z_pred: float | None = None
-
-    error_x: float | None = None
-    error_y: float | None = None
-    error_z: float | None = None
-
-    integral_x: float = 0.0
-    integral_y: float = 0.0
-    integral_z: float = 0.0
+from .models import ControllerDebug, HomePosition, Measurement3D, Target3D
 
 
 class PredictionPIDController:
