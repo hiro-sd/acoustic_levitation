@@ -94,7 +94,6 @@ class AppConfig:
     # Z intensity boost
     enable_z_intensity_boost: bool = True
 
-    intensity_base_ratio: float = 0.90
     intensity_max_ratio: float = 1.00
 
     # zがこの値以上下がったら最大ブースト

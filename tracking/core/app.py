@@ -9,7 +9,6 @@ import numpy as np
 
 from pyautd3 import Controller, Silencer, Static
 from pyautd3.link.twincat import TwinCAT
-from ultralytics import cfg
 
 from .config import AppConfig
 from .vision import (
@@ -181,7 +180,7 @@ def compute_z_intensity_boost_ratio(
     - zが home_z から 5mm以上下がったら max
     - その間は線形補間
     """
-    base = float(cfg.intensity_base_ratio)
+    base = float(cfg.static_intensity_ratio)
     max_ratio = float(cfg.intensity_max_ratio)
 
     if z_mm is None:
@@ -419,8 +418,8 @@ def run_tracking_app(cfg: AppConfig):
 
             sender = AutdSender(autd, cfg)
             current_radius = float(cfg.radius)
-            current_intensity_ratio = float(cfg.intensity_base_ratio)
-            target_intensity_ratio = float(cfg.intensity_base_ratio)
+            current_intensity_ratio = float(cfg.static_intensity_ratio)
+            target_intensity_ratio = float(cfg.static_intensity_ratio)
             _sender_set_target(sender, cfg, home.x, home.y, home.z, home, current_radius, current_intensity_ratio)
             sender.start()
 
@@ -811,7 +810,7 @@ def run_tracking_app(cfg: AppConfig):
                     )
 
                 else:
-                    target_intensity_ratio = float(cfg.intensity_base_ratio)
+                    target_intensity_ratio = float(cfg.static_intensity_ratio)
 
                 current_intensity_ratio = (
                     cfg.intensity_lpf_alpha * current_intensity_ratio
@@ -821,7 +820,7 @@ def run_tracking_app(cfg: AppConfig):
                 current_intensity_ratio = float(
                     np.clip(
                         current_intensity_ratio,
-                        cfg.intensity_base_ratio,
+                        cfg.static_intensity_ratio,
                         cfg.intensity_max_ratio,
                     )
                 )

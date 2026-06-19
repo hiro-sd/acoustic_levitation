@@ -23,7 +23,7 @@ if __name__ == "__main__":
         z_max=550.0,
 
         enable_z_intensity_boost=True,
-        intensity_base_ratio=0.90,
+        static_intensity_ratio=0.90,
         intensity_max_ratio=0.95,
 
         enable_fall_recovery=True,

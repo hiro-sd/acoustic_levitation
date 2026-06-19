@@ -34,7 +34,6 @@ if __name__ == "__main__":
 
         enable_z_intensity_boost=True,
 
-        intensity_base_ratio=0.90,
         intensity_max_ratio=1.00,
 
         z_boost_full_drop_mm=8.0,
