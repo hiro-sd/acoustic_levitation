@@ -314,9 +314,11 @@ def run_tracking_app(cfg: AppConfig):
     # 最初の1フレームで画像サイズとremap mapを作る
     try:
         cam_xy.get_image(img_xy)
+        frame0_xy_time = time.perf_counter()
         frame0_raw_xy = img_xy.get_image_data_numpy()
 
         cam_z.get_image(img_z)
+        frame0_z_time = time.perf_counter()
         frame0_raw_z = img_z.get_image_data_numpy()
     except Exception as e:
         print(f"[ERROR] Failed to get first camera frame: {e}")
@@ -341,9 +343,9 @@ def run_tracking_app(cfg: AppConfig):
     H_xy, W_xy = frame0_xy.shape[:2]
     H_z, W_z = frame0_z.shape[:2]
 
-    frame_buffer = SharedFrameBuffer()
-    frame_buffer.set_xy(frame0_xy.copy(), time.time())
-    frame_buffer.set_z(frame0_z.copy(), time.time())
+    frame_buffer = SharedFrameBuffer(maxlen=cfg.camera_sync_buffer_size)
+    frame_buffer.set_xy(frame0_xy.copy(), frame0_xy_time)
+    frame_buffer.set_z(frame0_z.copy(), frame0_z_time)
 
     running_event = threading.Event()
     running_event.set()
@@ -461,9 +463,8 @@ def run_tracking_app(cfg: AppConfig):
             new_z_display_fps = 0.0
             frame_count = 0
 
-            prev_frame_xy_time = 0.0
-            prev_frame_z_time = 0.0
             prev_loop_time = time.time()
+            last_synced_pair_time = time.perf_counter()
 
             log_session_active = False
             log_session_mode = ""
@@ -575,24 +576,46 @@ def run_tracking_app(cfg: AppConfig):
                         log_writer = None
                     print("[LOG] Finished logging.")
 
-                # Latest frames
-                frame_xy, frame_xy_time = frame_buffer.get_xy()
-                frame_z, frame_z_time = frame_buffer.get_z()
+                # Camera watchdog and software-synchronized frame pair
+                now_camera = time.perf_counter()
+                age_xy, age_z = frame_buffer.get_frame_ages(now_camera)
 
-                if frame_xy is None or frame_z is None:
+                if (
+                    age_xy > cfg.camera_frame_timeout_sec
+                    or age_z > cfg.camera_frame_timeout_sec
+                ):
+                    sender.stop()
+                    raise RuntimeError(
+                        "Camera watchdog timeout: "
+                        f"XY age={age_xy:.3f}s, Z age={age_z:.3f}s"
+                    )
+
+                synced_pair = frame_buffer.get_synced_pair(
+                    cfg.camera_sync_tolerance_sec
+                )
+
+                if synced_pair is None:
+                    if now_camera - last_synced_pair_time > cfg.camera_frame_timeout_sec:
+                        sender.stop()
+                        raise RuntimeError(
+                            "Camera synchronization timeout: no frame pair within "
+                            f"{cfg.camera_sync_tolerance_sec * 1000.0:.1f} ms"
+                        )
                     time.sleep(0.001)
                     continue
 
-                new_xy = frame_xy_time != prev_frame_xy_time
-                new_z = frame_z_time != prev_frame_z_time
+                (
+                    frame_xy,
+                    frame_xy_time,
+                    frame_z,
+                    frame_z_time,
+                    frame_sync_skew,
+                ) = synced_pair
+                last_synced_pair_time = now_camera
 
-                if new_xy:
-                    new_xy_fps_count += 1
-                    prev_frame_xy_time = frame_xy_time
-
-                if new_z:
-                    new_z_fps_count += 1
-                    prev_frame_z_time = frame_z_time
+                # get_synced_pair() は消費済みの新規フレームだけを返す。
+                new_xy_fps_count += 1
+                new_z_fps_count += 1
 
                 frame_count += 1
                 loop_fps_count += 1
@@ -683,8 +706,10 @@ def run_tracking_app(cfg: AppConfig):
                     if use_affine:
                         uv_homo = np.array([[u_xy, v_xy, 1.0]], dtype=np.float32).T
                         xy_local = (A_affine @ uv_homo).flatten()
-                        x_mm = float(home.x + xy_local[0])
-                        y_mm = float(home.y + xy_local[1])
+                        # カメラ座標変換は移動する目標位置 home ではなく、
+                        # キャリブレーション時の固定AUTD原点を基準にする。
+                        x_mm = float(display_origin.x + xy_local[0])
+                        y_mm = float(display_origin.y + xy_local[1])
 
                 else:
                     roi_size_xy = int(
@@ -806,8 +831,8 @@ def run_tracking_app(cfg: AppConfig):
                 # Control
                 if tracking_active:
                     meas = Measurement3D(
-                        detected_xy=detected_xy and x_mm is not None and y_mm is not None and new_xy,
-                        detected_z=detected_z and z_mm is not None and new_z,
+                        detected_xy=detected_xy and x_mm is not None and y_mm is not None,
+                        detected_z=detected_z and z_mm is not None,
                         x=x_mm,
                         y=y_mm,
                         z=z_mm,
@@ -1072,7 +1097,7 @@ def run_tracking_app(cfg: AppConfig):
                 if do_display:
                     cv2.putText(
                         frame_xy_bgr,
-                        f"Loop FPS: {loop_display_fps:.1f} | NewXY FPS: {new_xy_display_fps:.1f} | AUTD FPS: {sender.display_fps:.1f} | {method}",
+                        f"Loop FPS: {loop_display_fps:.1f} | Pair FPS: {new_xy_display_fps:.1f} | Sync: {frame_sync_skew * 1000.0:.2f} ms | AUTD FPS: {sender.display_fps:.1f} | {method}",
                         (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.6,

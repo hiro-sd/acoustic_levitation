@@ -21,6 +21,13 @@ class AppConfig:
     rotate_z_code: int = cv2.ROTATE_90_CLOCKWISE
     exposure_us: int = 5000
 
+    # Software synchronization / camera watchdog
+    # 2台の取得時刻差がこの値以内のフレームだけを1組として処理する。
+    camera_sync_tolerance_sec: float = 0.010
+    camera_sync_buffer_size: int = 8
+    # どちらかのカメラから画像が届かない状態が続いたら安全停止する。
+    camera_frame_timeout_sec: float = 0.5
+
     # cv settings
     use_otsu: bool = False
     fixed_thresh: int = 160

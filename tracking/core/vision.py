@@ -3,6 +3,7 @@ import sys
 import threading
 import time
 import json
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -258,39 +259,86 @@ def track_ball_cv(frame_rgb: np.ndarray, roi_rect, cfg: AppConfig):
 @dataclass
 class SharedFrameBuffer:
     """
-    2台カメラスレッドから最新フレームを受け渡すためのクラス。
-    これで global latest_frame_xy などを減らす。
+    2台のカメラスレッドからフレームを受け取り、撮影時刻が近い組を作る。
+
+    ソフトウェア同期なので露光開始そのものは一致させられないが、短い
+    バッファ内から時刻差が最小の組だけをメインループへ渡す。古すぎて
+    組にできないフレームは破棄する。
     """
-    latest_frame_xy: np.ndarray | None = None
-    latest_frame_z: np.ndarray | None = None
-    latest_frame_xy_time: float = 0.0
-    latest_frame_z_time: float = 0.0
+    maxlen: int = 8
 
     def __post_init__(self):
-        self.xy_lock = threading.Lock()
-        self.z_lock = threading.Lock()
+        self.maxlen = max(1, int(self.maxlen))
+        self._lock = threading.Lock()
+        self._xy_frames = deque(maxlen=self.maxlen)
+        self._z_frames = deque(maxlen=self.maxlen)
+        self._latest_xy_time = 0.0
+        self._latest_z_time = 0.0
 
     def set_xy(self, frame: np.ndarray, t: float):
-        with self.xy_lock:
-            self.latest_frame_xy = frame
-            self.latest_frame_xy_time = t
+        with self._lock:
+            self._xy_frames.append((float(t), frame))
+            self._latest_xy_time = float(t)
 
     def set_z(self, frame: np.ndarray, t: float):
-        with self.z_lock:
-            self.latest_frame_z = frame
-            self.latest_frame_z_time = t
+        with self._lock:
+            self._z_frames.append((float(t), frame))
+            self._latest_z_time = float(t)
 
-    def get_xy(self):
-        with self.xy_lock:
-            if self.latest_frame_xy is None:
-                return None, self.latest_frame_xy_time
-            return self.latest_frame_xy.copy(), self.latest_frame_xy_time
+    def get_synced_pair(self, max_skew_sec: float):
+        """
+        バッファ内で時刻差が最小のXY/Zフレームを1組だけ返す。
 
-    def get_z(self):
-        with self.z_lock:
-            if self.latest_frame_z is None:
-                return None, self.latest_frame_z_time
-            return self.latest_frame_z.copy(), self.latest_frame_z_time
+        返したフレームと、それ以前のフレームは消費する。同じ画像を
+        メインループで複数回処理しない。
+        """
+        max_skew_sec = max(0.0, float(max_skew_sec))
+
+        with self._lock:
+            while self._xy_frames and self._z_frames:
+                best_xy_idx = 0
+                best_z_idx = 0
+                best_skew = float("inf")
+
+                for xy_idx, (t_xy, _) in enumerate(self._xy_frames):
+                    for z_idx, (t_z, _) in enumerate(self._z_frames):
+                        skew = abs(t_xy - t_z)
+                        if skew < best_skew:
+                            best_xy_idx = xy_idx
+                            best_z_idx = z_idx
+                            best_skew = skew
+
+                if best_skew <= max_skew_sec:
+                    t_xy, frame_xy = self._xy_frames[best_xy_idx]
+                    t_z, frame_z = self._z_frames[best_z_idx]
+
+                    for _ in range(best_xy_idx + 1):
+                        self._xy_frames.popleft()
+                    for _ in range(best_z_idx + 1):
+                        self._z_frames.popleft()
+
+                    return (
+                        frame_xy.copy(),
+                        t_xy,
+                        frame_z.copy(),
+                        t_z,
+                        best_skew,
+                    )
+
+                # 最古のフレームは今後到着する相手とも同期しにくいため破棄する。
+                if self._xy_frames[0][0] < self._z_frames[0][0]:
+                    self._xy_frames.popleft()
+                else:
+                    self._z_frames.popleft()
+
+            return None
+
+    def get_frame_ages(self, now: float):
+        """各カメラで最後に画像を受信してからの経過時間を返す。"""
+        with self._lock:
+            age_xy = float("inf") if self._latest_xy_time <= 0 else now - self._latest_xy_time
+            age_z = float("inf") if self._latest_z_time <= 0 else now - self._latest_z_time
+        return age_xy, age_z
 
 
 def camera_capture_loop(
@@ -311,6 +359,8 @@ def camera_capture_loop(
     while running_event.is_set():
         try:
             cam.get_image(img)
+            # get_image完了直後を取得時刻とし、後段の画像処理時間を含めない。
+            now_t = time.perf_counter()
             frame = img.get_image_data_numpy()
 
             if use_undistort:
@@ -318,8 +368,6 @@ def camera_capture_loop(
 
             if role == "z" and cfg.rotate_z_frame:
                 frame = rotate_frame_if_needed(frame, True, cfg.rotate_z_code)
-
-            now_t = time.time()
 
             if role == "xy":
                 frame_buffer.set_xy(frame, now_t)
