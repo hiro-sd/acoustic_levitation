@@ -6,8 +6,8 @@ import cv2
 class AppConfig:
 
     # paths
-    affine_xy_json: str = "./tracking/ball1_calibration_data/affine_uv_to_xy.json"
-    affine_z_json: str = "./tracking/ball1_calibration_data/affine_v_to_z.json"
+    affine_xy_json: str = "./tracking/calibration/ball1_calibration_data/affine_uv_to_xy.json"
+    affine_z_json: str = "./tracking/calibration/ball1_calibration_data/affine_v_to_z.json"
 
     intrinsic_xy_npz: str = "./tracking/calibration/intrinsic_charuco_cam1.npz"
     intrinsic_z_npz: str = "./tracking/calibration/intrinsic_charuco_cam2.npz"
