@@ -59,8 +59,8 @@ def render_tracking_window(
 
     _put(
         frame_xy,
-        f"Loop FPS: {metrics.loop_fps:.1f} | Pair FPS: {metrics.pair_fps:.1f} | "
-        f"Sync: {metrics.sync_skew_sec * 1000.0:.2f} ms | "
+        f"Loop FPS: {metrics.loop_fps:.1f} | NewXY FPS: {metrics.pair_fps:.1f} | "
+        # f"Sync: {metrics.sync_skew_sec * 1000.0:.2f} ms | "
         f"AUTD FPS: {metrics.autd_fps:.1f} | {metrics.method}",
         30,
     )

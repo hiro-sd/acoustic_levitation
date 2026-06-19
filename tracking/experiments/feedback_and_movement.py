@@ -12,6 +12,7 @@ if __name__ == "__main__":
     cfg = AppConfig(
         radius=23.5,
         default_z=400.0,
+        static_intensity_ratio=0.9,
 
         kp_xy=0.3,
         kd_xy=0.05,
