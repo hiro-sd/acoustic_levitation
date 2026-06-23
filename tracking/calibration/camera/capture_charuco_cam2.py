@@ -32,7 +32,7 @@ class CaptureCam2Settings:
     exposure_us: int = 10000
     rotate_z_frame: bool = True
     rotate_z_code: int = cv2.ROTATE_90_CLOCKWISE
-    max_images: int = 40
+    max_images: int = 20
     auto_interval_sec: float = 5.0
     preview_width_px: int = 640
     preview_height_px: int = 480

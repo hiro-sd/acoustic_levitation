@@ -180,3 +180,4 @@ tracking/datasets/test/images/
 
 # calibration imgs
 tracking/calibration/stereo_images
+tracking/calibration/intrinsic_images
