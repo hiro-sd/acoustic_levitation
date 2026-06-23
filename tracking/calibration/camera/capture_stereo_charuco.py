@@ -35,8 +35,10 @@ class CaptureSettings:
     exposure_us: int = 10000
     rotate_z_frame: bool = True
     rotate_z_code: int = cv2.ROTATE_90_CLOCKWISE
-    max_pairs: int = 60
+    max_pairs: int = 20
     auto_interval_sec: float = 0.0
+    preview_width_px: int = 640
+    preview_height_px: int = 480
     output_dir: str = str(TRACKING_ROOT / "calibration" / "stereo_images" / "charuco")
 
 
@@ -82,24 +84,34 @@ def _software_trigger_pair(cam_xy, img_xy, cam_z, img_z):
     )
 
 
-def _make_preview(frame_xy: np.ndarray, frame_z: np.ndarray, text: str):
-    h_xy, w_xy = frame_xy.shape[:2]
-    h_z, w_z = frame_z.shape[:2]
-    display_h = min(max(h_xy, h_z), 720)
-    scale_xy = display_h / h_xy
-    scale_z = display_h / h_z
-
+def _make_preview(
+    frame_xy: np.ndarray,
+    frame_z: np.ndarray,
+    text: str,
+    settings: CaptureSettings,
+):
+    preview_size = (
+        int(settings.preview_width_px),
+        int(settings.preview_height_px),
+    )
     xy_disp = cv2.resize(
         frame_xy,
-        (int(w_xy * scale_xy), display_h),
+        preview_size,
         interpolation=cv2.INTER_LINEAR,
     )
     z_disp = cv2.resize(
         frame_z,
-        (int(w_z * scale_z), display_h),
+        preview_size,
         interpolation=cv2.INTER_LINEAR,
     )
     tiled = np.hstack([xy_disp, z_disp])
+    cv2.line(
+        tiled,
+        (settings.preview_width_px, 0),
+        (settings.preview_width_px, settings.preview_height_px - 1),
+        (255, 255, 255),
+        1,
+    )
     cv2.putText(
         tiled,
         text,
@@ -226,7 +238,7 @@ def main():
                 f"skew {abs(t_xy - t_z) * 1000.0:.2f} ms | "
                 f"auto {'ON' if auto_capture else 'OFF'}"
             )
-            cv2.imshow(window_name, _make_preview(frame_xy, frame_z, text))
+            cv2.imshow(window_name, _make_preview(frame_xy, frame_z, text, settings))
 
             now = time.perf_counter()
             should_save = False
