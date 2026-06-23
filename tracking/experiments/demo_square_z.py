@@ -38,7 +38,7 @@ if __name__ == "__main__":
         demo_xy_speed_mm_s=10.0,
         demo_z_min_mm=340.0,
         demo_z_max_mm=430.0,
-        demo_z_corner_mm=400.0,
+        demo_z_period_sec=6.0,
 
         enable_base_move=False,
         use_gravity_prediction_z=True,
