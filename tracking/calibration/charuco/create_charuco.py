@@ -22,7 +22,8 @@ OUT_HEIGHT_PX = 1400
 MARGIN_PX = 40
 
 # 出力先
-OUTPUT_DIR = Path("./tracking/calibration/charuco_board_output")
+SCRIPT_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = SCRIPT_DIR / "charuco_board_output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PNG = OUTPUT_DIR / "charuco_board_7x5.png"
 OUTPUT_INFO = OUTPUT_DIR / "charuco_board_7x5_info.txt"
@@ -33,19 +34,36 @@ def main():
     dictionary = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
 
     # ChArUcoボード生成
-    board = cv2.aruco.CharucoBoard(
-        (SQUARES_X, SQUARES_Y),
-        SQUARE_LENGTH_MM,
-        MARKER_LENGTH_MM,
-        dictionary
-    )
+    if hasattr(cv2.aruco, "CharucoBoard"):
+        board = cv2.aruco.CharucoBoard(
+            (SQUARES_X, SQUARES_Y),
+            SQUARE_LENGTH_MM,
+            MARKER_LENGTH_MM,
+            dictionary,
+        )
+    else:
+        # 古いOpenCV向けの互換パス
+        board = cv2.aruco.CharucoBoard_create(
+            SQUARES_X,
+            SQUARES_Y,
+            SQUARE_LENGTH_MM,
+            MARKER_LENGTH_MM,
+            dictionary,
+        )
 
     # 画像生成
-    board_img = board.generateImage(
-        (OUT_WIDTH_PX, OUT_HEIGHT_PX),
-        marginSize=MARGIN_PX,
-        borderBits=1
-    )
+    if hasattr(board, "generateImage"):
+        board_img = board.generateImage(
+            (OUT_WIDTH_PX, OUT_HEIGHT_PX),
+            marginSize=MARGIN_PX,
+            borderBits=1,
+        )
+    else:
+        board_img = board.draw(
+            (OUT_WIDTH_PX, OUT_HEIGHT_PX),
+            marginSize=MARGIN_PX,
+            borderBits=1,
+        )
 
     # 保存
     cv2.imwrite(str(OUTPUT_PNG), board_img)
