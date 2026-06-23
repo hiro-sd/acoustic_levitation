@@ -42,6 +42,7 @@ from .runtime.display import (
 )
 from .runtime.logging import StabilityLogger
 from .runtime.input import is_key_pressed, update_base_position
+from .runtime.demo import SquareZDemo
 
 
 def run_tracking_app(cfg: AppConfig):
@@ -218,9 +219,12 @@ def run_tracking_app(cfg: AppConfig):
             # 4. Runtime state
             tracking_active = False
             prev_enter_pressed = False
+            prev_demo_toggle_pressed = False
             prev_log_trigger_pressed = False
 
             control_mode = "NORMAL_HOLD"
+            demo_active = False
+            demo = SquareZDemo(cfg, display_origin)
 
             fall_recovery_start_time = None
 
@@ -256,6 +260,8 @@ def run_tracking_app(cfg: AppConfig):
             if cfg.enable_base_move:
                 print("  Use [Arrow keys] to move base XY.")
                 print("  Use [PageUp/PageDown] to move base Z.")
+            if cfg.enable_auto_demo:
+                print(f"  Press [{cfg.demo_toggle_key.upper()}] to START/STOP square-Z demo.")
             if cfg.log_enabled:
                 print(f"  Press [{cfg.log_trigger_key.upper()}] to START {cfg.log_duration_sec:.0f}s logging.")
             print("  Press [ESC] to EXIT and STOP ultrasound.")
@@ -283,6 +289,8 @@ def run_tracking_app(cfg: AppConfig):
                         print("[INFO] >>> TRACKING PAUSED: Return to initial base position <<<")
                         control_mode = "NORMAL_HOLD"
                         fall_recovery_start_time = None
+                        demo_active = False
+                        demo.reset()
 
                         home = HomePosition(
                             x=float(display_origin.x),
@@ -302,7 +310,30 @@ def run_tracking_app(cfg: AppConfig):
 
                 prev_enter_pressed = enter_pressed
 
-                if cfg.enable_base_move:
+                if cfg.enable_auto_demo:
+                    demo_toggle_pressed = is_key_pressed(cfg.demo_toggle_key)
+
+                    if demo_toggle_pressed and not prev_demo_toggle_pressed:
+                        demo_active = not demo_active
+                        demo.reset()
+
+                        if demo_active:
+                            print("[DEMO] Square-Z demo started.")
+                        else:
+                            print("[DEMO] Square-Z demo stopped.")
+
+                    prev_demo_toggle_pressed = demo_toggle_pressed
+
+                if cfg.enable_auto_demo and demo_active and tracking_active:
+                    home = demo.update(dt_loop)
+                    control_mode = "NORMAL_HOLD"
+                    return_setpoint = HomePosition(
+                        x=home.x,
+                        y=home.y,
+                        z=home.z,
+                    )
+
+                elif cfg.enable_base_move:
                     home = update_base_position(home, cfg, dt_loop)
 
                     if not tracking_active:
@@ -713,6 +744,7 @@ def run_tracking_app(cfg: AppConfig):
                         DisplayControlState(
                             tracking_active=tracking_active,
                             control_mode=control_mode,
+                            demo_active=demo_active,
                             home=home,
                             origin=display_origin,
                             return_setpoint=return_setpoint,

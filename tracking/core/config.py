@@ -65,6 +65,15 @@ class AppConfig:
     base_move_speed_mm_s: float = 50.0
     base_z_move_speed_mm_s: float = 50.0
 
+    # Automatic demo trajectory for the circular STM center.
+    # demo_toggle_key を押すと、固定AUTD原点を中心にXYは四角形、Zは上下動する。
+    enable_auto_demo: bool = False
+    demo_toggle_key: str = "d"
+    demo_square_size_mm: float = 60.0
+    demo_xy_speed_mm_s: float = 20.0
+    demo_z_amplitude_mm: float = 20.0
+    demo_z_period_sec: float = 4.0
+
     # outputmask settings
     use_output_mask: bool = False
     output_mask_radius_mm: float = 170.0

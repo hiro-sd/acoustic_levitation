@@ -21,6 +21,7 @@ class DisplayMetrics:
 class DisplayControlState:
     tracking_active: bool
     control_mode: str
+    demo_active: bool
     home: HomePosition
     origin: HomePosition
     return_setpoint: HomePosition
@@ -73,7 +74,8 @@ def render_tracking_window(
         (0, 255, 255),
     )
     _put(frame_xy, f"INTENSITY: {state.intensity_ratio:.3f}", 120, (0, 255, 255))
-    _put(frame_xy, f"MODE: {state.control_mode}", 150, mode_color)
+    demo_text = "ON" if state.demo_active else "OFF"
+    _put(frame_xy, f"MODE: {state.control_mode} | DEMO: {demo_text}", 150, mode_color)
     _put(frame_xy, f"STATUS: {status_text}", frame_xy.shape[0] - 20, status_color, 0.8)
 
     _put(
@@ -85,7 +87,7 @@ def render_tracking_window(
     _put(frame_z, ref_text, 60, (0, 255, 255))
     _put(frame_z, f"RADIUS: {state.radius:.1f} mm", 90, (0, 255, 255))
     _put(frame_z, f"INTENSITY: {state.intensity_ratio:.3f}", 120, (0, 255, 255))
-    _put(frame_z, f"MODE: {state.control_mode}", 150, mode_color)
+    _put(frame_z, f"MODE: {state.control_mode} | DEMO: {demo_text}", 150, mode_color)
     _put(frame_z, f"STATUS: {status_text}", frame_z.shape[0] - 20, status_color, 0.8)
 
     display_h = max(frame_xy.shape[0], frame_z.shape[0])
