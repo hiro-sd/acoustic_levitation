@@ -43,6 +43,7 @@ from .runtime.display import (
 from .runtime.logging import StabilityLogger
 from .runtime.input import is_key_pressed, update_base_position
 from .runtime.demo import SquareZDemo
+from .stereo import RigidTransform, StereoTriangulator
 
 
 def run_tracking_app(cfg: AppConfig):
@@ -87,6 +88,35 @@ def run_tracking_app(cfg: AppConfig):
         dist_cam_z = None
         use_undistort = False
 
+    stereo_triangulator = None
+    camera_to_autd = None
+    if cfg.enable_stereo_triangulation:
+        try:
+            stereo_triangulator = StereoTriangulator.from_npz(
+                cfg.stereo_npz,
+                input_is_undistorted=use_undistort,
+            )
+            print(f"[INFO] Loaded stereo calibration from {cfg.stereo_npz}")
+        except Exception as e:
+            print(f"[ERROR] Stereo calibration load failed: {e}")
+            return
+
+        if cfg.stereo_camera_to_autd_npz:
+            try:
+                camera_to_autd = RigidTransform.from_npz(cfg.stereo_camera_to_autd_npz)
+                print(f"[INFO] Loaded stereo camera-to-AUTD transform from {cfg.stereo_camera_to_autd_npz}")
+            except Exception as e:
+                print(f"[ERROR] camera-to-AUTD transform load failed: {e}")
+                return
+
+        if cfg.use_stereo_position_for_control and camera_to_autd is None:
+            print(
+                "[ERROR] use_stereo_position_for_control=True requires "
+                "cfg.stereo_camera_to_autd_npz. Stereo 3D is initially in cam1 coordinates, "
+                "not AUTD coordinates."
+            )
+            return
+
     # 2. Camera initialization
     xiapi = load_ximea_api(cfg)
 
@@ -118,17 +148,32 @@ def run_tracking_app(cfg: AppConfig):
 
     if use_undistort:
         map1_xy, map2_xy = build_undistort_maps(frame0_raw_xy.shape, mtx_cam_xy, dist_cam_xy)
-        map1_z, map2_z = build_undistort_maps(frame0_raw_z.shape, mtx_cam_z, dist_cam_z)
 
         frame0_xy = undistort_frame(frame0_raw_xy, map1_xy, map2_xy)
-        frame0_z = undistort_frame(frame0_raw_z, map1_z, map2_z)
+
+        if cfg.rotate_z_frame and cfg.z_intrinsic_is_rotated:
+            frame0_z_for_intrinsic = rotate_frame_if_needed(
+                frame0_raw_z,
+                True,
+                cfg.rotate_z_code,
+            )
+            map1_z, map2_z = build_undistort_maps(
+                frame0_z_for_intrinsic.shape,
+                mtx_cam_z,
+                dist_cam_z,
+            )
+            frame0_z = undistort_frame(frame0_z_for_intrinsic, map1_z, map2_z)
+        else:
+            map1_z, map2_z = build_undistort_maps(frame0_raw_z.shape, mtx_cam_z, dist_cam_z)
+            frame0_z = undistort_frame(frame0_raw_z, map1_z, map2_z)
     else:
         map1_xy = map2_xy = None
         map1_z = map2_z = None
         frame0_xy = frame0_raw_xy
         frame0_z = frame0_raw_z
 
-    frame0_z = rotate_frame_if_needed(frame0_z, cfg.rotate_z_frame, cfg.rotate_z_code)
+    if not (use_undistort and cfg.z_intrinsic_is_rotated):
+        frame0_z = rotate_frame_if_needed(frame0_z, cfg.rotate_z_frame, cfg.rotate_z_code)
 
     H_xy, W_xy = frame0_xy.shape[:2]
     H_z, W_z = frame0_z.shape[:2]
@@ -447,6 +492,7 @@ def run_tracking_app(cfg: AppConfig):
                 v_xy = np.nan
                 x_mm = None
                 y_mm = None
+                stereo_cam_point = None
 
                 if detected_xy:
                     u_xy, v_xy = det_xy.center
@@ -465,17 +511,58 @@ def run_tracking_app(cfg: AppConfig):
                 # Detection Z
                 det_z = tracker_z.detect(frame_z)
                 detected_z = det_z.detected
+                u_z = np.nan
                 v_z = np.nan
                 z_mm = None
 
                 if detected_z:
-                    _, v_z = det_z.center
+                    u_z, v_z = det_z.center
 
                     if use_z_model:
                         z_mm = float(z_a * v_z + z_b)
 
+                if (
+                    stereo_triangulator is not None
+                    and detected_xy
+                    and detected_z
+                    and np.isfinite(u_xy)
+                    and np.isfinite(v_xy)
+                    and np.isfinite(u_z)
+                    and np.isfinite(v_z)
+                ):
+                    try:
+                        stereo_cam_point = stereo_triangulator.triangulate_pixels(
+                            (float(u_xy), float(v_xy)),
+                            (float(u_z), float(v_z)),
+                        )
+
+                        if camera_to_autd is not None:
+                            stereo_autd = camera_to_autd.apply(stereo_cam_point)
+                            if cfg.use_stereo_position_for_control:
+                                x_mm = float(stereo_autd[0])
+                                y_mm = float(stereo_autd[1])
+                                z_mm = float(stereo_autd[2])
+
+                    except Exception as e:
+                        print(f"[WARN] Stereo triangulation failed: {e}")
+
                 if do_display:
                     draw_ball_detection(frame_z_bgr, det_z, tracking_active)
+                    if stereo_cam_point is not None:
+                        cv2.putText(
+                            frame_xy_bgr,
+                            (
+                                "ST cam1: "
+                                f"{stereo_cam_point.x:.1f}, "
+                                f"{stereo_cam_point.y:.1f}, "
+                                f"{stereo_cam_point.z:.1f}"
+                            ),
+                            (10, 210),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            (255, 255, 0),
+                            2,
+                        )
                 
                 if cfg.enable_fall_recovery and control_mode == "FALL_RECOVERY":
                     target_intensity_ratio = float(cfg.fall_recovery_intensity_ratio)

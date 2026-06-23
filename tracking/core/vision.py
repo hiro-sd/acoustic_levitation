@@ -363,10 +363,21 @@ def camera_capture_loop(
             now_t = time.perf_counter()
             frame = img.get_image_data_numpy()
 
+            if (
+                role == "z"
+                and cfg.rotate_z_frame
+                and cfg.z_intrinsic_is_rotated
+            ):
+                frame = rotate_frame_if_needed(frame, True, cfg.rotate_z_code)
+
             if use_undistort:
                 frame = undistort_frame(frame, map1, map2)
 
-            if role == "z" and cfg.rotate_z_frame:
+            if (
+                role == "z"
+                and cfg.rotate_z_frame
+                and not cfg.z_intrinsic_is_rotated
+            ):
                 frame = rotate_frame_if_needed(frame, True, cfg.rotate_z_code)
 
             if role == "xy":

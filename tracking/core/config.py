@@ -11,6 +11,8 @@ class AppConfig:
 
     intrinsic_xy_npz: str = "./tracking/calibration/intrinsic_charuco_cam1.npz"
     intrinsic_z_npz: str = "./tracking/calibration/intrinsic_charuco_cam2.npz"
+    stereo_npz: str = "./tracking/calibration/stereo_charuco_calibration_result.npz"
+    stereo_camera_to_autd_npz: str = ""
 
     ximea_python_path: str = r"C:\Users\Hiroto Yoshida\Desktop\XIMEA\API\Python\v3"
 
@@ -19,6 +21,9 @@ class AppConfig:
     camera_z_sn: str = "43435351"
     rotate_z_frame: bool = True
     rotate_z_code: int = cv2.ROTATE_90_CLOCKWISE
+    # cam2/Z intrinsic を回転後画像で作った場合は True。
+    # True の場合、runtimeでも Z画像を回転してから歪み補正する。
+    z_intrinsic_is_rotated: bool = True
     exposure_us: int = 5000
 
     # Software synchronization / camera watchdog
@@ -29,6 +34,11 @@ class AppConfig:
     camera_frame_timeout_sec: float = 0.5
 
     # cv settings
+    enable_stereo_triangulation: bool = False
+    # Trueにするとステレオ復元結果を x/y/z 測定値として使う。
+    # ただし cam1座標系 -> AUTD座標系 の変換npzが必要。
+    use_stereo_position_for_control: bool = False
+
     use_otsu: bool = False
     fixed_thresh: int = 160
     blur_ksize: int = 5
