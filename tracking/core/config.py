@@ -77,7 +77,7 @@ class AppConfig:
     demo_xy_speed_mm_s: float = 20.0
     demo_z_min_mm: float = 330.0
     demo_z_max_mm: float = 430.0
-    demo_z_period_sec: float = 4.0
+    demo_z_corner_mm: float = 400.0
 
     # outputmask settings
     use_output_mask: bool = False
