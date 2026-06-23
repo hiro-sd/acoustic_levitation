@@ -1,0 +1,761 @@
+{
+  "settings": {
+    "image_root": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco",
+    "stereo_npz": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_charuco_calibration_result.npz",
+    "report_json": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_charuco_validation_report.json",
+    "min_common_corners": 8
+  },
+  "stereo_npz": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_charuco_calibration_result.npz",
+  "square_length_mm": 38.0,
+  "marker_length_mm": 27.0,
+  "valid_pairs": 19,
+  "rejected_pairs": [
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_012_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_012_z.png",
+      "reason": "not_enough_common_charuco_corners",
+      "left_corners": 15,
+      "right_corners": 14,
+      "common_corners": 6
+    }
+  ],
+  "overall": {
+    "reprojection_error_l_px": {
+      "count": 296,
+      "mean": 0.06934740091612919,
+      "median": 0.05510777457658443,
+      "rmse": 0.09184212326560759,
+      "p95_abs": 0.17477020253240316,
+      "max_abs": 0.3332775726074318
+    },
+    "reprojection_error_r_px": {
+      "count": 296,
+      "mean": 0.08197105569545182,
+      "median": 0.06586218184308207,
+      "rmse": 0.11120251062921366,
+      "p95_abs": 0.22269938235363237,
+      "max_abs": 0.5897001661613795
+    },
+    "neighbor_distance_error_mm": {
+      "count": 397,
+      "mean": 0.027936964268692195,
+      "median": 0.027625914513599525,
+      "rmse": 0.12832077994873856,
+      "p95_abs": 0.2529911371878867,
+      "max_abs": 0.5472113030296555
+    },
+    "plane_residual_mm": {
+      "count": 296,
+      "mean": 0.061741471409496526,
+      "median": 0.05032965405092149,
+      "rmse": 0.08276719575175,
+      "p95_abs": 0.1504369544418882,
+      "max_abs": 0.4555717762399709
+    }
+  },
+  "pairs": [
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_000_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_000_z.png",
+      "common_corners": 15,
+      "reprojection_error_l_px": {
+        "count": 15,
+        "mean": 0.04912538274020677,
+        "median": 0.03596694742505784,
+        "rmse": 0.0690262797911368,
+        "p95_abs": 0.12221996938894608,
+        "max_abs": 0.18886724389400308
+      },
+      "reprojection_error_r_px": {
+        "count": 15,
+        "mean": 0.06059609080295826,
+        "median": 0.042448643308588975,
+        "rmse": 0.08826027119748282,
+        "p95_abs": 0.178104485154161,
+        "max_abs": 0.23792836549157606
+      },
+      "neighbor_distance_error_mm": {
+        "count": 21,
+        "mean": 0.03557763884779165,
+        "median": 0.027625914513599525,
+        "rmse": 0.09396048694338116,
+        "p95_abs": 0.17416824545346543,
+        "max_abs": 0.2694404670689323
+      },
+      "plane_residual_mm": {
+        "count": 15,
+        "mean": 0.052760444303039715,
+        "median": 0.04214617188825187,
+        "rmse": 0.06198417309863963,
+        "p95_abs": 0.0993657515668884,
+        "max_abs": 0.11616874516784215
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_001_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_001_z.png",
+      "common_corners": 15,
+      "reprojection_error_l_px": {
+        "count": 15,
+        "mean": 0.04911361553141071,
+        "median": 0.04145540881934931,
+        "rmse": 0.05798734314684931,
+        "p95_abs": 0.1089692518351367,
+        "max_abs": 0.11323121345359258
+      },
+      "reprojection_error_r_px": {
+        "count": 15,
+        "mean": 0.05363343758663567,
+        "median": 0.04686945429318415,
+        "rmse": 0.061599451625837826,
+        "p95_abs": 0.09691851982522309,
+        "max_abs": 0.10242237894717975
+      },
+      "neighbor_distance_error_mm": {
+        "count": 19,
+        "mean": 0.029892714054234285,
+        "median": 0.02539255234659521,
+        "rmse": 0.10432996078241694,
+        "p95_abs": 0.22325757797251516,
+        "max_abs": 0.2703590125288642
+      },
+      "plane_residual_mm": {
+        "count": 15,
+        "mean": 0.05780984266424382,
+        "median": 0.04917939934829896,
+        "rmse": 0.07211735192153344,
+        "p95_abs": 0.12584583464855328,
+        "max_abs": 0.12649164906409283
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_002_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_002_z.png",
+      "common_corners": 16,
+      "reprojection_error_l_px": {
+        "count": 16,
+        "mean": 0.07424980657271585,
+        "median": 0.07550292418701,
+        "rmse": 0.09439203109264514,
+        "p95_abs": 0.1839676393737898,
+        "max_abs": 0.19747345721241108
+      },
+      "reprojection_error_r_px": {
+        "count": 16,
+        "mean": 0.060810697119010985,
+        "median": 0.0599521866896399,
+        "rmse": 0.0750515181380724,
+        "p95_abs": 0.12454909535753027,
+        "max_abs": 0.12958950213859924
+      },
+      "neighbor_distance_error_mm": {
+        "count": 24,
+        "mean": 0.034829404187868875,
+        "median": 0.03957048574546462,
+        "rmse": 0.09838967411758157,
+        "p95_abs": 0.20548713488259746,
+        "max_abs": 0.28506918081841803
+      },
+      "plane_residual_mm": {
+        "count": 16,
+        "mean": 0.03619726064028342,
+        "median": 0.031095800016344155,
+        "rmse": 0.042908623701730306,
+        "p95_abs": 0.07187954503191918,
+        "max_abs": 0.0888329426877057
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_003_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_003_z.png",
+      "common_corners": 15,
+      "reprojection_error_l_px": {
+        "count": 15,
+        "mean": 0.14183840058101566,
+        "median": 0.1256800767120901,
+        "rmse": 0.15888520742857568,
+        "p95_abs": 0.2833169947399754,
+        "max_abs": 0.28643024729832806
+      },
+      "reprojection_error_r_px": {
+        "count": 15,
+        "mean": 0.14963642297695495,
+        "median": 0.12390055265862951,
+        "rmse": 0.17700495438370908,
+        "p95_abs": 0.32863573057439127,
+        "max_abs": 0.3923552782223577
+      },
+      "neighbor_distance_error_mm": {
+        "count": 18,
+        "mean": -0.03858587831323056,
+        "median": -0.05097597799781184,
+        "rmse": 0.1803783557412691,
+        "p95_abs": 0.3316970471819314,
+        "max_abs": 0.34343112245410623
+      },
+      "plane_residual_mm": {
+        "count": 15,
+        "mean": 0.13886922062139814,
+        "median": 0.07982876214216361,
+        "rmse": 0.18557608140185444,
+        "p95_abs": 0.4074575815268668,
+        "max_abs": 0.4555717762399709
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_004_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_004_z.png",
+      "common_corners": 14,
+      "reprojection_error_l_px": {
+        "count": 14,
+        "mean": 0.07559147816765154,
+        "median": 0.06243459032452866,
+        "rmse": 0.10572838927895904,
+        "p95_abs": 0.18644643841983966,
+        "max_abs": 0.30852212151394287
+      },
+      "reprojection_error_r_px": {
+        "count": 14,
+        "mean": 0.08924567995238701,
+        "median": 0.0743784574176444,
+        "rmse": 0.11874749344422861,
+        "p95_abs": 0.2203867882430532,
+        "max_abs": 0.3154381433330225
+      },
+      "neighbor_distance_error_mm": {
+        "count": 20,
+        "mean": 0.025959341281454586,
+        "median": 0.001725291689570696,
+        "rmse": 0.12610117524081885,
+        "p95_abs": 0.2527149227681004,
+        "max_abs": 0.2643077429563263
+      },
+      "plane_residual_mm": {
+        "count": 14,
+        "mean": 0.06667355484945621,
+        "median": 0.066291019614106,
+        "rmse": 0.07992145444877426,
+        "p95_abs": 0.12534411744413249,
+        "max_abs": 0.13869612279532717
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_005_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_005_z.png",
+      "common_corners": 10,
+      "reprojection_error_l_px": {
+        "count": 10,
+        "mean": 0.08011468102490127,
+        "median": 0.04807441931344505,
+        "rmse": 0.1228863618038963,
+        "p95_abs": 0.24834241672926982,
+        "max_abs": 0.3332775726074318
+      },
+      "reprojection_error_r_px": {
+        "count": 10,
+        "mean": 0.12519418501881024,
+        "median": 0.0791835632461673,
+        "rmse": 0.1927507209321415,
+        "p95_abs": 0.3924011736916447,
+        "max_abs": 0.5275981163113274
+      },
+      "neighbor_distance_error_mm": {
+        "count": 12,
+        "mean": 0.05142090607665217,
+        "median": 0.02085066143258274,
+        "rmse": 0.18238247834376978,
+        "p95_abs": 0.3512260262543937,
+        "max_abs": 0.5472113030296555
+      },
+      "plane_residual_mm": {
+        "count": 10,
+        "mean": 0.03278884958424024,
+        "median": 0.037465660265192824,
+        "rmse": 0.036938513731880424,
+        "p95_abs": 0.05490582859258452,
+        "max_abs": 0.05903733446564985
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_006_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_006_z.png",
+      "common_corners": 17,
+      "reprojection_error_l_px": {
+        "count": 17,
+        "mean": 0.05522387103503731,
+        "median": 0.04547648878379707,
+        "rmse": 0.06938907968148866,
+        "p95_abs": 0.12995306392122102,
+        "max_abs": 0.16717026480057998
+      },
+      "reprojection_error_r_px": {
+        "count": 17,
+        "mean": 0.0603507538366197,
+        "median": 0.04981792724956805,
+        "rmse": 0.07807105462106638,
+        "p95_abs": 0.16152982310569067,
+        "max_abs": 0.2001979501061379
+      },
+      "neighbor_distance_error_mm": {
+        "count": 23,
+        "mean": 0.029983527221515486,
+        "median": 0.06529788737297793,
+        "rmse": 0.10930037634361278,
+        "p95_abs": 0.15326919845278084,
+        "max_abs": 0.20403239949436625
+      },
+      "plane_residual_mm": {
+        "count": 17,
+        "mean": 0.08744467293291007,
+        "median": 0.057855760681746915,
+        "rmse": 0.11188831406025294,
+        "p95_abs": 0.21832217264331813,
+        "max_abs": 0.25601730833973946
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_007_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_007_z.png",
+      "common_corners": 20,
+      "reprojection_error_l_px": {
+        "count": 20,
+        "mean": 0.0903656535765322,
+        "median": 0.07685919700975,
+        "rmse": 0.10128194787407799,
+        "p95_abs": 0.1619694779408497,
+        "max_abs": 0.1648328153246692
+      },
+      "reprojection_error_r_px": {
+        "count": 20,
+        "mean": 0.08817623943115828,
+        "median": 0.08688337445046418,
+        "rmse": 0.09933699871052773,
+        "p95_abs": 0.16857442614781307,
+        "max_abs": 0.22121235445638765
+      },
+      "neighbor_distance_error_mm": {
+        "count": 28,
+        "mean": 0.047283158178428764,
+        "median": 0.030911397685443376,
+        "rmse": 0.1176012196596307,
+        "p95_abs": 0.20625206574550103,
+        "max_abs": 0.25653658859086903
+      },
+      "plane_residual_mm": {
+        "count": 20,
+        "mean": 0.0542764622126215,
+        "median": 0.049049035560341014,
+        "rmse": 0.06977453891480645,
+        "p95_abs": 0.11791694043521771,
+        "max_abs": 0.1877834400778653
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_008_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_008_z.png",
+      "common_corners": 8,
+      "reprojection_error_l_px": {
+        "count": 8,
+        "mean": 0.07312541130335803,
+        "median": 0.07063964921776639,
+        "rmse": 0.09250741313965986,
+        "p95_abs": 0.15484986089692987,
+        "max_abs": 0.17072419068897152
+      },
+      "reprojection_error_r_px": {
+        "count": 8,
+        "mean": 0.08937346646084554,
+        "median": 0.07607192858637725,
+        "rmse": 0.11791570254684598,
+        "p95_abs": 0.20704325731513007,
+        "max_abs": 0.22888564578177045
+      },
+      "neighbor_distance_error_mm": {
+        "count": 8,
+        "mean": 0.039808032753780864,
+        "median": 0.03476505572229627,
+        "rmse": 0.12844796054527077,
+        "p95_abs": 0.18154590620736713,
+        "max_abs": 0.18578658580406682
+      },
+      "plane_residual_mm": {
+        "count": 8,
+        "mean": 0.07131914487247515,
+        "median": 0.07120145964457292,
+        "rmse": 0.08240699059179753,
+        "p95_abs": 0.13149289164121886,
+        "max_abs": 0.15088885839579902
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_009_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_009_z.png",
+      "common_corners": 12,
+      "reprojection_error_l_px": {
+        "count": 12,
+        "mean": 0.07029595302688267,
+        "median": 0.06280051655887106,
+        "rmse": 0.08305870344751058,
+        "p95_abs": 0.13947691241242238,
+        "max_abs": 0.16159917741911511
+      },
+      "reprojection_error_r_px": {
+        "count": 12,
+        "mean": 0.09888218681251647,
+        "median": 0.08311448551458256,
+        "rmse": 0.11701567622807622,
+        "p95_abs": 0.1982772232892135,
+        "max_abs": 0.21287381309946302
+      },
+      "neighbor_distance_error_mm": {
+        "count": 14,
+        "mean": -0.006408451429729313,
+        "median": -0.013711411243011895,
+        "rmse": 0.1260516235385194,
+        "p95_abs": 0.22561123308840114,
+        "max_abs": 0.28095100399687567
+      },
+      "plane_residual_mm": {
+        "count": 12,
+        "mean": 0.04846446926049541,
+        "median": 0.04236127151497415,
+        "rmse": 0.0634214782354389,
+        "p95_abs": 0.11090579821909005,
+        "max_abs": 0.14516863019834858
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_010_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_010_z.png",
+      "common_corners": 12,
+      "reprojection_error_l_px": {
+        "count": 12,
+        "mean": 0.05753807853324125,
+        "median": 0.061386526083705595,
+        "rmse": 0.06353421042358352,
+        "p95_abs": 0.09243546854602577,
+        "max_abs": 0.10016917639918207
+      },
+      "reprojection_error_r_px": {
+        "count": 12,
+        "mean": 0.06499251763300223,
+        "median": 0.06452704587265068,
+        "rmse": 0.07282153491721388,
+        "p95_abs": 0.11763839777712723,
+        "max_abs": 0.11869026855973895
+      },
+      "neighbor_distance_error_mm": {
+        "count": 14,
+        "mean": 0.016474526131491172,
+        "median": 0.0029114671123409153,
+        "rmse": 0.10714681742220979,
+        "p95_abs": 0.18206207795220983,
+        "max_abs": 0.20886903998167838
+      },
+      "plane_residual_mm": {
+        "count": 12,
+        "mean": 0.06116335373728279,
+        "median": 0.06775265948598919,
+        "rmse": 0.06885878843053544,
+        "p95_abs": 0.09820330729097879,
+        "max_abs": 0.1062819693713426
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_011_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_011_z.png",
+      "common_corners": 18,
+      "reprojection_error_l_px": {
+        "count": 18,
+        "mean": 0.0567978019592447,
+        "median": 0.051433203222196786,
+        "rmse": 0.06796531828582698,
+        "p95_abs": 0.13324044883701522,
+        "max_abs": 0.14662980866009967
+      },
+      "reprojection_error_r_px": {
+        "count": 18,
+        "mean": 0.053948154329492855,
+        "median": 0.04745204436449732,
+        "rmse": 0.06344434907742691,
+        "p95_abs": 0.11762507654662344,
+        "max_abs": 0.13479083793764948
+      },
+      "neighbor_distance_error_mm": {
+        "count": 24,
+        "mean": 0.045309238147273646,
+        "median": 0.04829103855286476,
+        "rmse": 0.14225688541844053,
+        "p95_abs": 0.2544026099250739,
+        "max_abs": 0.2787356292282226
+      },
+      "plane_residual_mm": {
+        "count": 18,
+        "mean": 0.040813436279775406,
+        "median": 0.03275459525388946,
+        "rmse": 0.05577188559142853,
+        "p95_abs": 0.11666107926125041,
+        "max_abs": 0.13745710250201437
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_013_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_013_z.png",
+      "common_corners": 22,
+      "reprojection_error_l_px": {
+        "count": 22,
+        "mean": 0.0546511891275916,
+        "median": 0.03778712307758349,
+        "rmse": 0.08097517466907395,
+        "p95_abs": 0.10677289542290858,
+        "max_abs": 0.28716411214483395
+      },
+      "reprojection_error_r_px": {
+        "count": 22,
+        "mean": 0.08977820950513897,
+        "median": 0.05653039020441384,
+        "rmse": 0.14915289150405142,
+        "p95_abs": 0.16975154282389876,
+        "max_abs": 0.5897001661613795
+      },
+      "neighbor_distance_error_mm": {
+        "count": 34,
+        "mean": 0.025400316972576026,
+        "median": 0.04052316046518456,
+        "rmse": 0.1377150816020643,
+        "p95_abs": 0.2534784001450937,
+        "max_abs": 0.26938298337297084
+      },
+      "plane_residual_mm": {
+        "count": 22,
+        "mean": 0.06794665533671003,
+        "median": 0.06548041845847141,
+        "rmse": 0.0801196195713877,
+        "p95_abs": 0.12935815079684643,
+        "max_abs": 0.16686121641793816
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_014_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_014_z.png",
+      "common_corners": 22,
+      "reprojection_error_l_px": {
+        "count": 22,
+        "mean": 0.04512990649616167,
+        "median": 0.03393631419738734,
+        "rmse": 0.05916253040443228,
+        "p95_abs": 0.08219332022243506,
+        "max_abs": 0.1770042456263616
+      },
+      "reprojection_error_r_px": {
+        "count": 22,
+        "mean": 0.06732601071721957,
+        "median": 0.051084747670567754,
+        "rmse": 0.08590598047561437,
+        "p95_abs": 0.13823361364436457,
+        "max_abs": 0.21553508699782936
+      },
+      "neighbor_distance_error_mm": {
+        "count": 34,
+        "mean": 0.03251441817408358,
+        "median": 0.03531594750303668,
+        "rmse": 0.1028176254202946,
+        "p95_abs": 0.20339705841409977,
+        "max_abs": 0.238852246669488
+      },
+      "plane_residual_mm": {
+        "count": 22,
+        "mean": 0.08110807029941433,
+        "median": 0.07457987891553941,
+        "rmse": 0.09562919553567681,
+        "p95_abs": 0.18598458680689967,
+        "max_abs": 0.18850496158780317
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_015_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_015_z.png",
+      "common_corners": 12,
+      "reprojection_error_l_px": {
+        "count": 12,
+        "mean": 0.05958271590428534,
+        "median": 0.0653049066431904,
+        "rmse": 0.0652356642578923,
+        "p95_abs": 0.0882453461614318,
+        "max_abs": 0.08846524798138511
+      },
+      "reprojection_error_r_px": {
+        "count": 12,
+        "mean": 0.08208097775922109,
+        "median": 0.08702944468015612,
+        "rmse": 0.09139258657016362,
+        "p95_abs": 0.13368903571480792,
+        "max_abs": 0.13954871899502302
+      },
+      "neighbor_distance_error_mm": {
+        "count": 12,
+        "mean": -0.004133867466885377,
+        "median": 0.022150215664300532,
+        "rmse": 0.1042407250569256,
+        "p95_abs": 0.18817629133321775,
+        "max_abs": 0.2201839778485848
+      },
+      "plane_residual_mm": {
+        "count": 12,
+        "mean": 0.050997902189776484,
+        "median": 0.03935894633573156,
+        "rmse": 0.06532799747441802,
+        "p95_abs": 0.12559657637573915,
+        "max_abs": 0.13256193052398757
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_016_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_016_z.png",
+      "common_corners": 20,
+      "reprojection_error_l_px": {
+        "count": 20,
+        "mean": 0.055711521865653556,
+        "median": 0.04339988423214586,
+        "rmse": 0.0729354567468856,
+        "p95_abs": 0.1470035616764394,
+        "max_abs": 0.16064055130664784
+      },
+      "reprojection_error_r_px": {
+        "count": 20,
+        "mean": 0.0814835396163158,
+        "median": 0.05486089231048112,
+        "rmse": 0.10966084709739653,
+        "p95_abs": 0.24521172657150697,
+        "max_abs": 0.2687188419170471
+      },
+      "neighbor_distance_error_mm": {
+        "count": 29,
+        "mean": 0.03587117832412974,
+        "median": -0.02938003077328233,
+        "rmse": 0.16378427735084528,
+        "p95_abs": 0.28593994203708917,
+        "max_abs": 0.44879874933550923
+      },
+      "plane_residual_mm": {
+        "count": 20,
+        "mean": 0.06783235701527204,
+        "median": 0.055664591528759466,
+        "rmse": 0.08466296035362986,
+        "p95_abs": 0.15222518186852363,
+        "max_abs": 0.2255057732951471
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_017_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_017_z.png",
+      "common_corners": 18,
+      "reprojection_error_l_px": {
+        "count": 18,
+        "mean": 0.04186003131703951,
+        "median": 0.031230364309709997,
+        "rmse": 0.05700585987550104,
+        "p95_abs": 0.09443158910236621,
+        "max_abs": 0.17268084737739411
+      },
+      "reprojection_error_r_px": {
+        "count": 18,
+        "mean": 0.06234673540804549,
+        "median": 0.03989665820110784,
+        "rmse": 0.08775851838720117,
+        "p95_abs": 0.14998002149553866,
+        "max_abs": 0.27520881775368294
+      },
+      "neighbor_distance_error_mm": {
+        "count": 26,
+        "mean": 0.0226244139335839,
+        "median": -0.0001488888105676267,
+        "rmse": 0.14136663628946625,
+        "p95_abs": 0.2576089120411371,
+        "max_abs": 0.36871185097822234
+      },
+      "plane_residual_mm": {
+        "count": 18,
+        "mean": 0.047311129012992295,
+        "median": 0.03662633247813485,
+        "rmse": 0.0624201691823167,
+        "p95_abs": 0.13433937257512968,
+        "max_abs": 0.15144473458295238
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_018_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_018_z.png",
+      "common_corners": 16,
+      "reprojection_error_l_px": {
+        "count": 16,
+        "mean": 0.06063595398497905,
+        "median": 0.046823350849995456,
+        "rmse": 0.07664637355619842,
+        "p95_abs": 0.1528894867274163,
+        "max_abs": 0.16167410201243662
+      },
+      "reprojection_error_r_px": {
+        "count": 16,
+        "mean": 0.07809784983447388,
+        "median": 0.051174001883480216,
+        "rmse": 0.1004928728547872,
+        "p95_abs": 0.20928110981127523,
+        "max_abs": 0.21329737184644937
+      },
+      "neighbor_distance_error_mm": {
+        "count": 20,
+        "mean": 0.04446609384900384,
+        "median": 0.05904860954681368,
+        "rmse": 0.10684116116415186,
+        "p95_abs": 0.17273995151034038,
+        "max_abs": 0.21054879457131648
+      },
+      "plane_residual_mm": {
+        "count": 16,
+        "mean": 0.06362360674892253,
+        "median": 0.054799004633218296,
+        "rmse": 0.07677625173162872,
+        "p95_abs": 0.13092106827374828,
+        "max_abs": 0.13593520594557162
+      }
+    },
+    {
+      "left": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam1\\pair_019_xy.png",
+      "right": "C:\\Users\\Hiroto Yoshida\\Downloads\\acousic_levitation\\tracking\\calibration\\stereo_images\\charuco\\cam2\\pair_019_z.png",
+      "common_corners": 14,
+      "reprojection_error_l_px": {
+        "count": 14,
+        "mean": 0.16019223826647713,
+        "median": 0.13530281194078345,
+        "rmse": 0.17829724405438993,
+        "p95_abs": 0.2735077780255004,
+        "max_abs": 0.2843433370423536
+      },
+      "reprojection_error_r_px": {
+        "count": 14,
+        "mean": 0.13902213714964215,
+        "median": 0.11838708462778053,
+        "rmse": 0.15861095238263295,
+        "p95_abs": 0.2822295402731847,
+        "max_abs": 0.29022761358880483
+      },
+      "neighbor_distance_error_mm": {
+        "count": 17,
+        "mean": 0.029447603994114085,
+        "median": 0.03702955399578656,
+        "rmse": 0.12978674946322966,
+        "p95_abs": 0.20307860119198576,
+        "max_abs": 0.23412376607702612
+      },
+      "plane_residual_mm": {
+        "count": 14,
+        "mean": 0.027370496893307932,
+        "median": 0.029088553498424652,
+        "rmse": 0.03367036543878785,
+        "p95_abs": 0.055115095418934466,
+        "max_abs": 0.05919218585803421
+      }
+    }
+  ]
+}
