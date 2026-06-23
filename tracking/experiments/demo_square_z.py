@@ -31,9 +31,13 @@ if __name__ == "__main__":
         # [ENTER]でフィードバック開始後、[D]でデモ軌道を開始/停止する。
         enable_auto_demo=True,
         demo_toggle_key="d",
-        demo_square_size_mm=30.0,
+        demo_x_min_mm=-40.0,
+        demo_x_max_mm=30.0,
+        demo_y_min_mm=-30.0,
+        demo_y_max_mm=30.0,
         demo_xy_speed_mm_s=10.0,
-        demo_z_amplitude_mm=30.0,
+        demo_z_min_mm=330.0,
+        demo_z_max_mm=430.0,
         demo_z_period_sec=5.0,
 
         enable_base_move=False,
