@@ -36,7 +36,7 @@ class CaptureSettings:
     rotate_z_frame: bool = True
     rotate_z_code: int = cv2.ROTATE_90_CLOCKWISE
     max_pairs: int = 20
-    auto_interval_sec: float = 0.0
+    auto_interval_sec: float = 7.5
     preview_width_px: int = 640
     preview_height_px: int = 480
     output_dir: str = str(TRACKING_ROOT / "calibration" / "stereo_images" / "charuco")
@@ -217,7 +217,7 @@ def main():
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
         pair_index = 0
-        auto_capture = settings.auto_interval_sec > 0.0
+        auto_capture = False
         last_auto_save_t = 0.0
 
         while pair_index < settings.max_pairs:
@@ -233,11 +233,20 @@ def main():
                 settings.rotate_z_code,
             )
 
+            auto_remaining = 0.0
+            if auto_capture and settings.auto_interval_sec > 0.0:
+                auto_remaining = max(
+                    0.0,
+                    settings.auto_interval_sec - (time.perf_counter() - last_auto_save_t),
+                )
+
             text = (
                 f"pairs {pair_index}/{settings.max_pairs} | "
                 f"skew {abs(t_xy - t_z) * 1000.0:.2f} ms | "
                 f"auto {'ON' if auto_capture else 'OFF'}"
             )
+            if auto_capture:
+                text += f" | next {auto_remaining:.1f}s"
             cv2.imshow(window_name, _make_preview(frame_xy, frame_z, text, settings))
 
             now = time.perf_counter()
@@ -247,9 +256,9 @@ def main():
             if key in (27, ord("q")):
                 print("[INFO] stopped by user.")
                 break
-            if key in (ord(" "), ord("c")):
+            if key in (ord(" "), ord("c"), ord("C")):
                 should_save = True
-            if key == ord("a"):
+            if key in (ord("a"), ord("A")):
                 auto_capture = not auto_capture
                 last_auto_save_t = now
                 print(f"[INFO] auto capture: {'ON' if auto_capture else 'OFF'}")
