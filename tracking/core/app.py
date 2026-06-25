@@ -552,11 +552,19 @@ def run_tracking_app(cfg: AppConfig):
                     draw_ball_detection(frame_z_bgr, det_z, tracking_active)
                     if stereo_cam_point is not None:
                         if stereo_autd_point is not None:
+                            stereo_autd_relative = stereo_autd_point - np.array(
+                                [
+                                    float(base_center[0]),
+                                    float(base_center[1]),
+                                    float(base_center[2]),
+                                ],
+                                dtype=float,
+                            )
                             stereo_label = (
-                                "ST AUTD: "
-                                f"{stereo_autd_point[0]:.1f}, "
-                                f"{stereo_autd_point[1]:.1f}, "
-                                f"{stereo_autd_point[2]:.1f}"
+                                "ST AUTD rel: "
+                                f"{stereo_autd_relative[0]:.1f}, "
+                                f"{stereo_autd_relative[1]:.1f}, "
+                                f"{stereo_autd_relative[2]:.1f}"
                             )
                         else:
                             stereo_label = (
