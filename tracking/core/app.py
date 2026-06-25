@@ -810,9 +810,20 @@ def run_tracking_app(cfg: AppConfig):
                         )
 
                     if do_display:
+                        target_relative = np.array(
+                            [last_target.x, last_target.y, last_target.z],
+                            dtype=float,
+                        ) - np.array(
+                            [
+                                float(base_center[0]),
+                                float(base_center[1]),
+                                float(base_center[2]),
+                            ],
+                            dtype=float,
+                        )
                         cv2.putText(
                             frame_xy_bgr,
-                            f"TGT XY: {last_target.x:.1f}, {last_target.y:.1f}",
+                            f"TGT XY: {target_relative[0]:.1f}, {target_relative[1]:.1f}",
                             (10, 120),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
@@ -821,7 +832,7 @@ def run_tracking_app(cfg: AppConfig):
                         )
                         cv2.putText(
                             frame_z_bgr,
-                            f"TGT Z: {last_target.z:.1f}",
+                            f"TGT Z: {target_relative[2]:.1f}",
                             (10, 120),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
