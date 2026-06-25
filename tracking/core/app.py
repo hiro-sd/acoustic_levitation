@@ -823,7 +823,7 @@ def run_tracking_app(cfg: AppConfig):
                         )
                         cv2.putText(
                             frame_xy_bgr,
-                            f"TGT XY: {target_relative[0]:.1f}, {target_relative[1]:.1f}",
+                            f"Target XY: {target_relative[0]:.1f}, {target_relative[1]:.1f}",
                             (10, 120),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
@@ -832,7 +832,7 @@ def run_tracking_app(cfg: AppConfig):
                         )
                         cv2.putText(
                             frame_z_bgr,
-                            f"TGT Z: {target_relative[2]:.1f}",
+                            f"Target Z: {target_relative[2]:.1f}",
                             (10, 120),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
