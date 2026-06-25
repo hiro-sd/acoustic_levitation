@@ -19,7 +19,7 @@ if __name__ == "__main__":
         use_stereo_position_for_control=True,
         stereo_camera_to_autd_npz="./tracking/calibration/stereo_camera_to_autd.npz",
 
-        enable_base_move=False,
+        enable_base_move=True,
         enable_radius_change=False,
         enable_fall_recovery=False,
 

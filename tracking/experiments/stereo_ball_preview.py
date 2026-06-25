@@ -12,7 +12,7 @@ if __name__ == "__main__":
     cfg = AppConfig(
         radius=23.5,
         default_z=400.0,
-        static_intensity_ratio=0.9,
+        static_intensity_ratio=0.0,
 
         # 球中心のステレオ三角測量を画面表示する。
         # 出力はまだcam1/XYカメラ座標系なので、AUTD制御には使わない。
