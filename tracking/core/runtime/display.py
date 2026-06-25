@@ -60,34 +60,34 @@ def render_tracking_window(
 
     _put(
         frame_xy,
-        f"Loop FPS: {metrics.loop_fps:.1f} | NewXY FPS: {metrics.pair_fps:.1f} | "
+        f"Loop FPS: {metrics.loop_fps:.1f} | " #| NewXY FPS: {metrics.pair_fps:.1f} | "
         # f"Sync: {metrics.sync_skew_sec * 1000.0:.2f} ms | "
-        f"AUTD FPS: {metrics.autd_fps:.1f} | {metrics.method}",
+        f"AUTD FPS: {metrics.autd_fps:.1f}",# | {metrics.method}",
         30,
     )
     _put(frame_xy, ref_text, 60, (0, 255, 255))
-    _put(
-        frame_xy,
-        f"return setpoint: ({state.return_setpoint.x:.1f}, "
-        f"{state.return_setpoint.y:.1f}, {state.return_setpoint.z:.1f})",
-        90,
-        (0, 255, 255),
-    )
-    _put(frame_xy, f"INTENSITY: {state.intensity_ratio:.3f}", 120, (0, 255, 255))
-    demo_text = "ON" if state.demo_active else "OFF"
-    _put(frame_xy, f"MODE: {state.control_mode} | DEMO: {demo_text}", 150, mode_color)
+    # _put(
+    #     frame_xy,
+    #     f"return setpoint: ({state.return_setpoint.x:.1f}, "
+    #     f"{state.return_setpoint.y:.1f}, {state.return_setpoint.z:.1f})",
+    #     90,
+    #     (0, 255, 255),
+    # )
+    # _put(frame_xy, f"INTENSITY: {state.intensity_ratio:.3f}", 120, (0, 255, 255))
+    # demo_text = "ON" if state.demo_active else "OFF"
+    # _put(frame_xy, f"MODE: {state.control_mode} | DEMO: {demo_text}", 150, mode_color)
     _put(frame_xy, f"STATUS: {status_text}", frame_xy.shape[0] - 20, status_color, 0.8)
 
     _put(
         frame_z,
-        f"Loop FPS: {metrics.loop_fps:.1f} | NewZ FPS: {metrics.z_fps:.1f} | "
-        f"v_z={metrics.v_z_px:.1f}",
+        f"Loop FPS: {metrics.loop_fps:.1f}",# | NewZ FPS: {metrics.z_fps:.1f} | "
+        #f"v_z={metrics.v_z_px:.1f}",
         30,
     )
     _put(frame_z, ref_text, 60, (0, 255, 255))
-    _put(frame_z, f"RADIUS: {state.radius:.1f} mm", 90, (0, 255, 255))
-    _put(frame_z, f"INTENSITY: {state.intensity_ratio:.3f}", 120, (0, 255, 255))
-    _put(frame_z, f"MODE: {state.control_mode} | DEMO: {demo_text}", 150, mode_color)
+    # _put(frame_z, f"RADIUS: {state.radius:.1f} mm", 90, (0, 255, 255))
+    # _put(frame_z, f"INTENSITY: {state.intensity_ratio:.3f}", 120, (0, 255, 255))
+    # _put(frame_z, f"MODE: {state.control_mode} | DEMO: {demo_text}", 150, mode_color)
     _put(frame_z, f"STATUS: {status_text}", frame_z.shape[0] - 20, status_color, 0.8)
 
     display_h = max(frame_xy.shape[0], frame_z.shape[0])

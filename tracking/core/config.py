@@ -72,8 +72,8 @@ class AppConfig:
 
     # Base movement by keyboard
     enable_base_move: bool = False
-    base_move_speed_mm_s: float = 50.0
-    base_z_move_speed_mm_s: float = 50.0
+    base_move_speed_mm_s: float = 40.0
+    base_z_move_speed_mm_s: float = 40.0
 
     # Automatic demo trajectory for the circular STM center.
     # demo_toggle_key を押すと、固定AUTD原点を基準にXYは指定範囲の四角形、
@@ -84,10 +84,10 @@ class AppConfig:
     demo_x_max_mm: float = 30.0
     demo_y_min_mm: float = -30.0
     demo_y_max_mm: float = 30.0
-    demo_xy_speed_mm_s: float = 20.0
+    demo_xy_speed_mm_s: float = 15.0
     demo_z_min_mm: float = 330.0
     demo_z_max_mm: float = 430.0
-    demo_z_period_sec: float = 4.0
+    demo_z_period_sec: float = 6.0
 
     # outputmask settings
     use_output_mask: bool = False

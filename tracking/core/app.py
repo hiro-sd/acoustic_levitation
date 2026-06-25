@@ -561,7 +561,7 @@ def run_tracking_app(cfg: AppConfig):
                                 dtype=float,
                             )
                             stereo_label = (
-                                "ST AUTD rel: "
+                                "Stereo point: "
                                 f"{stereo_autd_relative[0]:.1f}, "
                                 f"{stereo_autd_relative[1]:.1f}, "
                                 f"{stereo_autd_relative[2]:.1f}"
@@ -576,7 +576,16 @@ def run_tracking_app(cfg: AppConfig):
                         cv2.putText(
                             frame_xy_bgr,
                             stereo_label,
-                            (10, 210),
+                            (10, 90),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            (255, 255, 0),
+                            2,
+                        )
+                        cv2.putText(
+                            frame_z_bgr,
+                            stereo_label,
+                            (10, 90),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
                             (255, 255, 0),
@@ -804,7 +813,7 @@ def run_tracking_app(cfg: AppConfig):
                         cv2.putText(
                             frame_xy_bgr,
                             f"TGT XY: {last_target.x:.1f}, {last_target.y:.1f}",
-                            (10, 180),
+                            (10, 120),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
                             (0, 255, 255),
@@ -813,7 +822,7 @@ def run_tracking_app(cfg: AppConfig):
                         cv2.putText(
                             frame_z_bgr,
                             f"TGT Z: {last_target.z:.1f}",
-                            (10, 180),
+                            (10, 120),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
                             (0, 255, 255),
