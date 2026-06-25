@@ -493,6 +493,7 @@ def run_tracking_app(cfg: AppConfig):
                 x_mm = None
                 y_mm = None
                 stereo_cam_point = None
+                stereo_autd_point = None
 
                 if detected_xy:
                     u_xy, v_xy = det_xy.center
@@ -538,6 +539,7 @@ def run_tracking_app(cfg: AppConfig):
 
                         if camera_to_autd is not None:
                             stereo_autd = camera_to_autd.apply(stereo_cam_point)
+                            stereo_autd_point = stereo_autd
                             if cfg.use_stereo_position_for_control:
                                 x_mm = float(stereo_autd[0])
                                 y_mm = float(stereo_autd[1])
@@ -549,14 +551,23 @@ def run_tracking_app(cfg: AppConfig):
                 if do_display:
                     draw_ball_detection(frame_z_bgr, det_z, tracking_active)
                     if stereo_cam_point is not None:
-                        cv2.putText(
-                            frame_xy_bgr,
-                            (
+                        if stereo_autd_point is not None:
+                            stereo_label = (
+                                "ST AUTD: "
+                                f"{stereo_autd_point[0]:.1f}, "
+                                f"{stereo_autd_point[1]:.1f}, "
+                                f"{stereo_autd_point[2]:.1f}"
+                            )
+                        else:
+                            stereo_label = (
                                 "ST cam1: "
                                 f"{stereo_cam_point.x:.1f}, "
                                 f"{stereo_cam_point.y:.1f}, "
                                 f"{stereo_cam_point.z:.1f}"
-                            ),
+                            )
+                        cv2.putText(
+                            frame_xy_bgr,
+                            stereo_label,
                             (10, 210),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
