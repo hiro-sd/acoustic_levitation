@@ -56,6 +56,9 @@ class AppConfig:
     display_every_n_frames: int = 3
 
     # AUTD / stm settings
+    # "stm_circle": 単焦点を円軌道上でSTM走査する従来方式。
+    # "static_multi_focus_circle": 円周上の複数焦点をGSPATで同時生成する試験方式。
+    autd_field_mode: str = "stm_circle"
     point_num: int = 8
     radius: float = 23.5
     default_z: float = 400.0
@@ -63,6 +66,8 @@ class AppConfig:
     autd_loop_sleep_sec: float = 0.001
     stm_freq_hz: float = 100.0
     static_intensity_ratio: float = 0.9
+    multi_focus_pressure_pa: float = 5e5
+    multi_focus_gspat_repeat: int = 100
 
     # Runtime radius change settings
     enable_radius_change: bool = False

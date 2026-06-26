@@ -4,7 +4,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from pyautd3 import AUTD3, FociSTM, Hz, OutputMask, Static
+from pyautd3 import AUTD3, FociSTM, Hz, Intensity, OutputMask, Static
+from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, Pa
 
 from .config import AppConfig
 from .models import HomePosition
@@ -44,6 +45,34 @@ def make_circle_offsets(cfg: AppConfig, radius: float | None = None):
             for i in range(cfg.point_num)
         ],
         dtype=np.float32,
+    )
+
+
+def make_static_multi_focus_gain(
+    cfg: AppConfig,
+    center: np.ndarray,
+    offsets: np.ndarray,
+):
+    """
+    円周上に複数焦点を同時生成する静的な多焦点ゲインを作る。
+
+    従来のFociSTMは「単焦点を時間的に8点周回」させるのに対し、
+    このモードではGSPATで「8点を同時に存在」させる。
+    """
+    foci = [
+        (
+            center + offsets[i],
+            float(cfg.multi_focus_pressure_pa) * Pa,
+        )
+        for i in range(offsets.shape[0])
+    ]
+
+    return GSPAT(
+        foci=foci,
+        option=GSPATOption(
+            repeat=int(cfg.multi_focus_gspat_repeat),
+            constraint=EmissionConstraint.Clamp(Intensity.MIN, Intensity.MAX),
+        ),
     )
 
 
@@ -221,6 +250,11 @@ class AutdSender:
         """
         intensity_ratio が変わったときだけ Static を再送する。
         """ 
+        if self.cfg.autd_field_mode == "static_multi_focus_circle":
+            # 多焦点Staticモードでは Static と GSPAT を同時に送るため、
+            # ここでStaticだけを単独再送しない。
+            return
+
         if target.intensity_ratio is None:
             return
 
@@ -244,6 +278,7 @@ class AutdSender:
 
     def _loop(self):
         print("[THREAD] AUTD Control Thread Started.")
+        print(f"[AUTD] field_mode={self.cfg.autd_field_mode}")
 
         fps_start_time = time.perf_counter()
         fps_frame_count = 0
@@ -268,16 +303,41 @@ class AutdSender:
                 center_vec = np.array([target.x, target.y, target.z], dtype=np.float32)
                 foci = center_vec[None, :] + self.circle_offsets
 
-                stm = FociSTM(
-                    foci=[foci[i] for i in range(foci.shape[0])],
-                    config=self.cfg.stm_freq_hz * Hz,
-                ).into_nearest()
+                if self.cfg.autd_field_mode == "stm_circle":
+                    datagram = FociSTM(
+                        foci=[foci[i] for i in range(foci.shape[0])],
+                        config=self.cfg.stm_freq_hz * Hz,
+                    ).into_nearest()
+
+                elif self.cfg.autd_field_mode == "static_multi_focus_circle":
+                    gain = make_static_multi_focus_gain(
+                        self.cfg,
+                        center_vec,
+                        self.circle_offsets,
+                    )
+                    intensity_ratio = (
+                        self.cfg.static_intensity_ratio
+                        if target.intensity_ratio is None
+                        else target.intensity_ratio
+                    )
+                    datagram = (
+                        Static(intensity=int(0xFF * float(np.clip(intensity_ratio, 0.0, 1.0)))),
+                        gain,
+                    )
+                    self._last_intensity_ratio = float(np.clip(intensity_ratio, 0.0, 1.0))
+
+                else:
+                    raise ValueError(
+                        "Unknown cfg.autd_field_mode: "
+                        f"{self.cfg.autd_field_mode!r}. "
+                        "Use 'stm_circle' or 'static_multi_focus_circle'."
+                    )
 
                 t1 = time.perf_counter()
 
                 self._send_output_mask_if_needed(target)
                 self._send_intensity_if_needed(target)
-                self.autd.send(stm)
+                self.autd.send(datagram)
 
                 t2 = time.perf_counter()
 

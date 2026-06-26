@@ -1,0 +1,40 @@
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from tracking.core.config import AppConfig
+from tracking.core.app import run_tracking_app
+
+
+if __name__ == "__main__":
+    cfg = AppConfig(
+        # 円周上8点を同時に生成する試験モード。
+        # 従来の単焦点STM周回に戻す場合は "stm_circle" を使う。
+        autd_field_mode="static_multi_focus_circle",
+
+        point_num=8,
+        radius=19.0,
+        default_z=400.0,
+        static_intensity_ratio=0.6,
+        multi_focus_pressure_pa=5e5,
+        multi_focus_gspat_repeat=100,
+
+        # stereo_camera_to_autd.npz が作成済みの場合だけ、ステレオ3Dを制御に使う。
+        enable_stereo_triangulation=True,
+        use_stereo_position_for_control=True,
+        stereo_camera_to_autd_npz="./tracking/calibration/stereo_camera_to_autd.npz",
+
+        enable_base_move=True,
+        enable_radius_change=False,
+        enable_fall_recovery=False,
+        enable_auto_demo=True,
+
+        # use_output_mask=True,
+        # output_mask_radius_mm=170.0,
+
+        log_csv_path="./tracking/stability_log_stereo_feedback_static_multi.csv",
+    )
+
+    run_tracking_app(cfg)
