@@ -6,10 +6,12 @@ import numpy as np
 
 from ..config import AppConfig
 from ..models import HomePosition, Target3D
+from ..control.recovery import RecoveryTelemetry
 
 
 LOG_HEADER = [
     "timestamp",
+    "session_mode",
     "mode",
     "u_xy_px",
     "v_xy_px",
@@ -23,6 +25,17 @@ LOG_HEADER = [
     "autd_target_x_mm",
     "autd_target_y_mm",
     "autd_target_z_mm",
+    "z_drop_mm",
+    "vz_mm_s",
+    "predicted_z_mm",
+    "predicted_vz_mm_s",
+    "required_force_mN",
+    "commanded_intensity",
+    "capture_force_saturated",
+    "temporary_home_x",
+    "temporary_home_y",
+    "temporary_home_z",
+    "mode_transition_reason",
 ]
 
 
@@ -78,6 +91,8 @@ class StabilityLogger:
         z_mm: float | None,
         home: HomePosition,
         target: Target3D,
+        control_mode: str = "",
+        recovery: RecoveryTelemetry | None = None,
     ):
         if not self.active or self.writer is None:
             return
@@ -86,10 +101,12 @@ class StabilityLogger:
 
         self.last_xy_time = frame_xy_time
         self.last_z_time = frame_z_time
+        temporary_home = recovery.temporary_home if recovery is not None else None
         self.writer.writerow(
             [
                 f"{time.time():.4f}",
                 self.mode,
+                control_mode,
                 f"{u_xy:.2f}" if np.isfinite(u_xy) else "",
                 f"{v_xy:.2f}" if np.isfinite(v_xy) else "",
                 f"{v_z:.2f}" if np.isfinite(v_z) else "",
@@ -102,6 +119,45 @@ class StabilityLogger:
                 f"{target.x:.3f}",
                 f"{target.y:.3f}",
                 f"{target.z:.3f}",
+                (
+                    f"{recovery.z_drop_mm:.3f}"
+                    if recovery is not None and recovery.z_drop_mm is not None
+                    else ""
+                ),
+                (
+                    f"{recovery.vz_mm_s:.3f}"
+                    if recovery is not None and recovery.vz_mm_s is not None
+                    else ""
+                ),
+                (
+                    f"{recovery.predicted_z_mm:.3f}"
+                    if recovery is not None and recovery.predicted_z_mm is not None
+                    else ""
+                ),
+                (
+                    f"{recovery.predicted_vz_mm_s:.3f}"
+                    if recovery is not None and recovery.predicted_vz_mm_s is not None
+                    else ""
+                ),
+                (
+                    f"{recovery.required_force_mN:.3f}"
+                    if recovery is not None and recovery.required_force_mN is not None
+                    else ""
+                ),
+                (
+                    f"{recovery.commanded_intensity:.3f}"
+                    if recovery is not None and recovery.commanded_intensity is not None
+                    else ""
+                ),
+                (
+                    "1"
+                    if recovery is not None and recovery.capture_force_saturated
+                    else "0"
+                ),
+                f"{temporary_home.x:.3f}" if temporary_home is not None else "",
+                f"{temporary_home.y:.3f}" if temporary_home is not None else "",
+                f"{temporary_home.z:.3f}" if temporary_home is not None else "",
+                recovery.mode_transition_reason if recovery is not None else "",
             ]
         )
 

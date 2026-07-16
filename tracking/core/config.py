@@ -147,19 +147,40 @@ class AppConfig:
     # Fall recovery / return-to-home settings
     enable_fall_recovery: bool = False
 
-    fall_drop_threshold_mm: float = 6.0
-    fall_vz_threshold_mm_s: float = -50.0
+    ball_mass_kg: float = 0.0005
+    ball_diameter_mm: float = 38.0
 
+    # Fall detection. z軸は上向き正なので、下降速度は vz < 0。
+    fall_drop_threshold_mm: float = 10.0
+    fall_vz_threshold_mm_s: float = -50.0
+    fall_descending_frames: int = 3
+    fall_hold_region_xy_mm: float = 6.0
+    fall_hold_region_z_mm: float = 6.0
+
+    # FOLLOW_AND_BRAKE prediction / braking.
+    fall_system_delay_sec: float = 0.025
     fall_recovery_dt_pred_z: float = 0.02
     fall_recovery_z_offset_mm: float = 0.0
-
-    fall_recovery_intensity_ratio: float = 1.0
-
     fall_recovery_dt_pred_xy: float = 0
     fall_recovery_target_xy_step_mm: float = 10.0
     fall_recovery_target_z_step_mm: float = 10.0
+    fall_capture_time_sec: float = 0.12
+    fall_capture_force_safety_factor: float = 1.2
+    fall_capture_intensity_levels: tuple[float, ...] = (0.8, 0.9, 1.0)
+    fall_capture_loadcell_model: tuple[tuple[float, float], ...] = (
+        (0.6, 4.0),
+        (0.7, 5.0),
+        (0.8, 6.0),
+        (0.9, 7.0),
+        (1.0, 8.0),
+    )
+    fall_intensity_down_slew_per_sec: float = 0.4
 
-    fall_recovery_hold_time_s: float = 1.0
+    # LOCAL_HOLD: 捕捉後、その場で一時保持する条件。
+    local_hold_enter_vz_abs_mm_s: float = 30.0
+    local_hold_enter_stable_time_sec: float = 0.08
+    local_hold_min_time_sec: float = 0.3
+    local_hold_intensity_return_done_eps: float = 0.02
 
     # 捕捉できたと判断する条件
     # fall_captured_speed_xy_mm_s: float = 50.0

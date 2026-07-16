@@ -51,7 +51,11 @@ def render_tracking_window(
     """Render one paired observation and return True when ESC is requested."""
     status_text = "ACTIVE" if state.tracking_active else "WAIT (Press ENTER)"
     status_color = (0, 255, 0) if state.tracking_active else (0, 165, 255)
-    mode_color = (0, 255, 255) if state.control_mode == "FALL_RECOVERY" else (255, 255, 255)
+    mode_color = (
+        (0, 255, 255)
+        if state.control_mode in {"FOLLOW_AND_BRAKE", "LOCAL_HOLD", "RETURN_TO_HOME"}
+        else (255, 255, 255)
+    )
     ref_text = (
         f"Ref Point: ({state.home.x - state.origin.x:.1f}, "
         f"{state.home.y - state.origin.y:.1f}, "
