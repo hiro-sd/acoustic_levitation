@@ -23,6 +23,7 @@ if __name__ == "__main__":
         enable_radius_change=False,
         enable_fall_recovery=False,
         enable_auto_demo=True,
+        use_gravity_prediction_z=True,
 
         # use_output_mask=True,
         # output_mask_radius_mm=170.0,
