@@ -10,9 +10,9 @@ from tracking.core.app import run_tracking_app
 
 if __name__ == "__main__":
     cfg = AppConfig(
-        radius=19.0,
+        radius=23.5,
         default_z=400.0,
-        static_intensity_ratio=0.6,
+        static_intensity_ratio=0.9,
 
         # stereo_camera_to_autd.npz が作成済みの場合だけ、ステレオ3Dを制御に使う。
         enable_stereo_triangulation=True,
@@ -25,10 +25,13 @@ if __name__ == "__main__":
         enable_auto_demo=True,
         use_gravity_prediction_z=True,
 
+        dt_pred_xy=0.05,
+        dt_pred_z=0.05,
+
         # use_output_mask=True,
         # output_mask_radius_mm=170.0,
 
-        log_csv_path="./tracking/stability_log_stereo_feedback.csv",
+        log_csv_path="./tracking/stability_log.csv",
     )
 
     run_tracking_app(cfg)
