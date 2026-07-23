@@ -88,8 +88,12 @@ class PredictionPIDController:
             self.prev_vx = vx
             self.prev_vy = vy
 
-            x_pred = current_x + vx * self.cfg.dt_pred_xy
-            y_pred = current_y + vy * self.cfg.dt_pred_xy
+            if self.cfg.enable_delay_compensation:
+                x_pred = current_x + vx * self.cfg.dt_pred_xy
+                y_pred = current_y + vy * self.cfg.dt_pred_xy
+            else:
+                x_pred = current_x
+                y_pred = current_y
 
             setpoint_x = float(home.x)
             setpoint_y = float(home.y)
@@ -172,7 +176,7 @@ class PredictionPIDController:
             self.prev_z_meas_time = float(meas.t_z)
             self.prev_vz = vz
 
-            if self.cfg.use_gravity_prediction_z:
+            if self.cfg.enable_delay_compensation and self.cfg.use_gravity_prediction_z:
                 # 自由飛行ではないので通常はOFF推奨。
                 # 試す場合のみ使う。
                 z_pred = (
@@ -180,8 +184,10 @@ class PredictionPIDController:
                     + vz * self.cfg.dt_pred_z
                     - 0.5 * self.cfg.gravity_mm_s2 * (self.cfg.dt_pred_z ** 2)
                 )
-            else:
+            elif self.cfg.enable_delay_compensation:
                 z_pred = z_filt + vz * self.cfg.dt_pred_z
+            else:
+                z_pred = z_filt
 
             setpoint_z = float(home.z)
             z_error = setpoint_z - z_pred

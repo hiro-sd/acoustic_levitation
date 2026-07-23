@@ -123,6 +123,12 @@ def drop_consecutive_duplicate_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 def normalize_log_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize columns and drop invalid rows required for analysis."""
+    if "session_mode" in df.columns:
+        # 現行ログでは session_mode が FIXED/PID/PID_NO_DELAY、
+        # mode が NORMAL_HOLD 等の制御状態を表す。
+        df["control_mode"] = df["mode"] if "mode" in df.columns else ""
+        df["mode"] = df["session_mode"]
+
     if "mode" in df.columns:
         df["mode"] = df["mode"].astype(str).str.strip().str.upper()
         df["mode"] = df["mode"].replace({"PD": "PID"})
@@ -208,7 +214,7 @@ def compute_metrics(df: pd.DataFrame):
         out["r_xyz"] = np.nan
 
     results = {}
-    for mode in ["FIXED", "PID"]:
+    for mode in ["FIXED", "PID_NO_DELAY", "PID"]:
         sub = out[out["mode"] == mode]
         if len(sub) == 0:
             continue
@@ -287,13 +293,19 @@ def resolve_input_paths(inputs):
 
 
 def print_mode_results(results):
-    for mode in ["FIXED", "PID"]:
+    mode_labels = {
+        "FIXED": "固定音場",
+        "PID_NO_DELAY": "制御あり・遅延補正なし",
+        "PID": "制御あり・遅延補正あり",
+    }
+
+    for mode in ["FIXED", "PID_NO_DELAY", "PID"]:
         if mode not in results:
             print(f"[WARN] mode={mode} のデータがありません。")
             continue
 
         m = results[mode]
-        label = "固定音場" if mode == "FIXED" else "制御あり"
+        label = mode_labels.get(mode, mode)
 
         print(f"=== {label} ({mode}) ===")
         print(f"  フレーム数         : {m['n']}")
@@ -319,29 +331,40 @@ def print_mode_results(results):
 
 
 def print_improvement(results):
-    if "FIXED" not in results or "PID" not in results:
-        return
+    labels = {
+        "FIXED": "FIXED",
+        "PID_NO_DELAY": "PID_NO_DELAY",
+        "PID": "PID",
+    }
 
-    fixed = results["FIXED"]
-    pidm = results["PID"]
-
-    def ratio_msg(key, label):
-        a = fixed.get(key, np.nan)
-        b = pidm.get(key, np.nan)
+    def ratio_msg(base_mode, compare_mode, key, label):
+        a = results[base_mode].get(key, np.nan)
+        b = results[compare_mode].get(key, np.nan)
         if not (np.isfinite(a) and np.isfinite(b) and b > 0):
             return
         ratio = a / b
         print(
-            f"[RESULT] {label}: FIXED / PID = {ratio:.2f} "
-            f"({'PID改善' if ratio > 1 else 'PID悪化'})"
+            f"[RESULT] {label}: {labels[base_mode]} / {labels[compare_mode]} = {ratio:.2f} "
+            f"({'改善' if ratio > 1 else '悪化'})"
         )
 
-    ratio_msg("sigma_x", "sigma_x")
-    ratio_msg("sigma_y", "sigma_y")
-    ratio_msg("sigma_xy", "sigma_xy")
-    ratio_msg("sigma_z", "sigma_z")
-    ratio_msg("sigma_xyz", "sigma_xyz")
-    print()
+    pairs = []
+    if "FIXED" in results and "PID" in results:
+        pairs.append(("FIXED", "PID", "制御あり・遅延補正ありの効果"))
+    if "FIXED" in results and "PID_NO_DELAY" in results:
+        pairs.append(("FIXED", "PID_NO_DELAY", "制御あり・遅延補正なしの効果"))
+    if "PID_NO_DELAY" in results and "PID" in results:
+        pairs.append(("PID_NO_DELAY", "PID", "遅延補正の効果"))
+
+    for base_mode, compare_mode, title in pairs:
+        print(f"--- {title} ---")
+        ratio_msg(base_mode, compare_mode, "sigma_x", "sigma_x")
+        ratio_msg(base_mode, compare_mode, "sigma_y", "sigma_y")
+        ratio_msg(base_mode, compare_mode, "sigma_xy", "sigma_xy")
+        ratio_msg(base_mode, compare_mode, "sigma_z", "sigma_z")
+        ratio_msg(base_mode, compare_mode, "sigma_xyz", "sigma_xyz")
+    if pairs:
+        print()
 
 
 def plot_single_file(df, results, out_dir):
@@ -562,11 +585,22 @@ def plot_single_file(df, results, out_dir):
     metrics = ["sigma_x", "sigma_y", "sigma_z", "sigma_xyz"]
     metric_labels = ["std_x", "std_y", "std_z", "std_xyz"]
     x = np.arange(len(metrics))
-    width = 0.35
-    fixed_vals = [results["FIXED"].get(m, np.nan) if "FIXED" in results else np.nan for m in metrics]
-    pid_vals = [results["PID"].get(m, np.nan) if "PID" in results else np.nan for m in metrics]
-    ax.bar(x - width / 2, fixed_vals, width, label="FIXED", color=colors["FIXED"])
-    ax.bar(x + width / 2, pid_vals, width, label="PID", color=colors["PID"])
+    bar_modes = [m for m in ["FIXED", "PID_NO_DELAY", "PID"] if m in results]
+    bar_colors = {
+        "FIXED": colors["FIXED"],
+        "PID_NO_DELAY": "#72b36a",
+        "PID": colors["PID"],
+    }
+    bar_labels = {
+        "FIXED": "FIXED",
+        "PID_NO_DELAY": "PID no delay",
+        "PID": "PID delay",
+    }
+    width = min(0.8 / max(1, len(bar_modes)), 0.25)
+    offsets = (np.arange(len(bar_modes)) - (len(bar_modes) - 1) / 2.0) * width
+    for offset, mode in zip(offsets, bar_modes):
+        vals = [results[mode].get(m, np.nan) for m in metrics]
+        ax.bar(x + offset, vals, width, label=bar_labels[mode], color=bar_colors[mode])
     ax.set_xticks(x)
     ax.set_xticklabels(metric_labels, fontsize=tick_fs)
     ax.set_ylabel("Standard Deviation [mm]", fontsize=label_fs)
@@ -751,10 +785,15 @@ def main():
     print("=" * 72)
     cols_display = ["file_idx", "file_name", "mode", "n", "sigma_x", "sigma_y", "sigma_z", "sigma_xy", "sigma_xyz"]
     cols_display = [c for c in cols_display if c in summary_df.columns]
-    for mode in ["FIXED", "PD"]:
+    summary_labels = {
+        "FIXED": "固定音場 (FIXED)",
+        "PID_NO_DELAY": "制御あり・遅延補正なし (PID_NO_DELAY)",
+        "PID": "制御あり・遅延補正あり (PID)",
+    }
+    for mode in ["FIXED", "PID_NO_DELAY", "PID"]:
         sub = summary_df[summary_df["mode"] == mode][cols_display]
         if len(sub) > 0:
-            label = "固定音場 (FIXED)" if mode == "FIXED" else "制御あり (PD)"
+            label = summary_labels.get(mode, mode)
             print(f"\n--- {label} ---")
             print(sub.to_string(index=False))
     print()

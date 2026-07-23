@@ -100,6 +100,9 @@ class AppConfig:
     output_mask_update_eps_mm: float = 0.5
 
     # XY prediction PID
+    enable_delay_compensation: bool = True
+    delay_compensation_toggle_key: str = "p"
+
     kp_xy: float = 0.3 # [P] 中心に引き戻す強さ (0.0 なら自然な復元力のみ)
     kd_xy: float = 0.05 # [D] 揺れを抑えるブレーキの強さ (速度に対する抵抗)
     ki_xy: float = 0.1 # [I] ゆっくりと中心に引き戻す力 (積分項)

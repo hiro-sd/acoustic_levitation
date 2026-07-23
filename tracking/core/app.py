@@ -275,6 +275,7 @@ def run_tracking_app(cfg: AppConfig):
             prev_enter_pressed = False
             prev_demo_toggle_pressed = False
             prev_log_trigger_pressed = False
+            prev_delay_toggle_pressed = False
 
             control_mode = NORMAL_HOLD
             demo_active = False
@@ -311,9 +312,20 @@ def run_tracking_app(cfg: AppConfig):
             window_title = "Tracking App"
             cv2.namedWindow(window_title, cv2.WINDOW_NORMAL)
 
+            def current_log_mode() -> str:
+                if not tracking_active:
+                    return "FIXED"
+                if cfg.enable_delay_compensation:
+                    return "PID"
+                return "PID_NO_DELAY"
+
             print("=================================================")
             print("  READY TO LEVITATE.")
             print("  Press [ENTER] to START/PAUSE feedback.")
+            print(
+                f"  Press [{cfg.delay_compensation_toggle_key.upper()}] to "
+                "toggle delay compensation."
+            )
             if cfg.enable_base_move:
                 print("  Use [Arrow keys] to move base XY.")
                 print("  Use [PageUp/PageDown] to move base Z.")
@@ -370,6 +382,17 @@ def run_tracking_app(cfg: AppConfig):
 
                 prev_enter_pressed = enter_pressed
 
+                delay_toggle_pressed = is_key_pressed(cfg.delay_compensation_toggle_key)
+                if delay_toggle_pressed and not prev_delay_toggle_pressed:
+                    cfg.enable_delay_compensation = not cfg.enable_delay_compensation
+                    state = "ON" if cfg.enable_delay_compensation else "OFF"
+                    print(f"[INFO] Delay compensation: {state}")
+                    if tracking_active:
+                        controller.reset(last_target)
+                    time.sleep(0.2)
+
+                prev_delay_toggle_pressed = delay_toggle_pressed
+
                 if cfg.enable_auto_demo:
                     demo_toggle_pressed = is_key_pressed(cfg.demo_toggle_key)
 
@@ -423,7 +446,7 @@ def run_tracking_app(cfg: AppConfig):
                     log_trigger_pressed = is_key_pressed(cfg.log_trigger_key)
 
                     if log_trigger_pressed and not prev_log_trigger_pressed and not logger.active:
-                        logger.start("PID" if tracking_active else "FIXED")
+                        logger.start(current_log_mode())
 
                     prev_log_trigger_pressed = log_trigger_pressed
 
