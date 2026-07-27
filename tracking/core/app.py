@@ -282,6 +282,8 @@ def run_tracking_app(cfg: AppConfig):
             demo = SquareZDemo(cfg, display_origin)
 
             descending_frame_count = 0
+            follow_start_time = None
+            follow_xy_reference = None
             local_hold_stable_since = None
             local_hold_start_time = None
             mode_transition_reason = ""
@@ -358,6 +360,8 @@ def run_tracking_app(cfg: AppConfig):
                         print("[INFO] >>> TRACKING PAUSED: Return to initial base position <<<")
                         control_mode = NORMAL_HOLD
                         descending_frame_count = 0
+                        follow_start_time = None
+                        follow_xy_reference = None
                         local_hold_stable_since = None
                         local_hold_start_time = None
                         mode_transition_reason = "tracking_paused"
@@ -410,6 +414,8 @@ def run_tracking_app(cfg: AppConfig):
                 if cfg.enable_auto_demo and demo_active and tracking_active:
                     home = demo.update(dt_loop)
                     control_mode = NORMAL_HOLD
+                    follow_start_time = None
+                    follow_xy_reference = None
                     return_setpoint = HomePosition(
                         x=home.x,
                         y=home.y,
@@ -722,6 +728,8 @@ def run_tracking_app(cfg: AppConfig):
                             )
                             if reason is not None:
                                 control_mode = FOLLOW_AND_BRAKE
+                                follow_start_time = now_loop
+                                follow_xy_reference = None
                                 local_hold_stable_since = None
                                 local_hold_start_time = None
                                 mode_transition_reason = reason
@@ -744,27 +752,79 @@ def run_tracking_app(cfg: AppConfig):
                             recovery_telemetry.predicted_z_mm = pred_z
                             recovery_telemetry.predicted_vz_mm_s = pred_vz
 
-                            if pred_x is not None:
-                                catch_x = last_target.x + float(
-                                    np.clip(
-                                        pred_x - last_target.x,
-                                        -cfg.fall_recovery_target_xy_step_mm,
-                                        cfg.fall_recovery_target_xy_step_mm,
-                                    )
-                                )
-                            else:
-                                catch_x = last_target.x
+                            if follow_start_time is None:
+                                follow_start_time = now_loop
 
-                            if pred_y is not None:
-                                catch_y = last_target.y + float(
-                                    np.clip(
-                                        pred_y - last_target.y,
-                                        -cfg.fall_recovery_target_xy_step_mm,
-                                        cfg.fall_recovery_target_xy_step_mm,
-                                    )
-                                )
+                            elapsed_follow_sec = float(now_loop - follow_start_time)
+                            in_xy_align_phase = (
+                                elapsed_follow_sec
+                                <= float(cfg.fall_xy_align_duration_sec)
+                            )
+
+                            if follow_xy_reference is None:
+                                ref_x = pred_x if pred_x is not None else x_mm
+                                ref_y = pred_y if pred_y is not None else y_mm
+                                if ref_x is None:
+                                    ref_x = last_target.x
+                                if ref_y is None:
+                                    ref_y = last_target.y
+                                follow_xy_reference = (float(ref_x), float(ref_y))
+
+                            if in_xy_align_phase:
+                                desired_x = pred_x if pred_x is not None else last_target.x
+                                desired_y = pred_y if pred_y is not None else last_target.y
                             else:
-                                catch_y = last_target.y
+                                ref_x, ref_y = follow_xy_reference
+
+                                if x_mm is not None:
+                                    if cfg.enable_delay_compensation:
+                                        x_for_feedback = float(
+                                            x_mm + vx_now * cfg.dt_pred_xy
+                                        )
+                                    else:
+                                        x_for_feedback = float(x_mm)
+                                    x_error = float(ref_x - x_for_feedback)
+                                    desired_x = (
+                                        float(ref_x)
+                                        + cfg.fall_xy_stabilize_kp * x_error
+                                        - cfg.fall_xy_stabilize_kd * vx_now
+                                    )
+                                else:
+                                    desired_x = last_target.x
+
+                                if y_mm is not None:
+                                    if cfg.enable_delay_compensation:
+                                        y_for_feedback = float(
+                                            y_mm + vy_now * cfg.dt_pred_xy
+                                        )
+                                    else:
+                                        y_for_feedback = float(y_mm)
+                                    y_error = float(ref_y - y_for_feedback)
+                                    desired_y = (
+                                        float(ref_y)
+                                        + cfg.fall_xy_stabilize_kp * y_error
+                                        - cfg.fall_xy_stabilize_kd * vy_now
+                                    )
+                                else:
+                                    desired_y = last_target.y
+
+                            catch_x = last_target.x + float(
+                                np.clip(
+                                    desired_x - last_target.x,
+                                    -cfg.fall_recovery_target_xy_step_mm,
+                                    cfg.fall_recovery_target_xy_step_mm,
+                                )
+                            )
+                            catch_y = last_target.y + float(
+                                np.clip(
+                                    desired_y - last_target.y,
+                                    -cfg.fall_recovery_target_xy_step_mm,
+                                    cfg.fall_recovery_target_xy_step_mm,
+                                )
+                            )
+
+                            if in_xy_align_phase:
+                                follow_xy_reference = (float(catch_x), float(catch_y))
 
                             if pred_z is not None:
                                 if z_mm is not None and vz_now > 0.0:
@@ -882,6 +942,8 @@ def run_tracking_app(cfg: AppConfig):
                                 vz_now,
                             ):
                                 control_mode = NORMAL_HOLD
+                                follow_start_time = None
+                                follow_xy_reference = None
                                 mode_transition_reason = "return_home_done"
 
                                 return_setpoint = HomePosition(

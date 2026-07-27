@@ -166,6 +166,11 @@ class AppConfig:
     fall_recovery_dt_pred_xy: float = 0
     fall_recovery_target_xy_step_mm: float = 10.0
     fall_recovery_target_z_step_mm: float = 10.0
+    # FOLLOW_AND_BRAKE中のXYは、最初だけ落下球の予測位置へ寄せ、
+    # その後は捕捉基準まわりで通常保持に近い逆方向補正へ切り替える。
+    fall_xy_align_duration_sec: float = 0.12
+    fall_xy_stabilize_kp: float = 0.3
+    fall_xy_stabilize_kd: float = 0.05
     fall_capture_time_sec: float = 0.12
     fall_capture_force_safety_factor: float = 1.2
     fall_slow_down_vz_mm_s: float = -80.0
