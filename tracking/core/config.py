@@ -180,6 +180,7 @@ class AppConfig:
 
     # LOCAL_HOLD: 捕捉後、その場で一時保持する条件。
     local_hold_enter_vz_abs_mm_s: float = 30.0
+    local_hold_enter_upward_vz_mm_s: float = 20.0
     local_hold_enter_stable_time_sec: float = 0.08
     local_hold_min_time_sec: float = 0.3
     local_hold_intensity_return_done_eps: float = 0.02

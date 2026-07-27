@@ -797,48 +797,60 @@ def run_tracking_app(cfg: AppConfig):
                                     f"required={force_command.required_force_mN:.2f} mN"
                                 )
 
-                            if abs(vz_now) <= cfg.local_hold_enter_vz_abs_mm_s:
+                            def enter_local_hold(reason: str):
+                                nonlocal control_mode
+                                nonlocal local_hold_start_time
+                                nonlocal local_hold_stable_since
+                                nonlocal mode_transition_reason
+                                nonlocal return_setpoint
+                                sx = x_mm if x_mm is not None else last_target.x
+                                sy = y_mm if y_mm is not None else last_target.y
+                                sz = (
+                                    controller.prev_particle_z_filt
+                                    if controller.prev_particle_z_filt is not None
+                                    else (z_mm if z_mm is not None else last_target.z)
+                                )
+
+                                return_setpoint = HomePosition(
+                                    x=float(sx),
+                                    y=float(sy),
+                                    z=float(sz),
+                                )
+
+                                control_mode = LOCAL_HOLD
+                                local_hold_start_time = time.time()
+                                local_hold_stable_since = None
+                                mode_transition_reason = reason
+
+                                controller.reset(
+                                    Target3D(
+                                        return_setpoint.x,
+                                        return_setpoint.y,
+                                        return_setpoint.z,
+                                    )
+                                )
+
+                                print(
+                                    f"[RECOVERY] FOLLOW_AND_BRAKE -> LOCAL_HOLD "
+                                    f"reason={reason} "
+                                    f"setpoint=({return_setpoint.x:.1f}, "
+                                    f"{return_setpoint.y:.1f}, {return_setpoint.z:.1f})"
+                                )
+
+                                return Target3D(
+                                    x=return_setpoint.x,
+                                    y=return_setpoint.y,
+                                    z=return_setpoint.z,
+                                )
+
+                            if vz_now >= cfg.local_hold_enter_upward_vz_mm_s:
+                                target = enter_local_hold("captured_vz_reversed_upward")
+
+                            elif abs(vz_now) <= cfg.local_hold_enter_vz_abs_mm_s:
                                 if local_hold_stable_since is None:
                                     local_hold_stable_since = time.time()
                                 elif time.time() - local_hold_stable_since >= cfg.local_hold_enter_stable_time_sec:
-                                    sx = x_mm if x_mm is not None else last_target.x
-                                    sy = y_mm if y_mm is not None else last_target.y
-                                    sz = (
-                                        controller.prev_particle_z_filt
-                                        if controller.prev_particle_z_filt is not None
-                                        else (z_mm if z_mm is not None else last_target.z)
-                                    )
-
-                                    return_setpoint = HomePosition(
-                                        x=float(sx),
-                                        y=float(sy),
-                                        z=float(sz),
-                                    )
-
-                                    control_mode = LOCAL_HOLD
-                                    local_hold_start_time = time.time()
-                                    local_hold_stable_since = None
-                                    mode_transition_reason = "captured_vz_stable"
-
-                                    controller.reset(
-                                        Target3D(
-                                            return_setpoint.x,
-                                            return_setpoint.y,
-                                            return_setpoint.z,
-                                        )
-                                    )
-
-                                    target = Target3D(
-                                        x=return_setpoint.x,
-                                        y=return_setpoint.y,
-                                        z=return_setpoint.z,
-                                    )
-
-                                    print(
-                                        f"[RECOVERY] FOLLOW_AND_BRAKE -> LOCAL_HOLD "
-                                        f"setpoint=({return_setpoint.x:.1f}, "
-                                        f"{return_setpoint.y:.1f}, {return_setpoint.z:.1f})"
-                                    )
+                                    target = enter_local_hold("captured_vz_stable")
                             else:
                                 local_hold_stable_since = None
 
