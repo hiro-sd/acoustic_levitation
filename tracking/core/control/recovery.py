@@ -26,6 +26,7 @@ class RecoveryTelemetry:
     predicted_vz_mm_s: float | None = None
     required_force_mN: float | None = None
     commanded_intensity: float | None = None
+    actual_intensity: float | None = None
     capture_force_saturated: bool = False
     temporary_home: HomePosition | None = None
     mode_transition_reason: str = ""

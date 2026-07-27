@@ -31,6 +31,7 @@ LOG_HEADER = [
     "predicted_vz_mm_s",
     "required_force_mN",
     "commanded_intensity",
+    "actual_intensity",
     "capture_force_saturated",
     "temporary_home_x",
     "temporary_home_y",
@@ -61,6 +62,24 @@ class StabilityLogger:
             os.makedirs(directory, exist_ok=True)
 
         file_exists = os.path.exists(self.cfg.log_csv_path)
+        if file_exists and os.path.getsize(self.cfg.log_csv_path) > 0:
+            try:
+                with open(self.cfg.log_csv_path, newline="", encoding="utf-8") as existing:
+                    existing_header = next(csv.reader(existing), [])
+                if existing_header != LOG_HEADER:
+                    backup_path = (
+                        f"{self.cfg.log_csv_path}.bak_"
+                        f"{time.strftime('%Y%m%d_%H%M%S')}"
+                    )
+                    os.replace(self.cfg.log_csv_path, backup_path)
+                    file_exists = False
+                    print(
+                        "[LOG] Existing CSV header differs from current schema. "
+                        f"Moved old log to: {backup_path}"
+                    )
+            except Exception as exc:
+                print(f"[LOG] Warning: failed to inspect existing CSV header: {exc}")
+
         self.file = open(self.cfg.log_csv_path, "a", newline="", encoding="utf-8")
         self.writer = csv.writer(self.file)
         if not file_exists or os.path.getsize(self.cfg.log_csv_path) == 0:
@@ -147,6 +166,11 @@ class StabilityLogger:
                 (
                     f"{recovery.commanded_intensity:.3f}"
                     if recovery is not None and recovery.commanded_intensity is not None
+                    else ""
+                ),
+                (
+                    f"{recovery.actual_intensity:.3f}"
+                    if recovery is not None and recovery.actual_intensity is not None
                     else ""
                 ),
                 (

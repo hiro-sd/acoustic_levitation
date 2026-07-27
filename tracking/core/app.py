@@ -769,14 +769,19 @@ def run_tracking_app(cfg: AppConfig):
                             if pred_z is not None:
                                 if z_mm is not None and vz_now > 0.0:
                                     # 上向き反転後は球の移動方向へ追従し続けず、
-                                    # 少し下に置いて打ち上げを抑える。
-                                    pred_z = float(z_mm + cfg.fall_upward_target_z_offset_mm)
+                                    # z targetを上方向へは動かさない。
+                                    # 少し下の候補位置を作り、現在targetより上ならfreezeする。
+                                    upward_candidate_z = float(
+                                        z_mm + cfg.fall_upward_target_z_offset_mm
+                                    )
+                                    catch_z = min(last_target.z, upward_candidate_z)
+                                else:
+                                    # FOLLOW_AND_BRAKEでは、通常PIDが直前に作った
+                                    # last_target.z が球より大きく上に残ると打ち上げ要因になる。
+                                    # そのため下降中のZはstep制限せず、予測位置へ直接置く。
+                                    catch_z = pred_z
 
-                                pred_z = float(np.clip(pred_z, cfg.z_min, cfg.z_max))
-                                # FOLLOW_AND_BRAKEでは、通常PIDが直前に作った
-                                # last_target.z が球より大きく上に残ると打ち上げ要因になる。
-                                # そのためZはstep制限せず、予測位置へ直接置く。
-                                catch_z = pred_z
+                                catch_z = float(np.clip(catch_z, cfg.z_min, cfg.z_max))
                             else:
                                 catch_z = last_target.z
 
@@ -901,12 +906,22 @@ def run_tracking_app(cfg: AppConfig):
                         # 7. intensity更新。
                         #    通常保持時は既存LPFを維持し、捕捉関連状態だけ上昇即時/下降slewを使う。
                         if control_mode == FOLLOW_AND_BRAKE and capture_intensity_ratio is not None:
-                            current_intensity_ratio = apply_capture_intensity_slew(
-                                current_intensity_ratio,
-                                capture_intensity_ratio,
-                                cfg,
-                                dt_loop,
-                            )
+                            if vz_now > 0.0:
+                                # 上向きに反転したら、打ち上げを止めるため下降slewを待たず即座に抜く。
+                                current_intensity_ratio = float(
+                                    np.clip(
+                                        capture_intensity_ratio,
+                                        0.0,
+                                        cfg.intensity_max_ratio,
+                                    )
+                                )
+                            else:
+                                current_intensity_ratio = apply_capture_intensity_slew(
+                                    current_intensity_ratio,
+                                    capture_intensity_ratio,
+                                    cfg,
+                                    dt_loop,
+                                )
                         elif control_mode in [LOCAL_HOLD, RETURN_TO_HOME]:
                             current_intensity_ratio = apply_capture_intensity_slew(
                                 current_intensity_ratio,
@@ -929,6 +944,7 @@ def run_tracking_app(cfg: AppConfig):
                                 )
                             )
 
+                        recovery_telemetry.actual_intensity = current_intensity_ratio
                         last_target = target
 
                         set_tracking_target(
