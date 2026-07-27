@@ -154,7 +154,6 @@ class AppConfig:
     ball_diameter_mm: float = 38.0
 
     # Fall detection. z軸は上向き正なので、下降速度は vz < 0。
-    fall_drop_threshold_mm: float = 10.0
     fall_vz_threshold_mm_s: float = -50.0
     fall_descending_frames: int = 3
     fall_hold_region_xy_mm: float = 6.0
@@ -184,11 +183,6 @@ class AppConfig:
     local_hold_enter_stable_time_sec: float = 0.08
     local_hold_min_time_sec: float = 0.3
     local_hold_intensity_return_done_eps: float = 0.02
-
-    # 捕捉できたと判断する条件
-    # fall_captured_speed_xy_mm_s: float = 50.0
-    # fall_captured_vz_mm_s: float = 40.0
-    # fall_captured_stable_time_s: float = 0.05
 
     # RETURN_TO_HOME中、一時目標をhomeへ戻す速度
     return_home_speed_xy_mm_s: float = 8.0

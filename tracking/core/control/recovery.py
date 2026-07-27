@@ -133,21 +133,6 @@ def apply_capture_intensity_slew(
     return float(max(target, current - max_drop))
 
 
-def should_enter_fall_recovery(
-    cfg: AppConfig,
-    home_z: float,
-    z_mm: float | None,
-    vz: float,
-) -> bool:
-    if z_mm is None:
-        return False
-
-    return (
-        home_z - z_mm >= cfg.fall_drop_threshold_mm
-        and vz <= cfg.fall_vz_threshold_mm_s
-    )
-
-
 def fall_detection_reason(
     cfg: AppConfig,
     home: HomePosition,
