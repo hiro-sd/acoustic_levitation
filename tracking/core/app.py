@@ -767,6 +767,11 @@ def run_tracking_app(cfg: AppConfig):
                                 catch_y = last_target.y
 
                             if pred_z is not None:
+                                if z_mm is not None and vz_now > 0.0:
+                                    # 上向き反転後は球の移動方向へ追従し続けず、
+                                    # 少し下に置いて打ち上げを抑える。
+                                    pred_z = float(z_mm + cfg.fall_upward_target_z_offset_mm)
+
                                 pred_z = float(np.clip(pred_z, cfg.z_min, cfg.z_max))
                                 catch_z = last_target.z + float(
                                     np.clip(
@@ -787,8 +792,16 @@ def run_tracking_app(cfg: AppConfig):
                             required_force = required_capture_force_mN(cfg, pred_vz)
                             force_command = capture_intensity_from_force(cfg, required_force)
                             capture_intensity_ratio = force_command.commanded_intensity
+
+                            if vz_now > 0.0:
+                                capture_intensity_ratio = float(cfg.fall_upward_intensity_ratio)
+                            elif vz_now >= cfg.fall_near_stop_vz_mm_s:
+                                capture_intensity_ratio = float(cfg.static_intensity_ratio)
+                            elif vz_now >= cfg.fall_slow_down_vz_mm_s:
+                                capture_intensity_ratio = float(cfg.fall_near_stop_intensity_ratio)
+
                             recovery_telemetry.required_force_mN = force_command.required_force_mN
-                            recovery_telemetry.commanded_intensity = force_command.commanded_intensity
+                            recovery_telemetry.commanded_intensity = capture_intensity_ratio
                             recovery_telemetry.capture_force_saturated = force_command.saturated
 
                             if force_command.saturated:
@@ -843,10 +856,7 @@ def run_tracking_app(cfg: AppConfig):
                                     z=return_setpoint.z,
                                 )
 
-                            if vz_now >= cfg.local_hold_enter_upward_vz_mm_s:
-                                target = enter_local_hold("captured_vz_reversed_upward")
-
-                            elif abs(vz_now) <= cfg.local_hold_enter_vz_abs_mm_s:
+                            if abs(vz_now) <= cfg.local_hold_enter_vz_abs_mm_s:
                                 if local_hold_stable_since is None:
                                     local_hold_stable_since = time.time()
                                 elif time.time() - local_hold_stable_since >= cfg.local_hold_enter_stable_time_sec:
@@ -854,28 +864,8 @@ def run_tracking_app(cfg: AppConfig):
                             else:
                                 local_hold_stable_since = None
 
-                        # 5. LOCAL_HOLD中は一時基準で保持し、intensityが通常値へ戻ったら
-                        #    RETURN_TO_HOMEへ移行する。
-                        if control_mode == LOCAL_HOLD:
-                            held_long_enough = (
-                                local_hold_start_time is not None
-                                and time.time() - local_hold_start_time >= cfg.local_hold_min_time_sec
-                            )
-                            intensity_near_normal = (
-                                current_intensity_ratio - cfg.static_intensity_ratio
-                                <= cfg.local_hold_intensity_return_done_eps
-                            )
-                            if held_long_enough and intensity_near_normal:
-                                control_mode = RETURN_TO_HOME
-                                mode_transition_reason = "local_hold_done_return_home"
-                                controller.reset(
-                                    Target3D(
-                                        return_setpoint.x,
-                                        return_setpoint.y,
-                                        return_setpoint.z,
-                                    )
-                                )
-                                print("[RECOVERY] LOCAL_HOLD -> RETURN_TO_HOME")
+                        # 5. LOCAL_HOLD中は一時基準でその場保持する。
+                        #    現段階では捕捉可否の確認を優先し、元のhomeへは自動復帰しない。
 
                         # 6. RETURN_TO_HOME完了判定
                         if control_mode == RETURN_TO_HOME:
