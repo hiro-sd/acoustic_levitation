@@ -773,13 +773,10 @@ def run_tracking_app(cfg: AppConfig):
                                     pred_z = float(z_mm + cfg.fall_upward_target_z_offset_mm)
 
                                 pred_z = float(np.clip(pred_z, cfg.z_min, cfg.z_max))
-                                catch_z = last_target.z + float(
-                                    np.clip(
-                                        pred_z - last_target.z,
-                                        -cfg.fall_recovery_target_z_step_mm,
-                                        cfg.fall_recovery_target_z_step_mm,
-                                    )
-                                )
+                                # FOLLOW_AND_BRAKEでは、通常PIDが直前に作った
+                                # last_target.z が球より大きく上に残ると打ち上げ要因になる。
+                                # そのためZはstep制限せず、予測位置へ直接置く。
+                                catch_z = pred_z
                             else:
                                 catch_z = last_target.z
 
