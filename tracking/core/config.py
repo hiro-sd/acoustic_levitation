@@ -154,10 +154,10 @@ class AppConfig:
     ball_diameter_mm: float = 38.0
 
     # Fall detection. z軸は上向き正なので、下降速度は vz < 0。
-    fall_vz_threshold_mm_s: float = -50.0
-    fall_descending_frames: int = 3
-    fall_hold_region_xy_mm: float = 6.0
-    fall_hold_region_z_mm: float = 6.0
+    fall_vz_threshold_mm_s: float = -80.0
+    fall_descending_frames: int = 5
+    fall_hold_region_xy_mm: float = 12.0
+    fall_hold_region_z_mm: float = 12.0
 
     # FOLLOW_AND_BRAKE prediction / braking.
     fall_system_delay_sec: float = 0.025
@@ -168,7 +168,7 @@ class AppConfig:
     fall_recovery_target_z_step_mm: float = 10.0
     fall_capture_time_sec: float = 0.12
     fall_capture_force_safety_factor: float = 1.2
-    fall_capture_intensity_levels: tuple[float, ...] = (0.8, 0.9, 1.0)
+    fall_capture_intensity_levels: tuple[float, ...] = (0.6, 0.7, 0.8, 0.9, 1.0)
     fall_capture_loadcell_model: tuple[tuple[float, float], ...] = (
         (0.6, 4.0),
         (0.7, 5.0),

@@ -95,7 +95,7 @@ def capture_intensity_from_force(
     required_force_mN: float,
 ) -> CaptureForceCommand:
     """
-    ロードセルモデルに基づき、まずは 0.8/0.9/1.0 の段階制御で強度を選ぶ。
+    ロードセルモデルに基づき、設定された段階制御で強度を選ぶ。
     """
     levels = tuple(float(v) for v in cfg.fall_capture_intensity_levels)
     max_model_force = max(float(force) for _, force in cfg.fall_capture_loadcell_model)
@@ -147,7 +147,7 @@ def fall_detection_reason(
 
     - 下降速度
     - 下降の連続フレーム数
-    - 通常保持領域からの逸脱
+    - z方向で通常保持領域から十分に下へ逸脱
     """
     if z_mm is None:
         return None
@@ -160,10 +160,8 @@ def fall_detection_reason(
     fast_down = float(vz_mm_s) <= float(cfg.fall_vz_threshold_mm_s)
     enough_frames = int(descending_frames) >= int(cfg.fall_descending_frames)
     outside_z = z_drop >= float(cfg.fall_hold_region_z_mm)
-    outside_xy = xy_err is not None and xy_err >= float(cfg.fall_hold_region_xy_mm)
-    outside_hold_region = outside_z or outside_xy
 
-    if fast_down and enough_frames and outside_hold_region:
+    if fast_down and enough_frames and outside_z:
         parts = [
             f"vz={vz_mm_s:.1f}",
             f"descending_frames={descending_frames}",

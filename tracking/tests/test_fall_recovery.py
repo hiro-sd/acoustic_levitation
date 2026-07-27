@@ -49,10 +49,14 @@ class FallRecoveryForceTests(unittest.TestCase):
         self.assertAlmostEqual(measured_force_for_intensity_mN(self.cfg, 0.85), 6.5)
 
     def test_capture_intensity_is_staged(self):
+        minimum = capture_intensity_from_force(self.cfg, 3.5)
+        low_hold = capture_intensity_from_force(self.cfg, 4.5)
         low = capture_intensity_from_force(self.cfg, 5.5)
         mid = capture_intensity_from_force(self.cfg, 6.5)
         high = capture_intensity_from_force(self.cfg, 7.5)
 
+        self.assertEqual(minimum.commanded_intensity, 0.6)
+        self.assertEqual(low_hold.commanded_intensity, 0.7)
         self.assertEqual(low.commanded_intensity, 0.8)
         self.assertEqual(mid.commanded_intensity, 0.9)
         self.assertEqual(high.commanded_intensity, 1.0)
@@ -78,24 +82,27 @@ class FallRecoveryForceTests(unittest.TestCase):
 class FallRecoveryStateConditionTests(unittest.TestCase):
     def test_fall_detection_requires_speed_frames_and_outside_hold_region(self):
         cfg = AppConfig(
-            fall_vz_threshold_mm_s=-50.0,
-            fall_descending_frames=3,
-            fall_hold_region_z_mm=6.0,
-            fall_hold_region_xy_mm=8.0,
+            fall_vz_threshold_mm_s=-80.0,
+            fall_descending_frames=5,
+            fall_hold_region_z_mm=12.0,
+            fall_hold_region_xy_mm=12.0,
         )
         home = HomePosition(0.0, 0.0, 400.0)
 
         self.assertIsNone(
-            fall_detection_reason(cfg, home, 0.0, 0.0, 398.0, -80.0, 3)
+            fall_detection_reason(cfg, home, 0.0, 0.0, 390.0, -100.0, 5)
         )
         self.assertIsNone(
-            fall_detection_reason(cfg, home, 0.0, 0.0, 390.0, -80.0, 2)
+            fall_detection_reason(cfg, home, 0.0, 0.0, 380.0, -100.0, 4)
         )
         self.assertIsNone(
-            fall_detection_reason(cfg, home, 0.0, 0.0, 390.0, -20.0, 3)
+            fall_detection_reason(cfg, home, 0.0, 0.0, 380.0, -50.0, 5)
+        )
+        self.assertIsNone(
+            fall_detection_reason(cfg, home, 20.0, 0.0, 400.0, -100.0, 5)
         )
 
-        reason = fall_detection_reason(cfg, home, 0.0, 0.0, 390.0, -80.0, 3)
+        reason = fall_detection_reason(cfg, home, 0.0, 0.0, 380.0, -100.0, 5)
         self.assertIsNotNone(reason)
         self.assertIn("fall_detected", reason)
 
