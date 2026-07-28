@@ -180,8 +180,8 @@ class AppConfig:
     fall_near_stop_intensity_ratio: float = 0.7
     fall_upward_intensity_ratio: float = 0.6
     fall_upward_target_z_offset_mm: float = -5.0
-    fall_capture_max_intensity_ratio: float = 1.0
-    fall_capture_intensity_levels: tuple[float, ...] = (0.6, 0.7, 0.8, 0.9, 1.0)
+    fall_capture_max_intensity_ratio: float = 0.9
+    fall_capture_intensity_levels: tuple[float, ...] = (0.6, 0.7, 0.8, 0.9)
     fall_capture_loadcell_model: tuple[tuple[float, float], ...] = (
         (0.6, 4.0),
         (0.7, 5.0),
