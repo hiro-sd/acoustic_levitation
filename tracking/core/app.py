@@ -811,20 +811,10 @@ def run_tracking_app(cfg: AppConfig):
                             elif not follow_xy_stabilizing:
                                 desired_x = pred_x if pred_x is not None else last_target.x
                                 desired_y = pred_y if pred_y is not None else last_target.y
-                                catch_x = last_target.x + float(
-                                    np.clip(
-                                        desired_x - last_target.x,
-                                        -cfg.fall_recovery_target_xy_step_mm,
-                                        cfg.fall_recovery_target_xy_step_mm,
-                                    )
-                                )
-                                catch_y = last_target.y + float(
-                                    np.clip(
-                                        desired_y - last_target.y,
-                                        -cfg.fall_recovery_target_xy_step_mm,
-                                        cfg.fall_recovery_target_xy_step_mm,
-                                    )
-                                )
+                                # 再捕捉フェーズでは、音場有効範囲から外れた球を
+                                # すぐ捕まえ直すためXY step制限をかけず予測位置へ置く。
+                                catch_x = float(desired_x)
+                                catch_y = float(desired_y)
                             else:
                                 ref_x, ref_y = follow_xy_reference
 

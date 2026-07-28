@@ -160,7 +160,7 @@ class AppConfig:
     fall_hold_region_z_mm: float = 12.0
 
     # FOLLOW_AND_BRAKE prediction / braking.
-    fall_system_delay_sec: float = 0.020
+    fall_system_delay_sec: float = 0.015
     fall_recovery_dt_pred_z: float = 0.02
     fall_recovery_z_offset_mm: float = 0.0
     fall_recovery_dt_pred_xy: float = 0
@@ -168,8 +168,8 @@ class AppConfig:
     fall_recovery_target_z_step_mm: float = 10.0
     # FOLLOW_AND_BRAKE中のXYは、球とtargetが音場有効範囲に近づくまでは追従し、
     # 十分近づいたら捕捉基準まわりで通常保持に近い逆方向補正へ切り替える。
-    fall_xy_stabilize_enter_radius_mm: float = 25.0
-    fall_xy_stabilize_exit_radius_mm: float = 40.0
+    fall_xy_stabilize_enter_radius_mm: float = 20.0
+    fall_xy_stabilize_exit_radius_mm: float = 20.0
     fall_xy_stabilize_enter_vz_abs_mm_s: float = 150.0
     fall_xy_stabilize_kp: float = 0.3
     fall_xy_stabilize_kd: float = 0.05
