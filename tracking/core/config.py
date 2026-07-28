@@ -174,14 +174,14 @@ class AppConfig:
     fall_xy_stabilize_kp: float = 0.3
     fall_xy_stabilize_kd: float = 0.05
     fall_capture_time_sec: float = 0.12
-    fall_capture_force_safety_factor: float = 1.2
+    fall_capture_force_safety_factor: float = 1.0
     fall_slow_down_vz_mm_s: float = -80.0
     fall_near_stop_vz_mm_s: float = -30.0
     fall_near_stop_intensity_ratio: float = 0.7
     fall_upward_intensity_ratio: float = 0.6
     fall_upward_target_z_offset_mm: float = -5.0
-    fall_capture_max_intensity_ratio: float = 0.9
-    fall_capture_intensity_levels: tuple[float, ...] = (0.6, 0.7, 0.8, 0.9)
+    fall_capture_max_intensity_ratio: float = 1.0
+    fall_capture_intensity_levels: tuple[float, ...] = (0.6, 0.7, 0.8, 0.9, 1.0)
     fall_capture_loadcell_model: tuple[tuple[float, float], ...] = (
         (0.6, 4.0),
         (0.7, 5.0),

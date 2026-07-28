@@ -59,14 +59,14 @@ class FallRecoveryForceTests(unittest.TestCase):
         self.assertEqual(low_hold.commanded_intensity, 0.7)
         self.assertEqual(low.commanded_intensity, 0.8)
         self.assertEqual(mid.commanded_intensity, 0.9)
-        self.assertEqual(high.commanded_intensity, 0.9)
-        self.assertTrue(high.saturated)
+        self.assertEqual(high.commanded_intensity, 1.0)
+        self.assertFalse(high.saturated)
         self.assertFalse(low.saturated)
 
-    def test_capture_intensity_saturates_but_continues_at_configured_max(self):
+    def test_capture_intensity_saturates_but_continues_at_one(self):
         cmd = capture_intensity_from_force(self.cfg, 20.0)
 
-        self.assertEqual(cmd.commanded_intensity, 0.9)
+        self.assertEqual(cmd.commanded_intensity, 1.0)
         self.assertTrue(cmd.saturated)
 
     def test_intensity_slew_rises_immediately_and_falls_slowly(self):
