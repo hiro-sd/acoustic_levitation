@@ -160,7 +160,7 @@ class AppConfig:
     fall_hold_region_z_mm: float = 12.0
 
     # FOLLOW_AND_BRAKE prediction / braking.
-    fall_system_delay_sec: float = 0.015
+    fall_system_delay_sec: float = 0.010
     fall_recovery_dt_pred_z: float = 0.02
     fall_recovery_z_offset_mm: float = 0.0
     fall_recovery_dt_pred_xy: float = 0
