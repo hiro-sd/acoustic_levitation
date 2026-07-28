@@ -772,11 +772,15 @@ def run_tracking_app(cfg: AppConfig):
                                     if (
                                         xy_distance_to_target
                                         >= cfg.fall_xy_stabilize_exit_radius_mm
+                                        or abs(vz_now)
+                                        > cfg.fall_xy_stabilize_enter_vz_abs_mm_s
                                     ):
                                         follow_xy_stabilizing = False
                                 elif (
                                     xy_distance_to_target
                                     <= cfg.fall_xy_stabilize_enter_radius_mm
+                                    and abs(vz_now)
+                                    <= cfg.fall_xy_stabilize_enter_vz_abs_mm_s
                                 ):
                                     follow_xy_stabilizing = True
                                     ref_x = x_mm if x_mm is not None else last_target.x
@@ -916,6 +920,11 @@ def run_tracking_app(cfg: AppConfig):
                                 capture_intensity_ratio = float(cfg.static_intensity_ratio)
                             elif vz_now >= cfg.fall_slow_down_vz_mm_s:
                                 capture_intensity_ratio = float(cfg.fall_near_stop_intensity_ratio)
+
+                            capture_intensity_ratio = min(
+                                float(capture_intensity_ratio),
+                                float(cfg.fall_capture_max_intensity_ratio),
+                            )
 
                             recovery_telemetry.required_force_mN = force_command.required_force_mN
                             recovery_telemetry.commanded_intensity = capture_intensity_ratio

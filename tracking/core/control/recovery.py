@@ -101,9 +101,17 @@ def capture_intensity_from_force(
     """
     ロードセルモデルに基づき、設定された段階制御で強度を選ぶ。
     """
-    levels = tuple(float(v) for v in cfg.fall_capture_intensity_levels)
-    max_model_force = max(float(force) for _, force in cfg.fall_capture_loadcell_model)
-    saturated = float(required_force_mN) > max_model_force
+    max_intensity = float(cfg.fall_capture_max_intensity_ratio)
+    levels = tuple(
+        float(v)
+        for v in cfg.fall_capture_intensity_levels
+        if float(v) <= max_intensity
+    )
+    if not levels:
+        levels = (max_intensity,)
+
+    max_available_force = measured_force_for_intensity_mN(cfg, max(levels))
+    saturated = float(required_force_mN) > max_available_force
 
     for level in levels:
         if measured_force_for_intensity_mN(cfg, level) >= required_force_mN:
