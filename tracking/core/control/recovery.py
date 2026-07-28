@@ -22,8 +22,11 @@ class CaptureForceCommand:
 class RecoveryTelemetry:
     z_drop_mm: float | None = None
     vz_mm_s: float | None = None
+    predicted_x_mm: float | None = None
+    predicted_y_mm: float | None = None
     predicted_z_mm: float | None = None
     predicted_vz_mm_s: float | None = None
+    xy_distance_to_target_mm: float | None = None
     required_force_mN: float | None = None
     commanded_intensity: float | None = None
     actual_intensity: float | None = None

@@ -27,8 +27,11 @@ LOG_HEADER = [
     "autd_target_z_mm",
     "z_drop_mm",
     "vz_mm_s",
+    "predicted_x_mm",
+    "predicted_y_mm",
     "predicted_z_mm",
     "predicted_vz_mm_s",
+    "xy_distance_to_target_mm",
     "required_force_mN",
     "commanded_intensity",
     "actual_intensity",
@@ -149,6 +152,16 @@ class StabilityLogger:
                     else ""
                 ),
                 (
+                    f"{recovery.predicted_x_mm:.3f}"
+                    if recovery is not None and recovery.predicted_x_mm is not None
+                    else ""
+                ),
+                (
+                    f"{recovery.predicted_y_mm:.3f}"
+                    if recovery is not None and recovery.predicted_y_mm is not None
+                    else ""
+                ),
+                (
                     f"{recovery.predicted_z_mm:.3f}"
                     if recovery is not None and recovery.predicted_z_mm is not None
                     else ""
@@ -156,6 +169,12 @@ class StabilityLogger:
                 (
                     f"{recovery.predicted_vz_mm_s:.3f}"
                     if recovery is not None and recovery.predicted_vz_mm_s is not None
+                    else ""
+                ),
+                (
+                    f"{recovery.xy_distance_to_target_mm:.3f}"
+                    if recovery is not None
+                    and recovery.xy_distance_to_target_mm is not None
                     else ""
                 ),
                 (

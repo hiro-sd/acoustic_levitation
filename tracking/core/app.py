@@ -284,6 +284,7 @@ def run_tracking_app(cfg: AppConfig):
             descending_frame_count = 0
             follow_xy_reference = None
             follow_xy_stabilizing = False
+            follow_xy_initial_jump_done = False
             local_hold_stable_since = None
             local_hold_start_time = None
             mode_transition_reason = ""
@@ -362,6 +363,7 @@ def run_tracking_app(cfg: AppConfig):
                         descending_frame_count = 0
                         follow_xy_reference = None
                         follow_xy_stabilizing = False
+                        follow_xy_initial_jump_done = False
                         local_hold_stable_since = None
                         local_hold_start_time = None
                         mode_transition_reason = "tracking_paused"
@@ -416,6 +418,7 @@ def run_tracking_app(cfg: AppConfig):
                     control_mode = NORMAL_HOLD
                     follow_xy_reference = None
                     follow_xy_stabilizing = False
+                    follow_xy_initial_jump_done = False
                     return_setpoint = HomePosition(
                         x=home.x,
                         y=home.y,
@@ -730,6 +733,7 @@ def run_tracking_app(cfg: AppConfig):
                                 control_mode = FOLLOW_AND_BRAKE
                                 follow_xy_reference = None
                                 follow_xy_stabilizing = False
+                                follow_xy_initial_jump_done = False
                                 local_hold_stable_since = None
                                 local_hold_start_time = None
                                 mode_transition_reason = reason
@@ -749,6 +753,8 @@ def run_tracking_app(cfg: AppConfig):
                                 vz_now,
                             )
 
+                            recovery_telemetry.predicted_x_mm = pred_x
+                            recovery_telemetry.predicted_y_mm = pred_y
                             recovery_telemetry.predicted_z_mm = pred_z
                             recovery_telemetry.predicted_vz_mm_s = pred_vz
 
@@ -786,9 +792,35 @@ def run_tracking_app(cfg: AppConfig):
                                     ref_y = last_target.y
                                 follow_xy_reference = (float(ref_x), float(ref_y))
 
-                            if not follow_xy_stabilizing:
+                            if (
+                                not follow_xy_initial_jump_done
+                                and pred_x is not None
+                                and pred_y is not None
+                            ):
+                                # FOLLOW開始直後の1回だけ、XYも遅延後予測位置へ即座に置く。
+                                # その後は距離ベースで、離れていれば再捕捉、近ければ逆方向補正。
+                                desired_x = float(pred_x)
+                                desired_y = float(pred_y)
+                                catch_x = desired_x
+                                catch_y = desired_y
+                                follow_xy_initial_jump_done = True
+                            elif not follow_xy_stabilizing:
                                 desired_x = pred_x if pred_x is not None else last_target.x
                                 desired_y = pred_y if pred_y is not None else last_target.y
+                                catch_x = last_target.x + float(
+                                    np.clip(
+                                        desired_x - last_target.x,
+                                        -cfg.fall_recovery_target_xy_step_mm,
+                                        cfg.fall_recovery_target_xy_step_mm,
+                                    )
+                                )
+                                catch_y = last_target.y + float(
+                                    np.clip(
+                                        desired_y - last_target.y,
+                                        -cfg.fall_recovery_target_xy_step_mm,
+                                        cfg.fall_recovery_target_xy_step_mm,
+                                    )
+                                )
                             else:
                                 ref_x, ref_y = follow_xy_reference
 
@@ -824,20 +856,20 @@ def run_tracking_app(cfg: AppConfig):
                                 else:
                                     desired_y = last_target.y
 
-                            catch_x = last_target.x + float(
-                                np.clip(
-                                    desired_x - last_target.x,
-                                    -cfg.fall_recovery_target_xy_step_mm,
-                                    cfg.fall_recovery_target_xy_step_mm,
+                                catch_x = last_target.x + float(
+                                    np.clip(
+                                        desired_x - last_target.x,
+                                        -cfg.fall_recovery_target_xy_step_mm,
+                                        cfg.fall_recovery_target_xy_step_mm,
+                                    )
                                 )
-                            )
-                            catch_y = last_target.y + float(
-                                np.clip(
-                                    desired_y - last_target.y,
-                                    -cfg.fall_recovery_target_xy_step_mm,
-                                    cfg.fall_recovery_target_xy_step_mm,
+                                catch_y = last_target.y + float(
+                                    np.clip(
+                                        desired_y - last_target.y,
+                                        -cfg.fall_recovery_target_xy_step_mm,
+                                        cfg.fall_recovery_target_xy_step_mm,
+                                    )
                                 )
-                            )
 
                             if not follow_xy_stabilizing:
                                 follow_xy_reference = (float(catch_x), float(catch_y))
@@ -866,6 +898,13 @@ def run_tracking_app(cfg: AppConfig):
                                 y=float(catch_y),
                                 z=float(catch_z),
                             )
+                            if x_mm is not None and y_mm is not None:
+                                recovery_telemetry.xy_distance_to_target_mm = float(
+                                    np.hypot(
+                                        float(x_mm) - target.x,
+                                        float(y_mm) - target.y,
+                                    )
+                                )
 
                             required_force = required_capture_force_mN(cfg, pred_vz)
                             force_command = capture_intensity_from_force(cfg, required_force)
@@ -960,6 +999,7 @@ def run_tracking_app(cfg: AppConfig):
                                 control_mode = NORMAL_HOLD
                                 follow_xy_reference = None
                                 follow_xy_stabilizing = False
+                                follow_xy_initial_jump_done = False
                                 mode_transition_reason = "return_home_done"
 
                                 return_setpoint = HomePosition(
