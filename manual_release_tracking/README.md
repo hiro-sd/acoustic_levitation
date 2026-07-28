@@ -9,6 +9,25 @@ cd /Users/yoshidahiroto/Downloads/修士関連/acoustic_levitation
 python3 manual_release_tracking/experiments/manual_release_hold.py
 ```
 
+## Release判定preview
+
+音場制御に接続せず、指を離した判定だけを可視化する場合:
+
+```bash
+cd /Users/yoshidahiroto/Downloads/修士関連/acoustic_levitation
+python3 manual_release_tracking/experiments/release_detection_preview.py
+```
+
+previewでは、2台のカメラ映像に以下を表示します。
+
+- 球体検出円
+- 指候補輪郭
+- 球体円と指候補輪郭の最短距離
+- `WAITING_FOR_GRASP` / `GRASPED` / `RELEASED`
+- 推定3D位置、速度、10ms後予測位置
+
+`SPACE` で判定状態をリセットし、`ESC` で終了します。
+
 ## 操作
 
 - 起動直後は、球体検出とステレオ3D位置推定だけを行います。AUTDの音場は出ません。
