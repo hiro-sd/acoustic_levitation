@@ -282,8 +282,8 @@ def run_tracking_app(cfg: AppConfig):
             demo = SquareZDemo(cfg, display_origin)
 
             descending_frame_count = 0
-            follow_start_time = None
             follow_xy_reference = None
+            follow_xy_stabilizing = False
             local_hold_stable_since = None
             local_hold_start_time = None
             mode_transition_reason = ""
@@ -360,8 +360,8 @@ def run_tracking_app(cfg: AppConfig):
                         print("[INFO] >>> TRACKING PAUSED: Return to initial base position <<<")
                         control_mode = NORMAL_HOLD
                         descending_frame_count = 0
-                        follow_start_time = None
                         follow_xy_reference = None
+                        follow_xy_stabilizing = False
                         local_hold_stable_since = None
                         local_hold_start_time = None
                         mode_transition_reason = "tracking_paused"
@@ -414,8 +414,8 @@ def run_tracking_app(cfg: AppConfig):
                 if cfg.enable_auto_demo and demo_active and tracking_active:
                     home = demo.update(dt_loop)
                     control_mode = NORMAL_HOLD
-                    follow_start_time = None
                     follow_xy_reference = None
+                    follow_xy_stabilizing = False
                     return_setpoint = HomePosition(
                         x=home.x,
                         y=home.y,
@@ -728,8 +728,8 @@ def run_tracking_app(cfg: AppConfig):
                             )
                             if reason is not None:
                                 control_mode = FOLLOW_AND_BRAKE
-                                follow_start_time = now_loop
                                 follow_xy_reference = None
+                                follow_xy_stabilizing = False
                                 local_hold_stable_since = None
                                 local_hold_start_time = None
                                 mode_transition_reason = reason
@@ -752,14 +752,30 @@ def run_tracking_app(cfg: AppConfig):
                             recovery_telemetry.predicted_z_mm = pred_z
                             recovery_telemetry.predicted_vz_mm_s = pred_vz
 
-                            if follow_start_time is None:
-                                follow_start_time = now_loop
+                            xy_distance_to_target = None
+                            if x_mm is not None and y_mm is not None:
+                                xy_distance_to_target = float(
+                                    np.hypot(
+                                        float(x_mm) - last_target.x,
+                                        float(y_mm) - last_target.y,
+                                    )
+                                )
 
-                            elapsed_follow_sec = float(now_loop - follow_start_time)
-                            in_xy_align_phase = (
-                                elapsed_follow_sec
-                                <= float(cfg.fall_xy_align_duration_sec)
-                            )
+                            if xy_distance_to_target is not None:
+                                if follow_xy_stabilizing:
+                                    if (
+                                        xy_distance_to_target
+                                        >= cfg.fall_xy_stabilize_exit_radius_mm
+                                    ):
+                                        follow_xy_stabilizing = False
+                                elif (
+                                    xy_distance_to_target
+                                    <= cfg.fall_xy_stabilize_enter_radius_mm
+                                ):
+                                    follow_xy_stabilizing = True
+                                    ref_x = x_mm if x_mm is not None else last_target.x
+                                    ref_y = y_mm if y_mm is not None else last_target.y
+                                    follow_xy_reference = (float(ref_x), float(ref_y))
 
                             if follow_xy_reference is None:
                                 ref_x = pred_x if pred_x is not None else x_mm
@@ -770,7 +786,7 @@ def run_tracking_app(cfg: AppConfig):
                                     ref_y = last_target.y
                                 follow_xy_reference = (float(ref_x), float(ref_y))
 
-                            if in_xy_align_phase:
+                            if not follow_xy_stabilizing:
                                 desired_x = pred_x if pred_x is not None else last_target.x
                                 desired_y = pred_y if pred_y is not None else last_target.y
                             else:
@@ -823,7 +839,7 @@ def run_tracking_app(cfg: AppConfig):
                                 )
                             )
 
-                            if in_xy_align_phase:
+                            if not follow_xy_stabilizing:
                                 follow_xy_reference = (float(catch_x), float(catch_y))
 
                             if pred_z is not None:
@@ -942,8 +958,8 @@ def run_tracking_app(cfg: AppConfig):
                                 vz_now,
                             ):
                                 control_mode = NORMAL_HOLD
-                                follow_start_time = None
                                 follow_xy_reference = None
+                                follow_xy_stabilizing = False
                                 mode_transition_reason = "return_home_done"
 
                                 return_setpoint = HomePosition(
