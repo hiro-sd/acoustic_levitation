@@ -23,8 +23,13 @@ previewでは、2台のカメラ映像に以下を表示します。
 - 球体検出円
 - 指候補輪郭
 - 球体円と指候補輪郭の最短距離
+- 各カメラ別の `dist` と `finger_area`
 - `WAITING_FOR_GRASP` / `GRASPED` / `RELEASED`
 - 推定3D位置、速度、10ms後予測位置
+
+現在のデフォルトでは、release判定には `z` 方向カメラだけを使います。
+`manual_release_tracking/experiments/release_detection_preview.py` 末尾の
+`cfg.release_preview_camera` を変更すると、`xy`, `z`, `either`, `both` を切り替えられます。
 
 `SPACE` で判定状態をリセットし、`ESC` で終了します。
 

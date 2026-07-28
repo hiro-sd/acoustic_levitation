@@ -11,6 +11,7 @@ class FingerDistanceResult:
     """2D image-space relation between the detected ball and nearby finger candidates."""
 
     distance_px: float | None
+    finger_area_px: float
     nearest_ball_point: tuple[int, int] | None
     nearest_finger_point: tuple[int, int] | None
     contours: list[np.ndarray]
@@ -33,6 +34,9 @@ class ReleaseDetectorConfig:
     roi_scale: float = 4.0
     roi_margin_px: int = 40
     min_finger_area_px: int = 80
+    grasp_finger_area_px: float = 120.0
+    release_finger_area_px: float = 40.0
+    ball_remove_radius_scale: float = 1.10
     grasp_distance_px: float = 12.0
     release_distance_px: float = 28.0
     grasp_confirm_frames: int = 3
@@ -61,7 +65,7 @@ class ReleaseStateMachine:
         self.release_count = 0
         self.transition_reason = "manual_reset"
 
-    def update(self, distance_px: float | None, ball_detected: bool) -> str:
+    def update(self, is_close: bool, is_separated: bool, ball_detected: bool) -> str:
         self.transition_reason = ""
 
         if not ball_detected:
@@ -73,7 +77,7 @@ class ReleaseStateMachine:
             return self.state
 
         if self.state == ReleaseState.WAITING_FOR_GRASP:
-            if distance_px is not None and distance_px <= self.cfg.grasp_distance_px:
+            if is_close:
                 self.grasp_count += 1
             else:
                 self.grasp_count = 0
@@ -84,7 +88,7 @@ class ReleaseStateMachine:
                 self.transition_reason = "finger_close_to_ball"
 
         elif self.state == ReleaseState.GRASPED:
-            if distance_px is None or distance_px >= self.cfg.release_distance_px:
+            if is_separated:
                 self.release_count += 1
             else:
                 self.release_count = 0
@@ -145,7 +149,7 @@ def detect_finger_distance(
 
     if ball_center is None or ball_radius_px is None:
         empty = np.zeros((1, 1), dtype=np.uint8)
-        return FingerDistanceResult(None, None, None, [], empty, (0, 0, 1, 1))
+        return FingerDistanceResult(None, 0.0, None, None, [], empty, (0, 0, 1, 1))
 
     cx, cy = float(ball_center[0]), float(ball_center[1])
     radius = max(1.0, float(ball_radius_px))
@@ -162,21 +166,23 @@ def detect_finger_distance(
     roi_rgb = frame_rgb[y1:y2, x1:x2]
     if roi_rgb.size == 0:
         empty = np.zeros((1, 1), dtype=np.uint8)
-        return FingerDistanceResult(None, None, None, [], empty, (x1, y1, x2, y2))
+        return FingerDistanceResult(None, 0.0, None, None, [], empty, (x1, y1, x2, y2))
 
     mask = _skin_mask_rgb(roi_rgb)
 
-    # Remove most of the ball interior. If fingers overlap the ball boundary, the outer parts remain.
+    # Remove the ball region a little wider than its detected radius.
+    # This prevents the bright ball edge/highlight from staying as a false finger candidate.
     cx_roi = int(round(cx - x1))
     cy_roi = int(round(cy - y1))
-    ball_inner_radius = int(round(radius * 0.85))
-    cv2.circle(mask, (cx_roi, cy_roi), ball_inner_radius, 0, thickness=-1)
+    ball_remove_radius = int(round(radius * cfg.ball_remove_radius_scale))
+    cv2.circle(mask, (cx_roi, cy_roi), ball_remove_radius, 0, thickness=-1)
 
     contours_roi, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours_full: list[np.ndarray] = []
     best_distance = None
     best_ball_point = None
     best_finger_point = None
+    total_finger_area = 0.0
 
     for contour_roi in contours_roi:
         area = cv2.contourArea(contour_roi)
@@ -185,6 +191,7 @@ def detect_finger_distance(
 
         contour_full = contour_roi + np.array([[[x1, y1]]], dtype=contour_roi.dtype)
         contours_full.append(contour_full)
+        total_finger_area += float(area)
 
         pts = contour_full.reshape(-1, 2).astype(np.float32)
         dx = pts[:, 0] - cx
@@ -206,6 +213,7 @@ def detect_finger_distance(
 
     return FingerDistanceResult(
         distance_px=best_distance,
+        finger_area_px=total_finger_area,
         nearest_ball_point=best_ball_point,
         nearest_finger_point=best_finger_point,
         contours=contours_full,
@@ -243,7 +251,7 @@ def draw_release_debug(
     )
     cv2.putText(
         frame_bgr,
-        f"{state} | {distance_label}",
+        f"{state} | {distance_label} | area: {result.finger_area_px:.0f}px",
         (10, 30),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,

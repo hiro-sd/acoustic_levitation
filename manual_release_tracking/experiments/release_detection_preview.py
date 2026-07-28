@@ -84,6 +84,43 @@ def _resize_to_height(frame: np.ndarray, height: int):
     return cv2.resize(frame, (int(w * scale), height), interpolation=cv2.INTER_AREA)
 
 
+def _release_signal(result, release_cfg: ReleaseDetectorConfig):
+    close = (
+        result.distance_px is not None
+        and result.distance_px <= release_cfg.grasp_distance_px
+        and result.finger_area_px >= release_cfg.grasp_finger_area_px
+    )
+    separated = (
+        result.distance_px is None
+        or result.distance_px >= release_cfg.release_distance_px
+        or result.finger_area_px <= release_cfg.release_finger_area_px
+    )
+    return close, separated
+
+
+def _combine_release_signals(
+    mode: str,
+    xy_signal: tuple[bool, bool],
+    z_signal: tuple[bool, bool],
+):
+    xy_close, xy_separated = xy_signal
+    z_close, z_separated = z_signal
+
+    if mode == "xy":
+        return xy_close, xy_separated
+    if mode == "z":
+        return z_close, z_separated
+    if mode == "either":
+        return xy_close or z_close, xy_separated or z_separated
+    if mode == "both":
+        return xy_close and z_close, xy_separated and z_separated
+
+    raise ValueError(
+        f"Unknown release_preview_camera={mode!r}. "
+        "Use 'xy', 'z', 'either', or 'both'."
+    )
+
+
 def run_release_detection_preview(cfg: AppConfig):
     # Calibration files
     try:
@@ -239,6 +276,7 @@ def run_release_detection_preview(cfg: AppConfig):
         release_cfg = ReleaseDetectorConfig()
         release_sm = ReleaseStateMachine(release_cfg)
         velocity = VelocityEstimator()
+        release_camera = str(getattr(cfg, "release_preview_camera", "z")).lower()
 
         fps_start_time = time.time()
         frame_count = 0
@@ -251,6 +289,7 @@ def run_release_detection_preview(cfg: AppConfig):
         print("  RELEASE DETECTION PREVIEW")
         print("  This preview does not open AUTD and emits no ultrasound.")
         print("  Hold/pinch the sphere, then release it.")
+        print(f"  Release decision camera: {release_camera}")
         print("  Watch finger distance and WAITING/GRASPED/RELEASED state.")
         print("  Press [SPACE] to reset the state machine.")
         print("  Press [ESC] to exit.")
@@ -360,14 +399,42 @@ def run_release_detection_preview(cfg: AppConfig):
                 release_cfg,
             )
 
-            distances = [
-                d
-                for d in [result_xy.distance_px, result_z.distance_px]
-                if d is not None
-            ]
-            combined_distance = min(distances) if distances else None
+            xy_signal = _release_signal(result_xy, release_cfg)
+            z_signal = _release_signal(result_z, release_cfg)
+            is_close, is_separated = _combine_release_signals(
+                release_camera,
+                xy_signal,
+                z_signal,
+            )
+
+            selected_result = result_z if release_camera == "z" else result_xy
+            if release_camera == "either":
+                selected_distance = min(
+                    [
+                        d
+                        for d in [result_xy.distance_px, result_z.distance_px]
+                        if d is not None
+                    ],
+                    default=None,
+                )
+                selected_area = max(result_xy.finger_area_px, result_z.finger_area_px)
+            elif release_camera == "both":
+                selected_distance = max(
+                    [
+                        d
+                        for d in [result_xy.distance_px, result_z.distance_px]
+                        if d is not None
+                    ],
+                    default=None,
+                )
+                selected_area = min(result_xy.finger_area_px, result_z.finger_area_px)
+            else:
+                selected_distance = selected_result.distance_px
+                selected_area = selected_result.finger_area_px
+
             state = release_sm.update(
-                combined_distance,
+                is_close,
+                is_separated,
                 ball_detected=bool(detected_xy and detected_z),
             )
 
@@ -393,10 +460,31 @@ def run_release_detection_preview(cfg: AppConfig):
                 if pred is None
                 else f"pred 10ms: {pred[0]:.1f}, {pred[1]:.1f}, {pred[2]:.1f}"
             )
-            dist_label = (
-                "combined finger dist: --"
-                if combined_distance is None
-                else f"combined finger dist: {combined_distance:.1f}px"
+            xy_dist_label = (
+                "XY dist=--"
+                if result_xy.distance_px is None
+                else f"XY dist={result_xy.distance_px:.1f}px"
+            )
+            z_dist_label = (
+                "Z dist=--"
+                if result_z.distance_px is None
+                else f"Z dist={result_z.distance_px:.1f}px"
+            )
+            selected_label = (
+                f"selected({release_camera}) dist=--"
+                if selected_distance is None
+                else f"selected({release_camera}) dist={selected_distance:.1f}px"
+            )
+            area_label = (
+                f"XY area={result_xy.finger_area_px:.0f}px, "
+                f"Z area={result_z.finger_area_px:.0f}px, "
+                f"selected area={selected_area:.0f}px"
+            )
+            threshold_label = (
+                f"grasp: dist<={release_cfg.grasp_distance_px:.0f}px "
+                f"& area>={release_cfg.grasp_finger_area_px:.0f}px | "
+                f"release: dist>={release_cfg.release_distance_px:.0f}px "
+                f"or area<={release_cfg.release_finger_area_px:.0f}px"
             )
 
             color = {
@@ -413,7 +501,11 @@ def run_release_detection_preview(cfg: AppConfig):
                     xyz_label,
                     v_label,
                     pred_label,
-                    dist_label,
+                    selected_label,
+                    f"{xy_dist_label}, {z_dist_label}",
+                    area_label,
+                    threshold_label,
+                    f"close={is_close}, separated={is_separated}",
                     f"fps={display_fps:.1f}, sync={frame_sync_skew * 1000.0:.1f}ms",
                     "SPACE: reset, ESC: exit",
                 ],
@@ -464,4 +556,5 @@ if __name__ == "__main__":
         log_enabled=False,
     )
     cfg.release_preview_pred_sec = 0.010
+    cfg.release_preview_camera = "z"
     run_release_detection_preview(cfg)
