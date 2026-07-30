@@ -16,6 +16,10 @@ from manual_release_tracking.release_detector import (
     ReleaseStateMachine,
     detect_finger_distance,
 )
+from manual_release_tracking.experiments.release_detection_preview import (
+    _resize_pair_to_same_size,
+    _to_bgr,
+)
 
 
 def _observation(
@@ -101,8 +105,8 @@ class ReleaseStateMachineTest(unittest.TestCase):
 class ContactRingFeatureTest(unittest.TestCase):
     def test_contact_ring_is_radius_normalized(self):
         frame = np.zeros((160, 160, 3), dtype=np.uint8)
-        skin_rgb = (200, 150, 120)
-        cv2.rectangle(frame, (101, 70), (116, 90), skin_rgb, thickness=-1)
+        skin_bgr = (120, 150, 200)
+        cv2.rectangle(frame, (101, 70), (116, 90), skin_bgr, thickness=-1)
 
         result = detect_finger_distance(
             frame,
@@ -115,6 +119,47 @@ class ContactRingFeatureTest(unittest.TestCase):
         self.assertGreater(result.contact_ratio, 0.0)
         self.assertIsNotNone(result.normalized_gap)
         self.assertLess(result.normalized_gap, 0.30)
+
+    def test_rgb_bgr_swap_is_not_mistaken_for_skin(self):
+        correct_bgr = np.zeros((160, 160, 3), dtype=np.uint8)
+        swapped_rgb = np.zeros_like(correct_bgr)
+        cv2.rectangle(correct_bgr, (101, 70), (116, 90), (120, 150, 200), -1)
+        cv2.rectangle(swapped_rgb, (101, 70), (116, 90), (200, 150, 120), -1)
+
+        correct = detect_finger_distance(
+            correct_bgr,
+            ball_center=(80.0, 80.0),
+            ball_radius_px=20.0,
+        )
+        swapped = detect_finger_distance(
+            swapped_rgb,
+            ball_center=(80.0, 80.0),
+            ball_radius_px=20.0,
+        )
+
+        self.assertGreater(correct.contact_ratio, 0.0)
+        self.assertEqual(swapped.contact_ratio, 0.0)
+
+
+class PreviewDisplayTest(unittest.TestCase):
+    def test_color_frame_is_not_channel_swapped_for_display(self):
+        frame_bgr = np.array([[[10, 20, 200]]], dtype=np.uint8)
+        shown = _to_bgr(frame_bgr)
+        np.testing.assert_array_equal(shown, frame_bgr)
+        self.assertIsNot(shown, frame_bgr)
+
+    def test_camera_panels_are_resized_to_identical_dimensions(self):
+        frame_xy = np.zeros((480, 800, 3), dtype=np.uint8)
+        frame_z = np.zeros((800, 480, 3), dtype=np.uint8)
+
+        shown_xy, shown_z = _resize_pair_to_same_size(
+            frame_xy,
+            frame_z,
+            max_display_height=720,
+        )
+
+        self.assertEqual(shown_xy.shape, shown_z.shape)
+        self.assertEqual(shown_xy.shape[:2], (720, 720))
 
 
 if __name__ == "__main__":

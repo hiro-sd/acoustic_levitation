@@ -77,10 +77,11 @@ class PositionStabilityEstimator:
         return float(np.max(np.std(values, axis=0)))
 
 
-def _to_bgr(frame_rgb: np.ndarray) -> np.ndarray:
-    if frame_rgb.ndim == 2:
-        return cv2.cvtColor(frame_rgb, cv2.COLOR_GRAY2BGR)
-    return cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+def _to_bgr(frame: np.ndarray) -> np.ndarray:
+    """Match the display path used by tracking/core/app.py."""
+    if frame.ndim == 2:
+        return cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+    return frame.copy()
 
 
 def _put_lines(frame: np.ndarray, lines: list[str], x: int, y: int, color):
@@ -96,12 +97,24 @@ def _put_lines(frame: np.ndarray, lines: list[str], x: int, y: int, color):
         )
 
 
-def _resize_to_height(frame: np.ndarray, height: int):
-    h, w = frame.shape[:2]
-    if h == height:
-        return frame
-    scale = height / max(1, h)
-    return cv2.resize(frame, (int(w * scale), height), interpolation=cv2.INTER_AREA)
+def _resize_pair_to_same_size(
+    frame_xy: np.ndarray,
+    frame_z: np.ndarray,
+    max_display_height: int = 720,
+):
+    """Give both camera panels exactly the same width and height."""
+    display_h = max(frame_xy.shape[0], frame_z.shape[0])
+    display_w = max(frame_xy.shape[1], frame_z.shape[1])
+    scale = min(1.0, max_display_height / max(1, display_h))
+    target_size = (
+        max(1, int(round(display_w * scale))),
+        max(1, int(round(display_h * scale))),
+    )
+    interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    return (
+        cv2.resize(frame_xy, target_size, interpolation=interpolation),
+        cv2.resize(frame_z, target_size, interpolation=interpolation),
+    )
 
 
 def _release_camera_names(mode: str) -> tuple[str, ...]:
@@ -598,10 +611,18 @@ def run_release_detection_preview(cfg: AppConfig):
                 color,
             )
 
-            target_h = min(frame_xy_bgr.shape[0], frame_z_bgr.shape[0], 720)
-            show_xy = _resize_to_height(frame_xy_bgr, target_h)
-            show_z = _resize_to_height(frame_z_bgr, target_h)
+            show_xy, show_z = _resize_pair_to_same_size(
+                frame_xy_bgr,
+                frame_z_bgr,
+            )
             combined = np.hstack([show_xy, show_z])
+            cv2.line(
+                combined,
+                (show_xy.shape[1], 0),
+                (show_xy.shape[1], combined.shape[0] - 1),
+                (255, 255, 255),
+                1,
+            )
             cv2.imshow(window_title, combined)
 
             key = cv2.waitKey(1) & 0xFF

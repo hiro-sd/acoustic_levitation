@@ -272,7 +272,7 @@ def _clamp_rect(x1: int, y1: int, x2: int, y2: int, width: int, height: int):
     )
 
 
-def _skin_mask_rgb(roi_rgb: np.ndarray) -> np.ndarray:
+def _skin_mask_bgr(roi_bgr: np.ndarray) -> np.ndarray:
     """
     Lightweight skin-color candidate mask for preview.
 
@@ -280,10 +280,11 @@ def _skin_mask_rgb(roi_rgb: np.ndarray) -> np.ndarray:
     it just finds finger-like regions near the ball for release timing experiments.
     """
 
-    ycrcb = cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2YCrCb)
+    # XIMEA frames follow the same BGR display convention used by tracking/core/app.py.
+    ycrcb = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2YCrCb)
     mask_ycrcb = cv2.inRange(ycrcb, _LOWER_YCRCB, _UPPER_YCRCB)
 
-    hsv = cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2HSV)
+    hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
     mask_hsv_1 = cv2.inRange(hsv, _LOWER_HSV_1, _UPPER_HSV_1)
     mask_hsv_2 = cv2.inRange(hsv, _LOWER_HSV_2, _UPPER_HSV_2)
 
@@ -295,13 +296,13 @@ def _skin_mask_rgb(roi_rgb: np.ndarray) -> np.ndarray:
 
 
 def detect_finger_distance(
-    frame_rgb: np.ndarray,
+    frame_bgr: np.ndarray,
     ball_center: tuple[float, float] | None,
     ball_radius_px: float | None,
     cfg: ReleaseDetectorConfig | None = None,
 ) -> FingerDistanceResult:
     cfg = cfg or ReleaseDetectorConfig()
-    height, width = frame_rgb.shape[:2]
+    height, width = frame_bgr.shape[:2]
 
     if ball_center is None or ball_radius_px is None:
         empty = np.zeros((1, 1), dtype=np.uint8)
@@ -331,8 +332,8 @@ def detect_finger_distance(
         height,
     )
 
-    roi_rgb = frame_rgb[y1:y2, x1:x2]
-    if roi_rgb.size == 0:
+    roi_bgr = frame_bgr[y1:y2, x1:x2]
+    if roi_bgr.size == 0:
         empty = np.zeros((1, 1), dtype=np.uint8)
         return FingerDistanceResult(
             distance_px=None,
@@ -348,7 +349,7 @@ def detect_finger_distance(
             roi=(x1, y1, x2, y2),
         )
 
-    mask = _skin_mask_rgb(roi_rgb)
+    mask = _skin_mask_bgr(roi_bgr)
 
     # Restrict the skin mask to two narrow, radius-normalized rings around the sphere.
     # This rejects palms/arms elsewhere in the ROI and makes the thresholds independent
