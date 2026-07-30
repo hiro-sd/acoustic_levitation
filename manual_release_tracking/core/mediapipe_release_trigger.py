@@ -36,6 +36,9 @@ class AutoReleaseStatus:
     result_age_xy_ms: float | None
     result_age_z_ms: float | None
     result_pair_skew_ms: float | None
+    candidate_event: AutoReleaseEvent | None = None
+    candidate_cancelled: bool = False
+    release_confirmed: bool = False
     event: AutoReleaseEvent | None = None
 
 
@@ -104,6 +107,50 @@ def build_auto_release_event(
         result_age_ms=float(event_age_ms),
         result_pair_skew_ms=float(pair_skew_ms),
     )
+
+
+def update_release_candidate(
+    *,
+    candidate_active: bool,
+    previous_state: str,
+    just_released: bool,
+    explicit_observation: bool,
+    contact_candidate: bool,
+    timestamp_ms: int,
+    now_ms: float,
+    pair_skew_ms: float,
+    maximum_age_ms: float,
+) -> tuple[bool, AutoReleaseEvent | None, bool, bool]:
+    """
+    Convert the first explicit separation into an early one-shot event.
+
+    Returns ``(active, candidate_event, candidate_cancelled,
+    release_confirmed)``. Missing landmarks leave the candidate unchanged.
+    """
+    active = bool(candidate_active)
+    candidate_event = None
+    candidate_cancelled = False
+    release_confirmed = bool(just_released)
+
+    if explicit_observation:
+        if previous_state == TipContactState.GRASPED and not contact_candidate:
+            if not active:
+                candidate_event = build_auto_release_event(
+                    just_released=True,
+                    event_timestamp_ms=timestamp_ms,
+                    now_ms=now_ms,
+                    pair_skew_ms=pair_skew_ms,
+                    maximum_age_ms=maximum_age_ms,
+                )
+            active = True
+        elif active and contact_candidate:
+            active = False
+            candidate_cancelled = True
+
+    if release_confirmed:
+        active = False
+
+    return active, candidate_event, candidate_cancelled, release_confirmed
 
 
 class MediaPipeReleaseTrigger:
@@ -186,6 +233,7 @@ class MediaPipeReleaseTrigger:
         self.last_both_sequences = (0, 0)
         self.latest_xy: HandTipObservation | None = None
         self.latest_z: HandTipObservation | None = None
+        self._release_candidate_active = False
         self.status = AutoReleaseStatus(
             xy_state=self.states["xy"],
             z_state=self.states["z"],
@@ -243,6 +291,7 @@ class MediaPipeReleaseTrigger:
         )
 
         xy_updated = False
+        xy_previous_state = self.machines["xy"].state
         if (
             self.latest_xy is not None
             and self.latest_xy.sequence != self.last_xy_sequence
@@ -256,6 +305,7 @@ class MediaPipeReleaseTrigger:
             )
 
         z_updated = False
+        z_previous_state = self.machines["z"].state
         if (
             self.latest_z is not None
             and self.latest_z.sequence != self.last_z_sequence
@@ -281,12 +331,31 @@ class MediaPipeReleaseTrigger:
         )
         pair_skew = None
         event = None
+        candidate_event = None
+        candidate_cancelled = False
+        release_confirmed = False
 
         if (
             self.decision_camera == "xy"
             and xy_updated
             and self.latest_xy is not None
         ):
+            (
+                self._release_candidate_active,
+                candidate_event,
+                candidate_cancelled,
+                release_confirmed,
+            ) = update_release_candidate(
+                candidate_active=self._release_candidate_active,
+                previous_state=xy_previous_state,
+                just_released=self.machines["xy"].just_released,
+                explicit_observation=observation_is_explicit(self.latest_xy),
+                contact_candidate=self.latest_xy.contact_candidate,
+                timestamp_ms=self.latest_xy.timestamp_ms,
+                now_ms=now_ms,
+                pair_skew_ms=0.0,
+                maximum_age_ms=self.maximum_trigger_age_ms,
+            )
             event = build_auto_release_event(
                 just_released=self.machines["xy"].just_released,
                 event_timestamp_ms=self.latest_xy.timestamp_ms,
@@ -300,6 +369,22 @@ class MediaPipeReleaseTrigger:
             and z_updated
             and self.latest_z is not None
         ):
+            (
+                self._release_candidate_active,
+                candidate_event,
+                candidate_cancelled,
+                release_confirmed,
+            ) = update_release_candidate(
+                candidate_active=self._release_candidate_active,
+                previous_state=z_previous_state,
+                just_released=self.machines["z"].just_released,
+                explicit_observation=observation_is_explicit(self.latest_z),
+                contact_candidate=self.latest_z.contact_candidate,
+                timestamp_ms=self.latest_z.timestamp_ms,
+                now_ms=now_ms,
+                pair_skew_ms=0.0,
+                maximum_age_ms=self.maximum_trigger_age_ms,
+            )
             event = build_auto_release_event(
                 just_released=self.machines["z"].just_released,
                 event_timestamp_ms=self.latest_z.timestamp_ms,
@@ -325,6 +410,7 @@ class MediaPipeReleaseTrigger:
                 and pair_skew <= self.result_pair_tolerance_ms
             ):
                 self.last_both_sequences = sequences
+                both_previous_state = self.machines["both"].state
                 both_valid = (
                     observation_is_explicit(self.latest_xy)
                     and observation_is_explicit(self.latest_z)
@@ -342,6 +428,22 @@ class MediaPipeReleaseTrigger:
                     event_timestamp_ms,
                     both_contact,
                     both_valid,
+                )
+                (
+                    self._release_candidate_active,
+                    candidate_event,
+                    candidate_cancelled,
+                    release_confirmed,
+                ) = update_release_candidate(
+                    candidate_active=self._release_candidate_active,
+                    previous_state=both_previous_state,
+                    just_released=self.machines["both"].just_released,
+                    explicit_observation=both_valid,
+                    contact_candidate=both_contact,
+                    timestamp_ms=event_timestamp_ms,
+                    now_ms=now_ms,
+                    pair_skew_ms=pair_skew,
+                    maximum_age_ms=self.maximum_trigger_age_ms,
                 )
 
                 event = build_auto_release_event(
@@ -361,6 +463,9 @@ class MediaPipeReleaseTrigger:
             result_age_xy_ms=age_xy,
             result_age_z_ms=age_z,
             result_pair_skew_ms=pair_skew,
+            candidate_event=candidate_event,
+            candidate_cancelled=candidate_cancelled,
+            release_confirmed=release_confirmed,
             event=event,
         )
         return self.status
@@ -434,6 +539,7 @@ class MediaPipeReleaseTrigger:
             name: TipContactState.WAITING_FOR_GRASP
             for name in self.machines
         }
+        self._release_candidate_active = False
         self.status = AutoReleaseStatus(
             xy_state=self.states["xy"],
             z_state=self.states["z"],

@@ -12,6 +12,7 @@ from manual_release_tracking.core.mediapipe_release_trigger import (
     normalize_decision_camera,
     observation_is_explicit,
     should_stop_automatic_hold,
+    update_release_candidate,
 )
 from manual_release_tracking.core.mediapipe_hands import (
     BallFrameMetadata,
@@ -48,6 +49,56 @@ class AutoReleaseEventTest(unittest.TestCase):
         )
 
         self.assertIsNone(event)
+
+    def test_first_separation_emits_candidate_once_then_confirms(self):
+        active, candidate, cancelled, confirmed = update_release_candidate(
+            candidate_active=False,
+            previous_state=TipContactState.GRASPED,
+            just_released=False,
+            explicit_observation=True,
+            contact_candidate=False,
+            timestamp_ms=1000,
+            now_ms=1010,
+            pair_skew_ms=0.0,
+            maximum_age_ms=80.0,
+        )
+        self.assertTrue(active)
+        self.assertIsNotNone(candidate)
+        self.assertFalse(cancelled)
+        self.assertFalse(confirmed)
+
+        active, candidate, cancelled, confirmed = update_release_candidate(
+            candidate_active=active,
+            previous_state=TipContactState.GRASPED,
+            just_released=True,
+            explicit_observation=True,
+            contact_candidate=False,
+            timestamp_ms=1035,
+            now_ms=1045,
+            pair_skew_ms=0.0,
+            maximum_age_ms=80.0,
+        )
+        self.assertFalse(active)
+        self.assertIsNone(candidate)
+        self.assertFalse(cancelled)
+        self.assertTrue(confirmed)
+
+    def test_contact_return_cancels_unconfirmed_candidate(self):
+        active, candidate, cancelled, confirmed = update_release_candidate(
+            candidate_active=True,
+            previous_state=TipContactState.GRASPED,
+            just_released=False,
+            explicit_observation=True,
+            contact_candidate=True,
+            timestamp_ms=1020,
+            now_ms=1030,
+            pair_skew_ms=0.0,
+            maximum_age_ms=80.0,
+        )
+        self.assertFalse(active)
+        self.assertIsNone(candidate)
+        self.assertTrue(cancelled)
+        self.assertFalse(confirmed)
 
     def test_stale_release_is_rejected(self):
         event = build_auto_release_event(

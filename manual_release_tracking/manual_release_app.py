@@ -56,6 +56,14 @@ from tracking.core.stereo import RigidTransform, StereoTriangulator
 from manual_release_tracking.core.mediapipe_release_trigger import (
     should_stop_automatic_hold,
 )
+from manual_release_tracking.core.auto_release_capture import (
+    CAPTURE_ALIGN,
+    AutoReleaseCaptureLogger,
+    StereoMotionEstimator,
+    capture_intensity_for_vz,
+    predict_capture_position,
+    update_capture_stability,
+)
 
 
 def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
@@ -239,6 +247,15 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
 
     sender = None
     logger = StabilityLogger(cfg)
+    capture_logger = AutoReleaseCaptureLogger(
+        str(
+            getattr(
+                cfg,
+                "auto_release_capture_log_path",
+                "./manual_release_tracking/auto_release_capture_events.csv",
+            )
+        )
+    )
 
     try:
         with Controller.open(
@@ -270,10 +287,29 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
 
             controller = PredictionPIDController(cfg)
             controller.reset(Target3D(home.x, home.y, home.z))
+            motion_estimator = StereoMotionEstimator(
+                position_current_weight=float(
+                    getattr(cfg, "auto_release_position_current_weight", 0.55)
+                ),
+                velocity_current_weight=float(
+                    getattr(cfg, "auto_release_velocity_current_weight", 0.50)
+                ),
+                max_update_gap_sec=float(
+                    getattr(cfg, "auto_release_motion_max_gap_sec", 0.10)
+                ),
+            )
 
             # 4. Runtime state
             tracking_active = False
             auto_hold_active = False
+            auto_release_confirmed = False
+            auto_release_timestamp_ms = None
+            capture_started_at = None
+            capture_stable_since = None
+            capture_start_estimate = None
+            capture_initial_prediction = None
+            pending_capture_command_seq = None
+            pending_capture_sent_logged = False
             prev_enter_pressed = False
             prev_demo_toggle_pressed = False
             prev_log_trigger_pressed = False
@@ -399,9 +435,142 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 )
                 return True
 
+            def arm_capture_align(event, estimate) -> bool:
+                nonlocal tracking_active
+                nonlocal auto_hold_active
+                nonlocal auto_release_confirmed
+                nonlocal auto_release_timestamp_ms
+                nonlocal control_mode
+                nonlocal capture_started_at
+                nonlocal capture_stable_since
+                nonlocal capture_start_estimate
+                nonlocal capture_initial_prediction
+                nonlocal pending_capture_command_seq
+                nonlocal pending_capture_sent_logged
+                nonlocal current_intensity_ratio
+                nonlocal return_setpoint
+                nonlocal last_target
+                nonlocal mode_transition_reason
+
+                now_sec = time.perf_counter()
+                maximum_age_sec = float(
+                    getattr(
+                        cfg,
+                        "auto_release_max_motion_age_sec",
+                        0.050,
+                    )
+                )
+                if estimate is None:
+                    print(
+                        "[AUTO_RELEASE] RELEASE_CANDIDATE ignored: "
+                        "no stereo motion estimate."
+                    )
+                    return False
+                measurement_age = now_sec - estimate.measurement_time_sec
+                if measurement_age < 0.0 or measurement_age > maximum_age_sec:
+                    print(
+                        "[AUTO_RELEASE] RELEASE_CANDIDATE ignored: "
+                        f"stereo estimate age={measurement_age * 1000.0:.1f} ms."
+                    )
+                    return False
+
+                prediction = predict_capture_position(
+                    estimate,
+                    now_sec=now_sec,
+                    actuation_delay_sec=float(
+                        getattr(
+                            cfg,
+                            "auto_release_actuation_prediction_sec",
+                            0.010,
+                        )
+                    ),
+                    gravity_mm_s2=float(cfg.gravity_mm_s2),
+                    apply_gravity=True,
+                )
+                last_target = Target3D(
+                    x=float(prediction.x_mm),
+                    y=float(prediction.y_mm),
+                    z=float(np.clip(prediction.z_mm, cfg.z_min, cfg.z_max)),
+                )
+                return_setpoint = HomePosition(
+                    x=float(estimate.x_mm),
+                    y=float(estimate.y_mm),
+                    z=float(estimate.z_mm),
+                )
+                current_intensity_ratio = capture_intensity_for_vz(
+                    estimate.vz_mm_s,
+                    normal_ratio=float(cfg.static_intensity_ratio),
+                    slow_ratio=float(
+                        getattr(cfg, "auto_release_slow_intensity_ratio", 0.7)
+                    ),
+                    maximum_ratio=float(
+                        getattr(cfg, "auto_release_max_intensity_ratio", 0.8)
+                    ),
+                    fast_down_threshold_mm_s=float(
+                        getattr(
+                            cfg,
+                            "auto_release_fast_down_vz_mm_s",
+                            -100.0,
+                        )
+                    ),
+                    slow_down_threshold_mm_s=float(
+                        getattr(
+                            cfg,
+                            "auto_release_slow_down_vz_mm_s",
+                            -30.0,
+                        )
+                    ),
+                )
+
+                controller.reset(last_target)
+                tracking_active = True
+                auto_hold_active = True
+                auto_release_confirmed = False
+                auto_release_timestamp_ms = int(event.timestamp_ms)
+                control_mode = CAPTURE_ALIGN
+                capture_started_at = now_sec
+                capture_stable_since = None
+                capture_start_estimate = estimate
+                capture_initial_prediction = prediction
+                pending_capture_sent_logged = False
+                mode_transition_reason = "release_candidate_capture_align"
+
+                pending_capture_command_seq = set_tracking_target(
+                    sender,
+                    cfg,
+                    last_target.x,
+                    last_target.y,
+                    last_target.z,
+                    home,
+                    current_radius,
+                    current_intensity_ratio,
+                )
+                capture_logger.write(
+                    event="release_candidate_command_enqueued",
+                    release_timestamp_ms=auto_release_timestamp_ms,
+                    event_time_sec=now_sec,
+                    estimate=estimate,
+                    prediction=prediction,
+                    target=last_target,
+                    intensity=current_intensity_ratio,
+                    command_seq=pending_capture_command_seq,
+                    reason="first_explicit_fingertip_separation",
+                )
+                print(
+                    "[AUTO_RELEASE] RELEASE_CANDIDATE -> CAPTURE_ALIGN "
+                    f"p=({last_target.x:.1f}, {last_target.y:.1f}, "
+                    f"{last_target.z:.1f}) mm, "
+                    f"v=({estimate.vx_mm_s:.1f}, "
+                    f"{estimate.vy_mm_s:.1f}, {estimate.vz_mm_s:.1f}) mm/s, "
+                    f"prediction={prediction.horizon_sec * 1000.0:.1f} ms, "
+                    f"intensity={current_intensity_ratio:.2f}"
+                )
+                return True
+
             def stop_automatic_hold(reason: str):
                 nonlocal tracking_active
                 nonlocal auto_hold_active
+                nonlocal auto_release_confirmed
                 nonlocal control_mode
                 nonlocal descending_frame_count
                 nonlocal follow_xy_reference
@@ -411,9 +580,12 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal local_hold_start_time
                 nonlocal mode_transition_reason
                 nonlocal current_intensity_ratio
+                nonlocal capture_started_at
+                nonlocal capture_stable_since
 
                 tracking_active = False
                 auto_hold_active = False
+                auto_release_confirmed = False
                 control_mode = NORMAL_HOLD
                 descending_frame_count = 0
                 follow_xy_reference = None
@@ -423,6 +595,8 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 local_hold_start_time = None
                 mode_transition_reason = reason
                 current_intensity_ratio = 0.0
+                capture_started_at = None
+                capture_stable_since = None
                 controller.reset(last_target)
 
                 # Keep the sender thread alive for the next release, but make the
@@ -436,6 +610,14 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     home,
                     current_radius,
                     current_intensity_ratio,
+                )
+                capture_logger.write(
+                    event="automatic_field_stopped",
+                    release_timestamp_ms=auto_release_timestamp_ms,
+                    estimate=motion_estimator.latest,
+                    target=last_target,
+                    intensity=current_intensity_ratio,
+                    reason=reason,
                 )
                 print(
                     "[AUTO_RELEASE] automatic LOCAL_HOLD stopped: "
@@ -497,6 +679,9 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         print("[INFO] >>> TRACKING PAUSED <<<")
                         tracking_active = False
                         auto_hold_active = False
+                        auto_release_confirmed = False
+                        capture_started_at = None
+                        capture_stable_since = None
                         control_mode = NORMAL_HOLD
                         descending_frame_count = 0
                         follow_xy_reference = None
@@ -732,6 +917,15 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     except Exception as e:
                         print(f"[WARN] Stereo triangulation failed: {e}")
 
+                motion_estimate = motion_estimator.latest
+                if x_mm is not None and y_mm is not None and z_mm is not None:
+                    motion_estimate = motion_estimator.update(
+                        max(float(frame_xy_time), float(frame_z_time)),
+                        x_mm,
+                        y_mm,
+                        z_mm,
+                    )
+
                 if do_display:
                     draw_ball_detection(frame_z_bgr, det_z, tracking_active)
                     if stereo_cam_point is not None:
@@ -821,6 +1015,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         prefer_filtered_z=True,
                     ):
                         auto_hold_active = False
+                        auto_release_confirmed = False
                         print(
                             f"Release after ~{manual_release_pre_hold_sec:.1f}s."
                         )
@@ -829,39 +1024,58 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
 
                 if (
                     auto_release_status is not None
-                    and auto_release_status.event is not None
+                    and auto_release_status.candidate_event is not None
                     and not tracking_active
                 ):
-                    event = auto_release_status.event
-                    reason = (
-                        "mediapipe_release_trigger"
-                        f";camera={auto_release_status.decision_camera}"
-                        f";result_age_ms={event.result_age_ms:.1f}"
-                        f";pair_skew_ms={event.result_pair_skew_ms:.1f}"
+                    arm_capture_align(
+                        auto_release_status.candidate_event,
+                        motion_estimate,
                     )
-                    if arm_local_hold(
-                        x_mm,
-                        y_mm,
-                        z_mm,
-                        reason=reason,
-                        label="AUTO_RELEASE",
-                        prefer_filtered_z=False,
-                    ):
-                        auto_hold_active = True
-                        # RELEASED is a display latch in the preview state machine.
-                        # Re-arm immediately here so a real/false re-grasp can stop
-                        # this automatically started field without waiting 500 ms.
-                        auto_release_trigger.reset()
-                        print(
-                            "[AUTO_RELEASE] accepted GRASPED -> RELEASED: "
-                            f"camera={auto_release_status.decision_camera}, "
-                            f"result_age={event.result_age_ms:.1f} ms, "
-                            f"pair_skew={event.result_pair_skew_ms:.1f} ms, "
-                            f"intensity={current_intensity_ratio:.3f}"
-                        )
 
                 if (
                     auto_release_status is not None
+                    and auto_release_status.candidate_cancelled
+                    and auto_hold_active
+                    and not auto_release_confirmed
+                ):
+                    stop_automatic_hold(
+                        "release_candidate_contact_returned"
+                    )
+
+                if (
+                    auto_release_status is not None
+                    and auto_release_status.release_confirmed
+                ):
+                    if auto_hold_active:
+                        auto_release_confirmed = True
+                        capture_logger.write(
+                            event="release_confirmed",
+                            release_timestamp_ms=auto_release_timestamp_ms,
+                            estimate=motion_estimate,
+                            target=last_target,
+                            intensity=current_intensity_ratio,
+                            reason=(
+                                f"camera={auto_release_status.decision_camera}"
+                            ),
+                        )
+                        # Re-arm the detector immediately. A later confirmed grasp
+                        # now means that the user caught the sphere again.
+                        auto_release_trigger.reset()
+                    elif (
+                        auto_release_status.event is not None
+                        and not tracking_active
+                        and arm_capture_align(
+                            auto_release_status.event,
+                            motion_estimate,
+                        )
+                    ):
+                        # Fallback if the first candidate result was too stale.
+                        auto_release_confirmed = True
+                        auto_release_trigger.reset()
+
+                if (
+                    auto_release_status is not None
+                    and auto_release_confirmed
                     and should_stop_automatic_hold(
                         auto_hold_active,
                         auto_release_status.decision_state,
@@ -870,6 +1084,72 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     stop_automatic_hold(
                         "regrasp_detected_during_auto_hold"
                     )
+
+                if auto_hold_active and control_mode == CAPTURE_ALIGN:
+                    maximum_capture_age_sec = float(
+                        getattr(
+                            cfg,
+                            "auto_release_capture_measurement_timeout_sec",
+                            0.100,
+                        )
+                    )
+                    if (
+                        motion_estimate is None
+                        or time.perf_counter()
+                        - motion_estimate.measurement_time_sec
+                        > maximum_capture_age_sec
+                    ):
+                        stop_automatic_hold(
+                            "capture_stereo_measurement_timeout"
+                        )
+                    elif (
+                        capture_started_at is not None
+                        and time.perf_counter() - capture_started_at
+                        > float(
+                            getattr(
+                                cfg,
+                                "auto_release_capture_timeout_sec",
+                                1.0,
+                            )
+                        )
+                    ):
+                        stop_automatic_hold(
+                            "capture_align_timeout"
+                        )
+
+                if (
+                    pending_capture_command_seq is not None
+                    and not pending_capture_sent_logged
+                ):
+                    sent = sender.get_last_sent_telemetry()
+                    if (
+                        sent is not None
+                        and sent.sequence >= pending_capture_command_seq
+                    ):
+                        pending_capture_sent_logged = True
+                        capture_logger.write(
+                            event="capture_field_sent",
+                            release_timestamp_ms=auto_release_timestamp_ms,
+                            event_time_sec=sent.sent_time_sec,
+                            estimate=capture_start_estimate,
+                            prediction=capture_initial_prediction,
+                            target=Target3D(
+                                sent.target.x,
+                                sent.target.y,
+                                sent.target.z,
+                            ),
+                            intensity=sent.target.intensity_ratio,
+                            command_seq=sent.sequence,
+                            reason=(
+                                f"candidate_seq={pending_capture_command_seq}"
+                                if sent.sequence == pending_capture_command_seq
+                                else (
+                                    f"candidate_seq={pending_capture_command_seq};"
+                                    f"sent_seq={sent.sequence};"
+                                    "candidate_command_superseded=1"
+                                )
+                            ),
+                        )
 
                 # Control
                 if tracking_active:
@@ -906,7 +1186,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                             )
 
                             control_home = return_setpoint
-                        elif control_mode == LOCAL_HOLD:
+                        elif control_mode in [LOCAL_HOLD, CAPTURE_ALIGN]:
                             control_home = return_setpoint
                         else:
                             control_home = home
@@ -956,7 +1236,158 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         # 4. FOLLOW_AND_BRAKE中は遅延後のxyz予測位置へ追従し、
                         #    必要制動力から段階intensityを決める。
                         capture_intensity_ratio = None
-                        if control_mode == FOLLOW_AND_BRAKE:
+                        if (
+                            control_mode == CAPTURE_ALIGN
+                            and motion_estimate is not None
+                        ):
+                            now_capture = time.perf_counter()
+                            prediction = predict_capture_position(
+                                motion_estimate,
+                                now_sec=now_capture,
+                                actuation_delay_sec=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_actuation_prediction_sec",
+                                        0.010,
+                                    )
+                                ),
+                                gravity_mm_s2=float(cfg.gravity_mm_s2),
+                                apply_gravity=True,
+                            )
+                            target = Target3D(
+                                x=float(prediction.x_mm),
+                                y=float(prediction.y_mm),
+                                z=float(
+                                    np.clip(
+                                        prediction.z_mm,
+                                        cfg.z_min,
+                                        cfg.z_max,
+                                    )
+                                ),
+                            )
+                            capture_intensity_ratio = capture_intensity_for_vz(
+                                motion_estimate.vz_mm_s,
+                                normal_ratio=float(cfg.static_intensity_ratio),
+                                slow_ratio=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_slow_intensity_ratio",
+                                        0.7,
+                                    )
+                                ),
+                                maximum_ratio=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_max_intensity_ratio",
+                                        0.8,
+                                    )
+                                ),
+                                fast_down_threshold_mm_s=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_fast_down_vz_mm_s",
+                                        -100.0,
+                                    )
+                                ),
+                                slow_down_threshold_mm_s=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_slow_down_vz_mm_s",
+                                        -30.0,
+                                    )
+                                ),
+                            )
+                            vx_now = float(motion_estimate.vx_mm_s)
+                            vy_now = float(motion_estimate.vy_mm_s)
+                            vz_now = float(motion_estimate.vz_mm_s)
+                            recovery_telemetry.vz_mm_s = vz_now
+                            recovery_telemetry.predicted_x_mm = prediction.x_mm
+                            recovery_telemetry.predicted_y_mm = prediction.y_mm
+                            recovery_telemetry.predicted_z_mm = prediction.z_mm
+                            recovery_telemetry.predicted_vz_mm_s = prediction.vz_mm_s
+                            recovery_telemetry.commanded_intensity = (
+                                capture_intensity_ratio
+                            )
+                            recovery_telemetry.xy_distance_to_target_mm = float(
+                                np.hypot(
+                                    motion_estimate.x_mm - target.x,
+                                    motion_estimate.y_mm - target.y,
+                                )
+                            )
+
+                            stable_vz_limit = float(
+                                getattr(
+                                    cfg,
+                                    "auto_release_local_hold_vz_abs_mm_s",
+                                    30.0,
+                                )
+                            )
+                            stable_duration_sec = float(
+                                getattr(
+                                    cfg,
+                                    "auto_release_local_hold_stable_sec",
+                                    0.050,
+                                )
+                            )
+                            (
+                                capture_stable_since,
+                                capture_ready,
+                            ) = update_capture_stability(
+                                now_sec=now_capture,
+                                vz_mm_s=vz_now,
+                                release_confirmed=auto_release_confirmed,
+                                stable_since_sec=capture_stable_since,
+                                maximum_abs_vz_mm_s=stable_vz_limit,
+                                required_duration_sec=stable_duration_sec,
+                            )
+                            if capture_ready:
+                                return_setpoint = HomePosition(
+                                    x=float(motion_estimate.x_mm),
+                                    y=float(motion_estimate.y_mm),
+                                    z=float(motion_estimate.z_mm),
+                                )
+                                target = Target3D(
+                                    return_setpoint.x,
+                                    return_setpoint.y,
+                                    return_setpoint.z,
+                                )
+                                controller.reset(target)
+                                control_mode = LOCAL_HOLD
+                                local_hold_start_time = time.time()
+                                capture_stable_since = None
+                                current_intensity_ratio = float(
+                                    cfg.static_intensity_ratio
+                                )
+                                capture_intensity_ratio = (
+                                    current_intensity_ratio
+                                )
+                                mode_transition_reason = (
+                                    "auto_release_vz_stable"
+                                )
+                                capture_logger.write(
+                                    event="capture_align_to_local_hold",
+                                    release_timestamp_ms=(
+                                        auto_release_timestamp_ms
+                                    ),
+                                    event_time_sec=now_capture,
+                                    estimate=motion_estimate,
+                                    prediction=prediction,
+                                    target=target,
+                                    intensity=current_intensity_ratio,
+                                    reason=(
+                                        f"abs_vz<={stable_vz_limit:.1f}"
+                                        f"_for_{stable_duration_sec:.3f}s"
+                                    ),
+                                )
+                                print(
+                                    "[AUTO_RELEASE] CAPTURE_ALIGN -> "
+                                    "LOCAL_HOLD "
+                                    f"setpoint=({target.x:.1f}, "
+                                    f"{target.y:.1f}, {target.z:.1f}) mm, "
+                                    f"vz={vz_now:.1f} mm/s"
+                                )
+
+                        elif control_mode == FOLLOW_AND_BRAKE:
                             pred_x, pred_y, pred_z, pred_vz = predict_falling_position(
                                 cfg,
                                 x_mm,
@@ -1236,7 +1667,33 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
 
                         # 7. intensity更新。
                         #    通常保持時は既存LPFを維持し、捕捉関連状態だけ上昇即時/下降slewを使う。
-                        if control_mode == FOLLOW_AND_BRAKE and capture_intensity_ratio is not None:
+                        if (
+                            control_mode == CAPTURE_ALIGN
+                            and capture_intensity_ratio is not None
+                        ):
+                            # Release capture is short and velocity-scheduled.
+                            # Apply both increases and decreases immediately so
+                            # braking strength disappears as soon as vz settles.
+                            current_intensity_ratio = float(
+                                np.clip(
+                                    capture_intensity_ratio,
+                                    0.0,
+                                    min(
+                                        cfg.intensity_max_ratio,
+                                        float(
+                                            getattr(
+                                                cfg,
+                                                "auto_release_max_intensity_ratio",
+                                                0.8,
+                                            )
+                                        ),
+                                    ),
+                                )
+                            )
+                            recovery_telemetry.commanded_intensity = (
+                                current_intensity_ratio
+                            )
+                        elif control_mode == FOLLOW_AND_BRAKE and capture_intensity_ratio is not None:
                             if vz_now > 0.0:
                                 # 上向きに反転したら、打ち上げを止めるため下降slewを待たず即座に抜く。
                                 current_intensity_ratio = float(
@@ -1319,6 +1776,35 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                             (0, 255, 255),
                             2,
                         )
+                        if auto_hold_active:
+                            capture_vz = (
+                                None
+                                if motion_estimate is None
+                                else motion_estimate.vz_mm_s
+                            )
+                            capture_label = (
+                                f"AUTO CONTROL: {control_mode} | "
+                                f"vz={'--' if capture_vz is None else f'{capture_vz:.1f}'} "
+                                f"| intensity={current_intensity_ratio:.2f}"
+                            )
+                            cv2.putText(
+                                frame_xy_bgr,
+                                capture_label,
+                                (10, 180),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.6,
+                                (0, 255, 255),
+                                2,
+                            )
+                            cv2.putText(
+                                frame_z_bgr,
+                                capture_label,
+                                (10, 180),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.6,
+                                (0, 255, 255),
+                                2,
+                            )
 
                 logger.write(
                     frame_xy_time=frame_xy_time,

@@ -121,11 +121,16 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
 3. XYカメラで両指先が明確に離れた状態が継続すると
    `GRASPED -> RELEASED` へ遷移します。手ランドマークの一時的な
    検出ロストはreleaseとして扱いません。
-4. 新しい `just_released` イベントを1回だけ受理し、その時点で利用できる
-   最新ステレオ3D位置を一時基準にします。
-5. 手動実験と同じ通常PID、円軌道半径19 mm、intensity 0.6で
-   `LOCAL_HOLD`を開始します。
-6. 自動開始した `LOCAL_HOLD` 中にXYカメラの `GRASPED` が再成立した場合は、
+4. 最初の明確な離反を `RELEASE_CANDIDATE` とし、35 msのrelease確定を
+   待たずに予測位置へ音場を出します。接触へ戻った場合は候補を取り消して
+   intensityを0にします。
+5. 球を持っている間からステレオ3D位置・速度を常時推定し、最新測定値の
+   経過時間とAUTD反映遅延10 msを考慮した予測位置へ音場中心を合わせます。
+6. `CAPTURE_ALIGN` 中は下降速度に応じてintensity 0.6、0.7、最大0.8を選び、
+   球の予測位置付近へ音場を更新します。
+7. release確定後、`|vz| <= 30 mm/s` が50 ms続くと、その位置を一時基準にして
+   intensity 0.6の通常PID `LOCAL_HOLD`へ移ります。
+8. 自動開始した捕捉・保持中にXYカメラの `GRASPED` が再成立した場合は、
    再把持または誤releaseと判断し、intensityを0にして音場を停止します。
 
 Zカメラは引き続きステレオ3D位置推定に使用しますが、MediaPipeの手推論は
@@ -142,3 +147,14 @@ Zカメラは引き続きステレオ3D位置推定に使用しますが、Media
 
 ログは `manual_release_tracking/manual_release_log.csv` に出力されます。
 自動保持実験のログは `manual_release_tracking/auto_release_log.csv` に出力されます。
+
+自動release捕捉のイベントと遅延は、実行時に自動で
+`manual_release_tracking/auto_release_capture_events.csv`へ追記されます。
+このCSVには次が記録されます。
+
+- 最初に指先が離れたMediaPipe画像のタイムスタンプ
+- release候補からAUTDコマンド投入・実送信までの時間
+- 送信時に使用したステレオ位置と速度
+- 予測時間と10 ms先の予測位置
+- 実際のtarget、intensity、AUTDコマンドsequence
+- release確定、候補取消、再把持停止、LOCAL_HOLD遷移の理由

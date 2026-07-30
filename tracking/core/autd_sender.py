@@ -139,6 +139,13 @@ class TargetCommand:
     intensity_ratio: float | None = None
 
 
+@dataclass(frozen=True)
+class SentCommandTelemetry:
+    sequence: int
+    sent_time_sec: float
+    target: TargetCommand
+
+
 class AutdSender:
     """
     AUTD送信専用クラス。
@@ -154,6 +161,7 @@ class AutdSender:
         self._lock = threading.Lock()
         self._target: TargetCommand | None = None
         self._seq = 0
+        self._last_sent: SentCommandTelemetry | None = None
 
         self._running = threading.Event()
         self._thread: threading.Thread | None = None
@@ -192,6 +200,7 @@ class AutdSender:
                 intensity_ratio=None if intensity_ratio is None else float(intensity_ratio),
             )
             self._seq += 1
+            return self._seq
 
     def start(self):
         if self._thread is not None and self._thread.is_alive():
@@ -210,6 +219,10 @@ class AutdSender:
     def _get_latest_target(self):
         with self._lock:
             return self._target, self._seq
+
+    def get_last_sent_telemetry(self) -> SentCommandTelemetry | None:
+        with self._lock:
+            return self._last_sent
 
     def _send_output_mask_if_needed(self, target: TargetCommand):
         """
@@ -340,6 +353,12 @@ class AutdSender:
                 self.autd.send(datagram)
 
                 t2 = time.perf_counter()
+                with self._lock:
+                    self._last_sent = SentCommandTelemetry(
+                        sequence=int(seq),
+                        sent_time_sec=float(t2),
+                        target=target,
+                    )
 
                 build_ms = (t1 - t0) * 1000.0
                 send_ms = (t2 - t1) * 1000.0
@@ -382,7 +401,7 @@ def set_tracking_target(
 ):
     """Send a target while keeping OutputMask-specific arguments out of app.py."""
     if cfg.use_output_mask:
-        sender.set_target(
+        return sender.set_target(
             target_x,
             target_y,
             target_z,
@@ -392,7 +411,7 @@ def set_tracking_target(
             intensity_ratio=intensity_ratio,
         )
     else:
-        sender.set_target(
+        return sender.set_target(
             target_x,
             target_y,
             target_z,

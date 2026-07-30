@@ -1,0 +1,311 @@
+from __future__ import annotations
+
+import csv
+import os
+import time
+from dataclasses import dataclass
+
+import numpy as np
+
+
+CAPTURE_ALIGN = "CAPTURE_ALIGN"
+
+
+@dataclass(frozen=True)
+class MotionEstimate3D:
+    measurement_time_sec: float
+    x_mm: float
+    y_mm: float
+    z_mm: float
+    vx_mm_s: float
+    vy_mm_s: float
+    vz_mm_s: float
+
+
+@dataclass(frozen=True)
+class PredictedCapture:
+    horizon_sec: float
+    x_mm: float
+    y_mm: float
+    z_mm: float
+    vx_mm_s: float
+    vy_mm_s: float
+    vz_mm_s: float
+
+
+class StereoMotionEstimator:
+    """Lightweight filtered position/velocity estimator that runs before control."""
+
+    def __init__(
+        self,
+        *,
+        position_current_weight: float = 0.55,
+        velocity_current_weight: float = 0.50,
+        max_update_gap_sec: float = 0.10,
+    ):
+        self.position_current_weight = float(
+            np.clip(position_current_weight, 0.0, 1.0)
+        )
+        self.velocity_current_weight = float(
+            np.clip(velocity_current_weight, 0.0, 1.0)
+        )
+        self.max_update_gap_sec = float(max_update_gap_sec)
+        self._estimate: MotionEstimate3D | None = None
+
+    @property
+    def latest(self) -> MotionEstimate3D | None:
+        return self._estimate
+
+    def reset(self):
+        self._estimate = None
+
+    def update(
+        self,
+        measurement_time_sec: float,
+        x_mm: float | None,
+        y_mm: float | None,
+        z_mm: float | None,
+    ) -> MotionEstimate3D | None:
+        if x_mm is None or y_mm is None or z_mm is None:
+            return self._estimate
+
+        values = np.asarray([x_mm, y_mm, z_mm], dtype=float)
+        if not np.all(np.isfinite(values)):
+            return self._estimate
+
+        timestamp = float(measurement_time_sec)
+        previous = self._estimate
+        if previous is None:
+            self._estimate = MotionEstimate3D(
+                timestamp,
+                float(values[0]),
+                float(values[1]),
+                float(values[2]),
+                0.0,
+                0.0,
+                0.0,
+            )
+            return self._estimate
+
+        dt = timestamp - previous.measurement_time_sec
+        if dt <= 0.0:
+            return previous
+
+        if dt > self.max_update_gap_sec:
+            self._estimate = MotionEstimate3D(
+                timestamp,
+                float(values[0]),
+                float(values[1]),
+                float(values[2]),
+                0.0,
+                0.0,
+                0.0,
+            )
+            return self._estimate
+
+        previous_position = np.asarray(
+            [previous.x_mm, previous.y_mm, previous.z_mm],
+            dtype=float,
+        )
+        position_weight = self.position_current_weight
+        filtered_position = (
+            position_weight * values
+            + (1.0 - position_weight) * previous_position
+        )
+        raw_velocity = (filtered_position - previous_position) / max(1e-3, dt)
+        previous_velocity = np.asarray(
+            [previous.vx_mm_s, previous.vy_mm_s, previous.vz_mm_s],
+            dtype=float,
+        )
+        velocity_weight = self.velocity_current_weight
+        filtered_velocity = (
+            velocity_weight * raw_velocity
+            + (1.0 - velocity_weight) * previous_velocity
+        )
+
+        self._estimate = MotionEstimate3D(
+            timestamp,
+            float(filtered_position[0]),
+            float(filtered_position[1]),
+            float(filtered_position[2]),
+            float(filtered_velocity[0]),
+            float(filtered_velocity[1]),
+            float(filtered_velocity[2]),
+        )
+        return self._estimate
+
+
+def predict_capture_position(
+    estimate: MotionEstimate3D,
+    *,
+    now_sec: float,
+    actuation_delay_sec: float,
+    gravity_mm_s2: float,
+    apply_gravity: bool = True,
+) -> PredictedCapture:
+    measurement_age_sec = max(
+        0.0,
+        float(now_sec) - estimate.measurement_time_sec,
+    )
+    horizon = measurement_age_sec + max(0.0, float(actuation_delay_sec))
+    gravity = float(gravity_mm_s2) if apply_gravity else 0.0
+    predicted_z = (
+        estimate.z_mm
+        + estimate.vz_mm_s * horizon
+        - 0.5 * gravity * horizon * horizon
+    )
+    predicted_vz = estimate.vz_mm_s - gravity * horizon
+    return PredictedCapture(
+        horizon_sec=float(horizon),
+        x_mm=float(estimate.x_mm + estimate.vx_mm_s * horizon),
+        y_mm=float(estimate.y_mm + estimate.vy_mm_s * horizon),
+        z_mm=float(predicted_z),
+        vx_mm_s=float(estimate.vx_mm_s),
+        vy_mm_s=float(estimate.vy_mm_s),
+        vz_mm_s=float(predicted_vz),
+    )
+
+
+def capture_intensity_for_vz(
+    vz_mm_s: float,
+    *,
+    normal_ratio: float = 0.6,
+    slow_ratio: float = 0.7,
+    maximum_ratio: float = 0.8,
+    fast_down_threshold_mm_s: float = -100.0,
+    slow_down_threshold_mm_s: float = -30.0,
+) -> float:
+    """Small release-specific braking schedule; z is positive upward."""
+    vz = float(vz_mm_s)
+    if vz < float(fast_down_threshold_mm_s):
+        return float(maximum_ratio)
+    if vz < float(slow_down_threshold_mm_s):
+        return float(slow_ratio)
+    return float(normal_ratio)
+
+
+def update_capture_stability(
+    *,
+    now_sec: float,
+    vz_mm_s: float,
+    release_confirmed: bool,
+    stable_since_sec: float | None,
+    maximum_abs_vz_mm_s: float,
+    required_duration_sec: float,
+) -> tuple[float | None, bool]:
+    if not release_confirmed or abs(float(vz_mm_s)) > float(maximum_abs_vz_mm_s):
+        return None, False
+    if stable_since_sec is None:
+        return float(now_sec), False
+    ready = (
+        float(now_sec) - float(stable_since_sec)
+        >= float(required_duration_sec)
+    )
+    return float(stable_since_sec), bool(ready)
+
+
+CAPTURE_LOG_HEADER = [
+    "wall_timestamp",
+    "event",
+    "release_timestamp_ms",
+    "elapsed_from_release_ms",
+    "measurement_time_sec",
+    "measurement_age_ms",
+    "x_mm",
+    "y_mm",
+    "z_mm",
+    "vx_mm_s",
+    "vy_mm_s",
+    "vz_mm_s",
+    "prediction_horizon_ms",
+    "predicted_x_mm",
+    "predicted_y_mm",
+    "predicted_z_mm",
+    "predicted_vz_mm_s",
+    "target_x_mm",
+    "target_y_mm",
+    "target_z_mm",
+    "intensity",
+    "command_seq",
+    "reason",
+]
+
+
+class AutoReleaseCaptureLogger:
+    """Append-only event log for release-to-AUTD timing and capture handoff."""
+
+    def __init__(self, path: str):
+        self.path = str(path)
+
+    @staticmethod
+    def _number(value, digits: int = 6):
+        if value is None:
+            return ""
+        return f"{float(value):.{digits}f}"
+
+    def write(
+        self,
+        *,
+        event: str,
+        release_timestamp_ms: int | None = None,
+        event_time_sec: float | None = None,
+        estimate: MotionEstimate3D | None = None,
+        prediction: PredictedCapture | None = None,
+        target=None,
+        intensity: float | None = None,
+        command_seq: int | None = None,
+        reason: str = "",
+    ):
+        now_sec = time.perf_counter() if event_time_sec is None else float(event_time_sec)
+        directory = os.path.dirname(self.path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        exists = os.path.exists(self.path) and os.path.getsize(self.path) > 0
+
+        elapsed_ms = (
+            None
+            if release_timestamp_ms is None
+            else now_sec * 1000.0 - float(release_timestamp_ms)
+        )
+        measurement_age_ms = (
+            None
+            if estimate is None
+            else max(0.0, now_sec - estimate.measurement_time_sec) * 1000.0
+        )
+
+        with open(self.path, "a", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            if not exists:
+                writer.writerow(CAPTURE_LOG_HEADER)
+            writer.writerow(
+                [
+                    f"{time.time():.6f}",
+                    str(event),
+                    "" if release_timestamp_ms is None else int(release_timestamp_ms),
+                    self._number(elapsed_ms, 3),
+                    self._number(
+                        None if estimate is None else estimate.measurement_time_sec
+                    ),
+                    self._number(measurement_age_ms, 3),
+                    self._number(None if estimate is None else estimate.x_mm, 3),
+                    self._number(None if estimate is None else estimate.y_mm, 3),
+                    self._number(None if estimate is None else estimate.z_mm, 3),
+                    self._number(None if estimate is None else estimate.vx_mm_s, 3),
+                    self._number(None if estimate is None else estimate.vy_mm_s, 3),
+                    self._number(None if estimate is None else estimate.vz_mm_s, 3),
+                    self._number(
+                        None if prediction is None else prediction.horizon_sec * 1000.0,
+                        3,
+                    ),
+                    self._number(None if prediction is None else prediction.x_mm, 3),
+                    self._number(None if prediction is None else prediction.y_mm, 3),
+                    self._number(None if prediction is None else prediction.z_mm, 3),
+                    self._number(None if prediction is None else prediction.vz_mm_s, 3),
+                    self._number(None if target is None else target.x, 3),
+                    self._number(None if target is None else target.y, 3),
+                    self._number(None if target is None else target.z, 3),
+                    self._number(intensity, 3),
+                    "" if command_seq is None else int(command_seq),
+                    str(reason),
+                ]
+            )

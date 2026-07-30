@@ -54,8 +54,30 @@ if __name__ == "__main__":
     # guard; the hold target itself uses the newest stereo measurement.
     cfg.mediapipe_auto_release_max_result_age_ms = 80.0
 
-    # R remains a fallback. Automatic mode emits no ultrasound until the
-    # two-camera state machine reports GRASPED -> RELEASED.
+    # Release-specific capture. Position/velocity are estimated continuously,
+    # including while the sphere is still held by the user.
+    cfg.auto_release_position_current_weight = 0.55
+    cfg.auto_release_velocity_current_weight = 0.50
+    cfg.auto_release_motion_max_gap_sec = 0.10
+    cfg.auto_release_max_motion_age_sec = 0.050
+    cfg.auto_release_actuation_prediction_sec = 0.010
+
+    # CAPTURE_ALIGN follows the predicted sphere position with a modest,
+    # velocity-dependent braking intensity. Normal LOCAL_HOLD remains 0.6.
+    cfg.auto_release_slow_down_vz_mm_s = -30.0
+    cfg.auto_release_fast_down_vz_mm_s = -100.0
+    cfg.auto_release_slow_intensity_ratio = 0.7
+    cfg.auto_release_max_intensity_ratio = 0.8
+    cfg.auto_release_local_hold_vz_abs_mm_s = 30.0
+    cfg.auto_release_local_hold_stable_sec = 0.050
+    cfg.auto_release_capture_measurement_timeout_sec = 0.100
+    cfg.auto_release_capture_timeout_sec = 1.0
+    cfg.auto_release_capture_log_path = (
+        "./manual_release_tracking/auto_release_capture_events.csv"
+    )
+
+    # R remains a fallback. Automatic mode starts from the first explicit
+    # XY-camera separation after GRASPED; contact return cancels it.
     cfg.manual_release_key = "r"
     cfg.manual_release_pre_hold_sec = 0.3
 
