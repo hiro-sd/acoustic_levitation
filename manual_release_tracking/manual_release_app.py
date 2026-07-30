@@ -53,6 +53,9 @@ from tracking.core.runtime.logging import StabilityLogger
 from tracking.core.runtime.input import is_key_pressed, update_base_position
 from tracking.core.runtime.demo import SquareZDemo
 from tracking.core.stereo import RigidTransform, StereoTriangulator
+from manual_release_tracking.core.mediapipe_release_trigger import (
+    should_stop_automatic_hold,
+)
 
 
 def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
@@ -270,6 +273,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
 
             # 4. Runtime state
             tracking_active = False
+            auto_hold_active = False
             prev_enter_pressed = False
             prev_demo_toggle_pressed = False
             prev_log_trigger_pressed = False
@@ -395,6 +399,49 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 )
                 return True
 
+            def stop_automatic_hold(reason: str):
+                nonlocal tracking_active
+                nonlocal auto_hold_active
+                nonlocal control_mode
+                nonlocal descending_frame_count
+                nonlocal follow_xy_reference
+                nonlocal follow_xy_stabilizing
+                nonlocal follow_xy_initial_jump_done
+                nonlocal local_hold_stable_since
+                nonlocal local_hold_start_time
+                nonlocal mode_transition_reason
+                nonlocal current_intensity_ratio
+
+                tracking_active = False
+                auto_hold_active = False
+                control_mode = NORMAL_HOLD
+                descending_frame_count = 0
+                follow_xy_reference = None
+                follow_xy_stabilizing = False
+                follow_xy_initial_jump_done = False
+                local_hold_stable_since = None
+                local_hold_start_time = None
+                mode_transition_reason = reason
+                current_intensity_ratio = 0.0
+                controller.reset(last_target)
+
+                # Keep the sender thread alive for the next release, but make the
+                # current field silent immediately.
+                set_tracking_target(
+                    sender,
+                    cfg,
+                    last_target.x,
+                    last_target.y,
+                    last_target.z,
+                    home,
+                    current_radius,
+                    current_intensity_ratio,
+                )
+                print(
+                    "[AUTO_RELEASE] automatic LOCAL_HOLD stopped: "
+                    f"{reason}"
+                )
+
             def current_log_mode() -> str:
                 if not tracking_active:
                     return "FIXED"
@@ -449,6 +496,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     if tracking_active:
                         print("[INFO] >>> TRACKING PAUSED <<<")
                         tracking_active = False
+                        auto_hold_active = False
                         control_mode = NORMAL_HOLD
                         descending_frame_count = 0
                         follow_xy_reference = None
@@ -772,6 +820,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         label="MANUAL_RELEASE",
                         prefer_filtered_z=True,
                     ):
+                        auto_hold_active = False
                         print(
                             f"Release after ~{manual_release_pre_hold_sec:.1f}s."
                         )
@@ -797,12 +846,28 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         label="AUTO_RELEASE",
                         prefer_filtered_z=False,
                     ):
+                        auto_hold_active = True
+                        # RELEASED is a display latch in the preview state machine.
+                        # Re-arm immediately here so a real/false re-grasp can stop
+                        # this automatically started field without waiting 500 ms.
+                        auto_release_trigger.reset()
                         print(
                             "[AUTO_RELEASE] accepted GRASPED -> RELEASED: "
                             f"result_age={event.result_age_ms:.1f} ms, "
                             f"pair_skew={event.result_pair_skew_ms:.1f} ms, "
                             f"intensity={current_intensity_ratio:.3f}"
                         )
+
+                if (
+                    auto_release_status is not None
+                    and should_stop_automatic_hold(
+                        auto_hold_active,
+                        auto_release_status.both_state,
+                    )
+                ):
+                    stop_automatic_hold(
+                        "regrasp_detected_during_auto_hold"
+                    )
 
                 # Control
                 if tracking_active:

@@ -37,6 +37,44 @@ class AutoReleaseStatus:
     event: AutoReleaseEvent | None = None
 
 
+def fused_contact_candidate(
+    state: str,
+    xy_contact: bool,
+    z_contact: bool,
+) -> bool:
+    """
+    Fuse the two views asymmetrically for reliable automatic control.
+
+    A grasp must first be visible in both cameras. Once grasped, either camera
+    still seeing contact keeps the grasp alive, so release requires explicit
+    separation in both cameras.
+    """
+    if state == TipContactState.WAITING_FOR_GRASP:
+        return bool(xy_contact and z_contact)
+    return bool(xy_contact or z_contact)
+
+
+def observation_is_explicit(
+    observation: HandTipObservation,
+) -> bool:
+    """Missing hand landmarks are unknown, not evidence of release."""
+    return bool(
+        observation.valid_for_decision
+        and observation.hand_detected
+    )
+
+
+def should_stop_automatic_hold(
+    auto_hold_active: bool,
+    both_state: str,
+) -> bool:
+    """Only a re-grasp can cancel a hold started by automatic release."""
+    return bool(
+        auto_hold_active
+        and both_state == TipContactState.GRASPED
+    )
+
+
 def build_auto_release_event(
     *,
     just_released: bool,
@@ -188,7 +226,7 @@ class MediaPipeReleaseTrigger:
             self.states["xy"] = self.machines["xy"].update(
                 self.latest_xy.timestamp_ms,
                 self.latest_xy.contact_candidate,
-                self.latest_xy.valid_for_decision,
+                observation_is_explicit(self.latest_xy),
             )
 
         if (
@@ -199,7 +237,7 @@ class MediaPipeReleaseTrigger:
             self.states["z"] = self.machines["z"].update(
                 self.latest_z.timestamp_ms,
                 self.latest_z.contact_candidate,
-                self.latest_z.valid_for_decision,
+                observation_is_explicit(self.latest_z),
             )
 
         now_ms = time.perf_counter() * 1000.0
@@ -230,12 +268,13 @@ class MediaPipeReleaseTrigger:
             ):
                 self.last_both_sequences = sequences
                 both_valid = (
-                    self.latest_xy.valid_for_decision
-                    and self.latest_z.valid_for_decision
+                    observation_is_explicit(self.latest_xy)
+                    and observation_is_explicit(self.latest_z)
                 )
-                both_contact = (
-                    self.latest_xy.contact_candidate
-                    and self.latest_z.contact_candidate
+                both_contact = fused_contact_candidate(
+                    self.machines["both"].state,
+                    self.latest_xy.contact_candidate,
+                    self.latest_z.contact_candidate,
                 )
                 event_timestamp_ms = max(
                     self.latest_xy.timestamp_ms,
