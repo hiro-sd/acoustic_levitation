@@ -200,6 +200,19 @@ def limit_upward_capture_target_z(
     return float(min(predicted_z_mm, previous_target_z_mm))
 
 
+def capture_align_target_xy(
+    initial_prediction: PredictedCapture | None,
+    current_prediction: PredictedCapture,
+) -> tuple[float, float]:
+    """Keep XY at the first capture command instead of chasing lateral motion."""
+    anchor = (
+        current_prediction
+        if initial_prediction is None
+        else initial_prediction
+    )
+    return float(anchor.x_mm), float(anchor.y_mm)
+
+
 def update_capture_stability(
     *,
     now_sec: float,

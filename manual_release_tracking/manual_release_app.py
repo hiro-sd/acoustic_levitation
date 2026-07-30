@@ -60,6 +60,7 @@ from manual_release_tracking.core.auto_release_capture import (
     CAPTURE_ALIGN,
     AutoReleaseCaptureLogger,
     StereoMotionEstimator,
+    capture_align_target_xy,
     capture_intensity_for_vz,
     limit_upward_capture_target_z,
     predict_capture_position,
@@ -1290,9 +1291,15 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 last_target.z,
                                 upward_brake_active=upward_brake_now,
                             )
+                            capture_target_x, capture_target_y = (
+                                capture_align_target_xy(
+                                    capture_initial_prediction,
+                                    prediction,
+                                )
+                            )
                             target = Target3D(
-                                x=float(prediction.x_mm),
-                                y=float(prediction.y_mm),
+                                x=capture_target_x,
+                                y=capture_target_y,
                                 z=float(
                                     np.clip(
                                         limited_target_z,

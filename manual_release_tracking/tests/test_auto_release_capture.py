@@ -12,6 +12,7 @@ from manual_release_tracking.core.auto_release_capture import (
     AutoReleaseCaptureLogger,
     MotionEstimate3D,
     StereoMotionEstimator,
+    capture_align_target_xy,
     capture_intensity_for_vz,
     limit_upward_capture_target_z,
     predict_capture_position,
@@ -98,6 +99,45 @@ class CapturePredictionTest(unittest.TestCase):
                 upward_brake_active=False,
             ),
             410.0,
+        )
+
+    def test_capture_align_keeps_initial_predicted_xy(self):
+        initial = predict_capture_position(
+            MotionEstimate3D(
+                1.0,
+                100.0,
+                200.0,
+                400.0,
+                10.0,
+                -20.0,
+                0.0,
+            ),
+            now_sec=1.0,
+            actuation_delay_sec=0.01,
+            gravity_mm_s2=9800.0,
+        )
+        current = predict_capture_position(
+            MotionEstimate3D(
+                1.1,
+                140.0,
+                250.0,
+                400.0,
+                200.0,
+                300.0,
+                0.0,
+            ),
+            now_sec=1.1,
+            actuation_delay_sec=0.01,
+            gravity_mm_s2=9800.0,
+        )
+
+        self.assertEqual(
+            capture_align_target_xy(initial, current),
+            (initial.x_mm, initial.y_mm),
+        )
+        self.assertEqual(
+            capture_align_target_xy(None, current),
+            (current.x_mm, current.y_mm),
         )
 
     def test_local_hold_requires_confirmed_stable_velocity_duration(self):

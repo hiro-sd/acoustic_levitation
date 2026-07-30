@@ -127,8 +127,9 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
 5. 球を持っている間からステレオ3D位置・速度を常時推定し、最新測定値の
    経過時間とAUTD反映遅延10 msを考慮した予測位置へ音場中心を合わせます。
 6. `CAPTURE_ALIGN` 中は下降速度に応じてintensity 0.6、0.7、最大0.8を選び、
-   球の予測位置付近へ音場を更新します。上向き速度が20 mm/sを超えた場合は
-   intensityを即座に0.5へ下げ、音場中心のZを直前値より上へ動かしません。
+   最初の予測位置へ音場を生成します。それ以降、XYは最初の予測位置に固定し、
+   Zだけを更新します。上向き速度が20 mm/sを超えた場合はintensityを即座に
+   0.5へ下げ、音場中心のZを直前値より上へ動かしません。
 7. release確定後、`|vz| <= 30 mm/s` が50 ms続くと、その位置を一時基準にして
    intensity 0.6の通常PID `LOCAL_HOLD`へ移ります。
 8. 自動開始した捕捉・保持中にXYカメラの `GRASPED` が再成立した場合は、
