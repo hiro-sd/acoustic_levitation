@@ -9,6 +9,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from manual_release_tracking.core.mediapipe_release_trigger import (
     build_auto_release_event,
     fused_contact_candidate,
+    normalize_decision_camera,
     observation_is_explicit,
     should_stop_automatic_hold,
 )
@@ -61,6 +62,13 @@ class AutoReleaseEventTest(unittest.TestCase):
 
 
 class AutomaticContactFusionTest(unittest.TestCase):
+    def test_decision_camera_accepts_xy_z_and_both(self):
+        self.assertEqual(normalize_decision_camera("XY"), "xy")
+        self.assertEqual(normalize_decision_camera("z"), "z")
+        self.assertEqual(normalize_decision_camera(" both "), "both")
+        with self.assertRaises(ValueError):
+            normalize_decision_camera("either")
+
     def test_grasp_requires_contact_in_both_cameras(self):
         self.assertTrue(
             fused_contact_candidate(

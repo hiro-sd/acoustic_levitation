@@ -31,6 +31,8 @@ class AutoReleaseStatus:
     xy_state: str
     z_state: str
     both_state: str
+    decision_camera: str
+    decision_state: str
     result_age_xy_ms: float | None
     result_age_z_ms: float | None
     result_pair_skew_ms: float | None
@@ -73,6 +75,16 @@ def should_stop_automatic_hold(
         auto_hold_active
         and both_state == TipContactState.GRASPED
     )
+
+
+def normalize_decision_camera(value: str) -> str:
+    camera = str(value).strip().lower()
+    if camera not in {"xy", "z", "both"}:
+        raise ValueError(
+            "mediapipe_auto_release_camera must be 'xy', 'z', or 'both', "
+            f"got {value!r}"
+        )
+    return camera
 
 
 def build_auto_release_event(
@@ -133,12 +145,17 @@ class MediaPipeReleaseTrigger:
             ),
         )
 
+        self.decision_camera = normalize_decision_camera(
+            getattr(cfg, "mediapipe_auto_release_camera", "both")
+        )
         self.detector_xy = AsyncHandLandmarker("xy", model_path, hand_cfg)
-        try:
-            self.detector_z = AsyncHandLandmarker("z", model_path, hand_cfg)
-        except Exception:
-            self.detector_xy.close()
-            raise
+        self.detector_z = None
+        if self.decision_camera in {"z", "both"}:
+            try:
+                self.detector_z = AsyncHandLandmarker("z", model_path, hand_cfg)
+            except Exception:
+                self.detector_xy.close()
+                raise
 
         self.machines = {
             "xy": TipContactStateMachine(state_cfg),
@@ -173,6 +190,8 @@ class MediaPipeReleaseTrigger:
             xy_state=self.states["xy"],
             z_state=self.states["z"],
             both_state=self.states["both"],
+            decision_camera=self.decision_camera,
+            decision_state=self.states[self.decision_camera],
             result_age_xy_ms=None,
             result_age_z_ms=None,
             result_pair_skew_ms=None,
@@ -205,7 +224,10 @@ class MediaPipeReleaseTrigger:
             )
             self.last_submit_xy_time = frame_xy_time
 
-        if frame_z_time - self.last_submit_z_time >= self.submit_interval_sec:
+        if (
+            self.detector_z is not None
+            and frame_z_time - self.last_submit_z_time >= self.submit_interval_sec
+        ):
             center, radius = self._ball_metadata(ball_z)
             self.detector_z.submit(
                 frame_z,
@@ -216,12 +238,16 @@ class MediaPipeReleaseTrigger:
             self.last_submit_z_time = frame_z_time
 
         self.latest_xy = self.detector_xy.latest()
-        self.latest_z = self.detector_z.latest()
+        self.latest_z = (
+            None if self.detector_z is None else self.detector_z.latest()
+        )
 
+        xy_updated = False
         if (
             self.latest_xy is not None
             and self.latest_xy.sequence != self.last_xy_sequence
         ):
+            xy_updated = True
             self.last_xy_sequence = self.latest_xy.sequence
             self.states["xy"] = self.machines["xy"].update(
                 self.latest_xy.timestamp_ms,
@@ -229,10 +255,12 @@ class MediaPipeReleaseTrigger:
                 observation_is_explicit(self.latest_xy),
             )
 
+        z_updated = False
         if (
             self.latest_z is not None
             and self.latest_z.sequence != self.last_z_sequence
         ):
+            z_updated = True
             self.last_z_sequence = self.latest_z.sequence
             self.states["z"] = self.machines["z"].update(
                 self.latest_z.timestamp_ms,
@@ -254,7 +282,37 @@ class MediaPipeReleaseTrigger:
         pair_skew = None
         event = None
 
-        if self.latest_xy is not None and self.latest_z is not None:
+        if (
+            self.decision_camera == "xy"
+            and xy_updated
+            and self.latest_xy is not None
+        ):
+            event = build_auto_release_event(
+                just_released=self.machines["xy"].just_released,
+                event_timestamp_ms=self.latest_xy.timestamp_ms,
+                now_ms=now_ms,
+                pair_skew_ms=0.0,
+                maximum_age_ms=self.maximum_trigger_age_ms,
+            )
+
+        elif (
+            self.decision_camera == "z"
+            and z_updated
+            and self.latest_z is not None
+        ):
+            event = build_auto_release_event(
+                just_released=self.machines["z"].just_released,
+                event_timestamp_ms=self.latest_z.timestamp_ms,
+                now_ms=now_ms,
+                pair_skew_ms=0.0,
+                maximum_age_ms=self.maximum_trigger_age_ms,
+            )
+
+        elif (
+            self.decision_camera == "both"
+            and self.latest_xy is not None
+            and self.latest_z is not None
+        ):
             pair_skew = abs(
                 self.latest_xy.timestamp_ms - self.latest_z.timestamp_ms
             )
@@ -298,6 +356,8 @@ class MediaPipeReleaseTrigger:
             xy_state=self.states["xy"],
             z_state=self.states["z"],
             both_state=self.states["both"],
+            decision_camera=self.decision_camera,
+            decision_state=self.states[self.decision_camera],
             result_age_xy_ms=age_xy,
             result_age_z_ms=age_z,
             result_pair_skew_ms=pair_skew,
@@ -307,16 +367,31 @@ class MediaPipeReleaseTrigger:
 
     def draw(self, frame_xy: np.ndarray, frame_z: np.ndarray):
         self._draw_camera(frame_xy, "XY", self.latest_xy, self.states["xy"])
-        self._draw_camera(frame_z, "Z", self.latest_z, self.states["z"])
+        if self.detector_z is None:
+            cv2.putText(
+                frame_z,
+                "MP Z: NOT USED FOR RELEASE",
+                (10, 150),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.60,
+                (160, 160, 160),
+                2,
+            )
+        else:
+            self._draw_camera(frame_z, "Z", self.latest_z, self.states["z"])
+        decision_state = self.states[self.decision_camera]
         both_color = (
             (0, 255, 0)
-            if self.states["both"] == TipContactState.GRASPED
+            if decision_state == TipContactState.GRASPED
             else (0, 165, 255)
         )
         for frame in (frame_xy, frame_z):
             cv2.putText(
                 frame,
-                f"AUTO RELEASE: {self.states['both']}",
+                (
+                    f"AUTO RELEASE [{self.decision_camera.upper()}]: "
+                    f"{decision_state}"
+                ),
                 (10, frame.shape[0] - 50),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.65,
@@ -359,10 +434,21 @@ class MediaPipeReleaseTrigger:
             name: TipContactState.WAITING_FOR_GRASP
             for name in self.machines
         }
+        self.status = AutoReleaseStatus(
+            xy_state=self.states["xy"],
+            z_state=self.states["z"],
+            both_state=self.states["both"],
+            decision_camera=self.decision_camera,
+            decision_state=self.states[self.decision_camera],
+            result_age_xy_ms=None,
+            result_age_z_ms=None,
+            result_pair_skew_ms=None,
+        )
 
     def close(self):
         if self._closed:
             return
         self._closed = True
         self.detector_xy.close()
-        self.detector_z.close()
+        if self.detector_z is not None:
+            self.detector_z.close()

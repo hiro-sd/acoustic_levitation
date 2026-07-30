@@ -835,6 +835,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     event = auto_release_status.event
                     reason = (
                         "mediapipe_release_trigger"
+                        f";camera={auto_release_status.decision_camera}"
                         f";result_age_ms={event.result_age_ms:.1f}"
                         f";pair_skew_ms={event.result_pair_skew_ms:.1f}"
                     )
@@ -853,6 +854,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         auto_release_trigger.reset()
                         print(
                             "[AUTO_RELEASE] accepted GRASPED -> RELEASED: "
+                            f"camera={auto_release_status.decision_camera}, "
                             f"result_age={event.result_age_ms:.1f} ms, "
                             f"pair_skew={event.result_pair_skew_ms:.1f} ms, "
                             f"intensity={current_intensity_ratio:.3f}"
@@ -862,7 +864,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     auto_release_status is not None
                     and should_stop_automatic_hold(
                         auto_hold_active,
-                        auto_release_status.both_state,
+                        auto_release_status.decision_state,
                     )
                 ):
                     stop_automatic_hold(

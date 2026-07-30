@@ -116,16 +116,21 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
 この実験では次の順序で動作します。
 
 1. 起動後は球検出、ステレオ3D推定、手認識だけを行い、音場は出しません。
-2. XY・Z両カメラで親指と人差し指による把持が継続すると `GRASPED` になります。
-3. XY・Z両カメラで指先が明確に離れた状態が継続すると、両眼状態が
-   `GRASPED -> RELEASED` へ遷移します。片眼だけの離反や手ランドマークの
-   一時的な検出ロストはreleaseとして扱いません。
+2. 現在の自動保持実験ではXYカメラだけで親指と人差し指を判定し、
+   接触が継続すると `GRASPED` になります。
+3. XYカメラで両指先が明確に離れた状態が継続すると
+   `GRASPED -> RELEASED` へ遷移します。手ランドマークの一時的な
+   検出ロストはreleaseとして扱いません。
 4. 新しい `just_released` イベントを1回だけ受理し、その時点で利用できる
    最新ステレオ3D位置を一時基準にします。
 5. 手動実験と同じ通常PID、円軌道半径19 mm、intensity 0.6で
    `LOCAL_HOLD`を開始します。
-6. 自動開始した `LOCAL_HOLD` 中に両眼 `GRASPED` が再成立した場合は、
+6. 自動開始した `LOCAL_HOLD` 中にXYカメラの `GRASPED` が再成立した場合は、
    再把持または誤releaseと判断し、intensityを0にして音場を停止します。
+
+Zカメラは引き続きステレオ3D位置推定に使用しますが、MediaPipeの手推論は
+実行せず、GRASPED/RELEASED判定には影響しません。判定カメラは実験設定の
+`cfg.mediapipe_auto_release_camera` で `xy`, `z`, `both` から選択できます。
 
 最初の比較実験で原因を分離できるよう、落下速度によるintensity変更、
 必要放射圧計算、`FOLLOW_AND_BRAKE`、homeへの自動復帰は無効です。

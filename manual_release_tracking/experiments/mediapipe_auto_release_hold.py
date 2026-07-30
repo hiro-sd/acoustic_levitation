@@ -46,6 +46,9 @@ if __name__ == "__main__":
     cfg.mediapipe_released_latch_ms = 500.0
     cfg.mediapipe_result_pair_tolerance_ms = 40.0
     cfg.mediapipe_submit_max_fps = 60.0
+    # Z camera remains part of stereo 3D reconstruction, but its hand landmarks
+    # are not reliable enough for the grasp/release decision on the current rig.
+    cfg.mediapipe_auto_release_camera = "xy"
 
     # Reject a stale asynchronous release result. This is only a trigger-age
     # guard; the hold target itself uses the newest stereo measurement.
