@@ -57,6 +57,26 @@ class VelocityEstimator:
         return (p1 - p0) / dt
 
 
+class PositionStabilityEstimator:
+    def __init__(self, maxlen: int, min_samples: int | None = None):
+        self.samples = deque(maxlen=maxlen)
+        self.min_samples = min_samples or maxlen
+
+    def reset(self):
+        self.samples.clear()
+
+    def update(self, x: float | None, y: float | None, z: float | None):
+        if x is None or y is None or z is None:
+            return None
+
+        self.samples.append(np.array([x, y, z], dtype=float))
+        if len(self.samples) < self.min_samples:
+            return None
+
+        values = np.stack(self.samples)
+        return float(np.max(np.std(values, axis=0)))
+
+
 def _to_bgr(frame_rgb: np.ndarray) -> np.ndarray:
     if frame_rgb.ndim == 2:
         return cv2.cvtColor(frame_rgb, cv2.COLOR_GRAY2BGR)
@@ -84,41 +104,41 @@ def _resize_to_height(frame: np.ndarray, height: int):
     return cv2.resize(frame, (int(w * scale), height), interpolation=cv2.INTER_AREA)
 
 
-def _release_signal(result, release_cfg: ReleaseDetectorConfig):
-    close = (
-        result.distance_px is not None
-        and result.distance_px <= release_cfg.grasp_distance_px
-        and result.finger_area_px >= release_cfg.grasp_finger_area_px
-    )
-    separated = (
-        result.distance_px is None
-        or result.distance_px >= release_cfg.release_distance_px
-        or result.finger_area_px <= release_cfg.release_finger_area_px
-    )
-    return close, separated
-
-
-def _combine_release_signals(
-    mode: str,
-    xy_signal: tuple[bool, bool],
-    z_signal: tuple[bool, bool],
-):
-    xy_close, xy_separated = xy_signal
-    z_close, z_separated = z_signal
-
+def _release_camera_names(mode: str) -> tuple[str, ...]:
     if mode == "xy":
-        return xy_close, xy_separated
+        return ("xy",)
     if mode == "z":
-        return z_close, z_separated
-    if mode == "either":
-        return xy_close or z_close, xy_separated or z_separated
-    if mode == "both":
-        return xy_close and z_close, xy_separated and z_separated
-
+        return ("z",)
+    if mode in ("either", "both"):
+        return ("xy", "z")
     raise ValueError(
         f"Unknown release_preview_camera={mode!r}. "
         "Use 'xy', 'z', 'either', or 'both'."
     )
+
+
+def _combine_release_states(mode: str, xy_state: str, z_state: str) -> str:
+    if mode == "xy":
+        return xy_state
+    if mode == "z":
+        return z_state
+
+    states = (xy_state, z_state)
+    if mode == "either":
+        if ReleaseState.RELEASED in states:
+            return ReleaseState.RELEASED
+        if ReleaseState.GRASPED in states:
+            return ReleaseState.GRASPED
+        return ReleaseState.WAITING_FOR_GRASP
+
+    if all(state == ReleaseState.RELEASED for state in states):
+        return ReleaseState.RELEASED
+    if all(
+        state in (ReleaseState.GRASPED, ReleaseState.RELEASED)
+        for state in states
+    ):
+        return ReleaseState.GRASPED
+    return ReleaseState.WAITING_FOR_GRASP
 
 
 def run_release_detection_preview(cfg: AppConfig):
@@ -274,13 +294,21 @@ def run_release_detection_preview(cfg: AppConfig):
         tracker_xy = RoiBallTracker(W_xy, H_xy, cfg)
         tracker_z = RoiBallTracker(W_z, H_z, cfg)
         release_cfg = ReleaseDetectorConfig()
-        release_sm = ReleaseStateMachine(release_cfg)
+        release_sms = {
+            "xy": ReleaseStateMachine(release_cfg),
+            "z": ReleaseStateMachine(release_cfg),
+        }
         velocity = VelocityEstimator()
+        position_stability = PositionStabilityEstimator(
+            maxlen=release_cfg.position_stability_frames
+        )
         release_camera = str(getattr(cfg, "release_preview_camera", "z")).lower()
+        active_release_cameras = _release_camera_names(release_camera)
 
         fps_start_time = time.time()
         frame_count = 0
         display_fps = 0.0
+        release_processing_ms = 0.0
         last_synced_pair_time = time.perf_counter()
         window_title = "Release Detection Preview"
         cv2.namedWindow(window_title, cv2.WINDOW_NORMAL)
@@ -290,7 +318,8 @@ def run_release_detection_preview(cfg: AppConfig):
         print("  This preview does not open AUTD and emits no ultrasound.")
         print("  Hold/pinch the sphere, then release it.")
         print(f"  Release decision camera: {release_camera}")
-        print("  Watch finger distance and WAITING/GRASPED/RELEASED state.")
+        print("  Contact features are radius-normalized and learned while GRASPED.")
+        print("  Watch contact ratio and WAITING/GRASPED/RELEASED state.")
         print("  Press [SPACE] to reset the state machine.")
         print("  Press [ESC] to exit.")
         print("=================================================")
@@ -371,6 +400,11 @@ def run_release_detection_preview(cfg: AppConfig):
                     print(f"[WARN] Stereo triangulation failed: {e}")
 
             velocity_xyz = velocity.update(time.perf_counter(), x_mm, y_mm, z_mm)
+            position_std_mm = position_stability.update(x_mm, y_mm, z_mm)
+            position_is_stable = (
+                position_std_mm is not None
+                and position_std_mm <= release_cfg.position_stable_std_mm
+            )
             if velocity_xyz is None:
                 vx = vy = vz = np.nan
                 pred = None
@@ -386,64 +420,95 @@ def run_release_detection_preview(cfg: AppConfig):
                     dtype=float,
                 )
 
+            # Only run skin processing for the selected decision camera. The default
+            # "z" mode therefore performs one lightweight ROI operation per stereo pair.
+            release_processing_start = time.perf_counter()
             result_xy = detect_finger_distance(
                 frame_xy,
-                det_xy.center if detected_xy else None,
-                det_xy.radius_px if detected_xy else None,
+                det_xy.center if detected_xy and "xy" in active_release_cameras else None,
+                (
+                    det_xy.radius_px
+                    if detected_xy and "xy" in active_release_cameras
+                    else None
+                ),
                 release_cfg,
+            )
+            current_release_processing_ms = (
+                time.perf_counter() - release_processing_start
+            ) * 1000.0
+            release_processing_ms = (
+                0.9 * release_processing_ms
+                + 0.1 * current_release_processing_ms
             )
             result_z = detect_finger_distance(
                 frame_z,
-                det_z.center if detected_z else None,
-                det_z.radius_px if detected_z else None,
+                det_z.center if detected_z and "z" in active_release_cameras else None,
+                (
+                    det_z.radius_px
+                    if detected_z and "z" in active_release_cameras
+                    else None
+                ),
                 release_cfg,
             )
 
-            xy_signal = _release_signal(result_xy, release_cfg)
-            z_signal = _release_signal(result_z, release_cfg)
-            is_close, is_separated = _combine_release_signals(
-                release_camera,
-                xy_signal,
-                z_signal,
-            )
+            state_xy = release_sms["xy"].state
+            state_z = release_sms["z"].state
+            if "xy" in active_release_cameras:
+                state_xy = release_sms["xy"].update(
+                    result_xy if detected_xy else None,
+                    ball_detected=bool(detected_xy),
+                    position_stable=position_is_stable,
+                )
+            if "z" in active_release_cameras:
+                state_z = release_sms["z"].update(
+                    result_z if detected_z else None,
+                    ball_detected=bool(detected_z),
+                    position_stable=position_is_stable,
+                )
 
-            selected_result = result_z if release_camera == "z" else result_xy
+            state = _combine_release_states(release_camera, state_xy, state_z)
+
+            selected_name = "z" if release_camera == "z" else "xy"
             if release_camera == "either":
-                selected_distance = min(
-                    [
-                        d
-                        for d in [result_xy.distance_px, result_z.distance_px]
-                        if d is not None
-                    ],
-                    default=None,
+                selected_name = max(
+                    ("xy", "z"),
+                    key=lambda name: (
+                        result_xy.contact_ratio
+                        if name == "xy"
+                        else result_z.contact_ratio
+                    ),
                 )
-                selected_area = max(result_xy.finger_area_px, result_z.finger_area_px)
             elif release_camera == "both":
-                selected_distance = max(
-                    [
-                        d
-                        for d in [result_xy.distance_px, result_z.distance_px]
-                        if d is not None
-                    ],
-                    default=None,
+                selected_name = min(
+                    ("xy", "z"),
+                    key=lambda name: (
+                        result_xy.contact_ratio
+                        if name == "xy"
+                        else result_z.contact_ratio
+                    ),
                 )
-                selected_area = min(result_xy.finger_area_px, result_z.finger_area_px)
-            else:
-                selected_distance = selected_result.distance_px
-                selected_area = selected_result.finger_area_px
-
-            state = release_sm.update(
-                is_close,
-                is_separated,
-                ball_detected=bool(detected_xy and detected_z),
+            selected_result = result_z if selected_name == "z" else result_xy
+            selected_sm = release_sms[selected_name]
+            transition_reason = " | ".join(
+                f"{name}:{release_sms[name].transition_reason}"
+                for name in active_release_cameras
+                if release_sms[name].transition_reason
             )
 
             frame_xy_bgr = _to_bgr(frame_xy)
             frame_z_bgr = _to_bgr(frame_z)
             draw_ball_detection(frame_xy_bgr, det_xy, tracking_active=False)
             draw_ball_detection(frame_z_bgr, det_z, tracking_active=False)
-            draw_release_debug(frame_xy_bgr, result_xy, f"XY {state}")
-            draw_release_debug(frame_z_bgr, result_z, f"Z {state}")
+            draw_release_debug(
+                frame_xy_bgr,
+                result_xy,
+                f"XY {state_xy}" if "xy" in active_release_cameras else "XY OFF",
+            )
+            draw_release_debug(
+                frame_z_bgr,
+                result_z,
+                f"Z {state_z}" if "z" in active_release_cameras else "Z OFF",
+            )
 
             xyz_label = (
                 "AUTD xyz: --"
@@ -460,31 +525,45 @@ def run_release_detection_preview(cfg: AppConfig):
                 if pred is None
                 else f"pred 10ms: {pred[0]:.1f}, {pred[1]:.1f}, {pred[2]:.1f}"
             )
-            xy_dist_label = (
-                "XY dist=--"
-                if result_xy.distance_px is None
-                else f"XY dist={result_xy.distance_px:.1f}px"
+            stability_label = (
+                "pos std=--"
+                if position_std_mm is None
+                else (
+                    f"pos std={position_std_mm:.2f}mm "
+                    f"stable={position_is_stable}"
+                )
             )
-            z_dist_label = (
-                "Z dist=--"
-                if result_z.distance_px is None
-                else f"Z dist={result_z.distance_px:.1f}px"
+            camera_feature_label = (
+                f"XY contact={result_xy.contact_ratio:.3f}, "
+                f"gap/r={result_xy.normalized_gap if result_xy.normalized_gap is not None else float('nan'):.2f} | "
+                f"Z contact={result_z.contact_ratio:.3f}, "
+                f"gap/r={result_z.normalized_gap if result_z.normalized_gap is not None else float('nan'):.2f}"
             )
             selected_label = (
-                f"selected({release_camera}) dist=--"
-                if selected_distance is None
-                else f"selected({release_camera}) dist={selected_distance:.1f}px"
+                f"selected={selected_name}: contact={selected_result.contact_ratio:.3f}, "
+                f"near/r2={selected_result.near_area_normalized:.3f}"
             )
-            area_label = (
-                f"XY area={result_xy.finger_area_px:.0f}px, "
-                f"Z area={result_z.finger_area_px:.0f}px, "
-                f"selected area={selected_area:.0f}px"
+            baseline_label = (
+                "baseline: --"
+                if selected_sm.debug.baseline_contact_ratio is None
+                else (
+                    f"baseline contact={selected_sm.debug.baseline_contact_ratio:.3f}, "
+                    f"gap/r={selected_sm.debug.baseline_gap_normalized:.2f}"
+                )
             )
-            threshold_label = (
-                f"grasp: dist<={release_cfg.grasp_distance_px:.0f}px "
-                f"& area>={release_cfg.grasp_finger_area_px:.0f}px | "
-                f"release: dist>={release_cfg.release_distance_px:.0f}px "
-                f"or area<={release_cfg.release_finger_area_px:.0f}px"
+            change_label = (
+                f"relative contact="
+                f"{selected_sm.debug.contact_to_baseline if selected_sm.debug.contact_to_baseline is not None else float('nan'):.2f}, "
+                f"gap delta="
+                f"{selected_sm.debug.gap_delta_normalized if selected_sm.debug.gap_delta_normalized is not None else float('nan'):.2f}"
+            )
+            vote_label = (
+                f"candidate grasp={selected_sm.debug.grasp_candidate}, "
+                f"release={selected_sm.debug.release_candidate} | "
+                f"votes G={selected_sm.debug.grasp_votes}/"
+                f"{release_cfg.grasp_window_frames}, "
+                f"R={selected_sm.debug.release_votes}/"
+                f"{release_cfg.release_window_frames}"
             )
 
             color = {
@@ -497,16 +576,21 @@ def run_release_detection_preview(cfg: AppConfig):
                 frame_xy_bgr,
                 [
                     f"State: {state}",
-                    f"Reason: {release_sm.transition_reason or '-'}",
+                    f"Reason: {transition_reason or '-'}",
                     xyz_label,
                     v_label,
                     pred_label,
+                    stability_label,
                     selected_label,
-                    f"{xy_dist_label}, {z_dist_label}",
-                    area_label,
-                    threshold_label,
-                    f"close={is_close}, separated={is_separated}",
-                    f"fps={display_fps:.1f}, sync={frame_sync_skew * 1000.0:.1f}ms",
+                    camera_feature_label,
+                    baseline_label,
+                    change_label,
+                    vote_label,
+                    (
+                        f"fps={display_fps:.1f}, "
+                        f"skin={release_processing_ms:.2f}ms, "
+                        f"sync={frame_sync_skew * 1000.0:.1f}ms"
+                    ),
                     "SPACE: reset, ESC: exit",
                 ],
                 10,
@@ -524,8 +608,10 @@ def run_release_detection_preview(cfg: AppConfig):
             if key == 27:
                 break
             if key == ord(" "):
-                release_sm.reset()
+                for release_sm in release_sms.values():
+                    release_sm.reset()
                 velocity.reset()
+                position_stability.reset()
                 print("[INFO] release state reset.")
 
     except KeyboardInterrupt:

@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 
 import cv2
 import numpy as np
+
+
+_LOWER_YCRCB = np.array([30, 125, 70], dtype=np.uint8)
+_UPPER_YCRCB = np.array([255, 180, 140], dtype=np.uint8)
+_LOWER_HSV_1 = np.array([0, 20, 40], dtype=np.uint8)
+_UPPER_HSV_1 = np.array([25, 220, 255], dtype=np.uint8)
+_LOWER_HSV_2 = np.array([160, 20, 40], dtype=np.uint8)
+_UPPER_HSV_2 = np.array([179, 220, 255], dtype=np.uint8)
+_MORPH_KERNEL = np.ones((3, 3), np.uint8)
 
 
 @dataclass(frozen=True)
@@ -12,6 +22,10 @@ class FingerDistanceResult:
 
     distance_px: float | None
     finger_area_px: float
+    contact_area_px: float
+    contact_ratio: float
+    near_area_normalized: float
+    normalized_gap: float | None
     nearest_ball_point: tuple[int, int] | None
     nearest_finger_point: tuple[int, int] | None
     contours: list[np.ndarray]
@@ -31,72 +45,221 @@ class ReleaseState:
 
 @dataclass
 class ReleaseDetectorConfig:
-    roi_scale: float = 4.0
-    roi_margin_px: int = 40
-    min_finger_area_px: int = 80
-    grasp_finger_area_px: float = 120.0
-    release_finger_area_px: float = 40.0
-    ball_remove_radius_scale: float = 1.10
-    grasp_distance_px: float = 12.0
-    release_distance_px: float = 28.0
-    grasp_confirm_frames: int = 3
-    release_confirm_frames: int = 2
+    # Only the neighborhood that can physically touch or just leave the sphere is used.
+    # Geometric features are normalized by the detected sphere radius.
+    roi_scale: float = 2.05
+    roi_margin_px: int = 6
+    min_finger_area_px: int = 20
+    ball_remove_radius_scale: float = 1.02
+    contact_outer_radius_scale: float = 1.45
+    near_outer_radius_scale: float = 2.00
+
+    # Initial grasp evidence. Strong contact can arm while the held sphere is moving;
+    # otherwise a stable 3D position is also required.
+    grasp_contact_ratio_min: float = 0.025
+    strong_grasp_contact_ratio: float = 0.060
+    grasp_near_area_normalized_min: float = 0.050
+    grasp_gap_normalized_max: float = 0.30
+    grasp_window_frames: int = 7
+    grasp_required_votes: int = 5
+    position_stability_frames: int = 8
+    position_stable_std_mm: float = 2.5
+
+    # Release is judged relative to the automatically learned GRASPED baseline.
+    release_contact_baseline_ratio: float = 0.35
+    release_gap_delta_normalized: float = 0.12
+    release_near_area_normalized_max: float = 0.020
+    release_window_frames: int = 5
+    release_required_votes: int = 4
+    baseline_update_alpha: float = 0.02
+    ball_lost_grace_frames: int = 5
+
+
+@dataclass(frozen=True)
+class ReleaseDecisionDebug:
+    grasp_candidate: bool = False
+    release_candidate: bool = False
+    baseline_contact_ratio: float | None = None
+    baseline_gap_normalized: float | None = None
+    contact_to_baseline: float | None = None
+    gap_delta_normalized: float | None = None
+    grasp_votes: int = 0
+    release_votes: int = 0
 
 
 class ReleaseStateMachine:
     """
-    Conservative preview-only state machine.
+    Adaptive preview-only state machine.
 
     It does not control AUTD. It only answers:
-    - is a finger-like contour close enough to the ball to call it grasped?
-    - did that contour separate far enough to call it released?
+    - is there stable skin contact in a narrow ring around the sphere?
+    - did that contact decrease and move away relative to the held baseline?
     """
 
     def __init__(self, cfg: ReleaseDetectorConfig | None = None):
         self.cfg = cfg or ReleaseDetectorConfig()
         self.state = ReleaseState.WAITING_FOR_GRASP
-        self.grasp_count = 0
-        self.release_count = 0
+        self._grasp_votes = deque(maxlen=self.cfg.grasp_window_frames)
+        self._release_votes = deque(maxlen=self.cfg.release_window_frames)
+        self._grasp_contact_samples: deque[float | None] = deque(
+            maxlen=self.cfg.grasp_window_frames
+        )
+        self._grasp_gap_samples: deque[float | None] = deque(
+            maxlen=self.cfg.grasp_window_frames
+        )
+        self._ball_lost_count = 0
+        self.baseline_contact_ratio: float | None = None
+        self.baseline_gap_normalized: float | None = None
+        self.debug = ReleaseDecisionDebug()
         self.transition_reason = ""
 
     def reset(self):
         self.state = ReleaseState.WAITING_FOR_GRASP
-        self.grasp_count = 0
-        self.release_count = 0
+        self._grasp_votes.clear()
+        self._release_votes.clear()
+        self._grasp_contact_samples.clear()
+        self._grasp_gap_samples.clear()
+        self._ball_lost_count = 0
+        self.baseline_contact_ratio = None
+        self.baseline_gap_normalized = None
+        self.debug = ReleaseDecisionDebug()
         self.transition_reason = "manual_reset"
 
-    def update(self, is_close: bool, is_separated: bool, ball_detected: bool) -> str:
+    def update(
+        self,
+        result: FingerDistanceResult | None,
+        ball_detected: bool,
+        position_stable: bool = False,
+    ) -> str:
         self.transition_reason = ""
 
-        if not ball_detected:
-            self.grasp_count = 0
-            self.release_count = 0
-            if self.state != ReleaseState.WAITING_FOR_GRASP:
-                self.state = ReleaseState.WAITING_FOR_GRASP
-                self.transition_reason = "ball_lost"
+        if not ball_detected or result is None:
+            self._ball_lost_count += 1
+            # Pinching can briefly hide the sphere. Freeze the decision during a short
+            # dropout instead of interpreting missing data as an immediate release.
+            if self._ball_lost_count <= self.cfg.ball_lost_grace_frames:
+                self.debug = ReleaseDecisionDebug(
+                    baseline_contact_ratio=self.baseline_contact_ratio,
+                    baseline_gap_normalized=self.baseline_gap_normalized,
+                    grasp_votes=sum(self._grasp_votes),
+                    release_votes=sum(self._release_votes),
+                )
+                return self.state
+
+            previous_state = self.state
+            self.reset()
+            if previous_state != ReleaseState.WAITING_FOR_GRASP:
+                self.transition_reason = "ball_lost_timeout"
             return self.state
 
-        if self.state == ReleaseState.WAITING_FOR_GRASP:
-            if is_close:
-                self.grasp_count += 1
-            else:
-                self.grasp_count = 0
+        self._ball_lost_count = 0
+        gap = result.normalized_gap
+        has_near_skin = (
+            result.near_area_normalized
+            >= self.cfg.grasp_near_area_normalized_min
+        )
+        grasp_contact = result.contact_ratio >= self.cfg.grasp_contact_ratio_min
+        gap_is_close = gap is not None and gap <= self.cfg.grasp_gap_normalized_max
+        strong_contact = result.contact_ratio >= self.cfg.strong_grasp_contact_ratio
+        grasp_candidate = (
+            grasp_contact
+            and has_near_skin
+            and gap_is_close
+            and (position_stable or strong_contact)
+        )
 
-            if self.grasp_count >= self.cfg.grasp_confirm_frames:
+        release_candidate = False
+        contact_to_baseline = None
+        gap_delta = None
+
+        if self.state == ReleaseState.WAITING_FOR_GRASP:
+            self._grasp_votes.append(bool(grasp_candidate))
+            self._grasp_contact_samples.append(
+                float(result.contact_ratio) if grasp_candidate else None
+            )
+            self._grasp_gap_samples.append(
+                float(gap) if grasp_candidate and gap is not None else None
+            )
+            contact_samples = [
+                value
+                for value in self._grasp_contact_samples
+                if value is not None
+            ]
+            gap_samples = [
+                value
+                for value in self._grasp_gap_samples
+                if value is not None
+            ]
+
+            if (
+                len(self._grasp_votes) >= self.cfg.grasp_required_votes
+                and sum(self._grasp_votes) >= self.cfg.grasp_required_votes
+                and contact_samples
+            ):
                 self.state = ReleaseState.GRASPED
-                self.release_count = 0
-                self.transition_reason = "finger_close_to_ball"
+                self._release_votes.clear()
+                self.baseline_contact_ratio = float(np.median(contact_samples))
+                self.baseline_gap_normalized = (
+                    float(np.median(gap_samples)) if gap_samples else 0.0
+                )
+                self.transition_reason = "stable_contact_ring"
 
         elif self.state == ReleaseState.GRASPED:
-            if is_separated:
-                self.release_count += 1
-            else:
-                self.release_count = 0
+            baseline_contact = max(
+                1e-6,
+                float(self.baseline_contact_ratio or result.contact_ratio or 1e-6),
+            )
+            baseline_gap = float(self.baseline_gap_normalized or 0.0)
+            contact_to_baseline = float(result.contact_ratio / baseline_contact)
+            gap_delta = None if gap is None else float(gap - baseline_gap)
 
-            if self.release_count >= self.cfg.release_confirm_frames:
+            contact_dropped = (
+                contact_to_baseline <= self.cfg.release_contact_baseline_ratio
+            )
+            gap_increased = (
+                gap_delta is not None
+                and gap_delta >= self.cfg.release_gap_delta_normalized
+            )
+            near_skin_gone = (
+                result.near_area_normalized
+                <= self.cfg.release_near_area_normalized_max
+            )
+            release_candidate = contact_dropped and (gap_increased or near_skin_gone)
+            self._release_votes.append(bool(release_candidate))
+
+            if (
+                len(self._release_votes) >= self.cfg.release_required_votes
+                and sum(self._release_votes) >= self.cfg.release_required_votes
+            ):
                 self.state = ReleaseState.RELEASED
-                self.transition_reason = "finger_separated_from_ball"
+                self.transition_reason = "contact_ring_separated"
+            elif (
+                not release_candidate
+                and contact_to_baseline >= 0.70
+                and gap is not None
+                and abs(gap_delta or 0.0)
+                < self.cfg.release_gap_delta_normalized * 0.5
+            ):
+                # Follow slow lighting/grip changes, but not rapid release motion.
+                alpha = self.cfg.baseline_update_alpha
+                self.baseline_contact_ratio = (
+                    (1.0 - alpha) * baseline_contact
+                    + alpha * float(result.contact_ratio)
+                )
+                self.baseline_gap_normalized = (
+                    (1.0 - alpha) * baseline_gap + alpha * float(gap)
+                )
 
+        self.debug = ReleaseDecisionDebug(
+            grasp_candidate=grasp_candidate,
+            release_candidate=release_candidate,
+            baseline_contact_ratio=self.baseline_contact_ratio,
+            baseline_gap_normalized=self.baseline_gap_normalized,
+            contact_to_baseline=contact_to_baseline,
+            gap_delta_normalized=gap_delta,
+            grasp_votes=sum(self._grasp_votes),
+            release_votes=sum(self._release_votes),
+        )
         return self.state
 
 
@@ -118,23 +281,16 @@ def _skin_mask_rgb(roi_rgb: np.ndarray) -> np.ndarray:
     """
 
     ycrcb = cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2YCrCb)
-    lower_ycrcb = np.array([30, 125, 70], dtype=np.uint8)
-    upper_ycrcb = np.array([255, 180, 140], dtype=np.uint8)
-    mask_ycrcb = cv2.inRange(ycrcb, lower_ycrcb, upper_ycrcb)
+    mask_ycrcb = cv2.inRange(ycrcb, _LOWER_YCRCB, _UPPER_YCRCB)
 
     hsv = cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2HSV)
-    lower_hsv = np.array([0, 20, 40], dtype=np.uint8)
-    upper_hsv = np.array([25, 220, 255], dtype=np.uint8)
-    mask_hsv_1 = cv2.inRange(hsv, lower_hsv, upper_hsv)
-    lower_hsv_red = np.array([160, 20, 40], dtype=np.uint8)
-    upper_hsv_red = np.array([179, 220, 255], dtype=np.uint8)
-    mask_hsv_2 = cv2.inRange(hsv, lower_hsv_red, upper_hsv_red)
+    mask_hsv_1 = cv2.inRange(hsv, _LOWER_HSV_1, _UPPER_HSV_1)
+    mask_hsv_2 = cv2.inRange(hsv, _LOWER_HSV_2, _UPPER_HSV_2)
 
     mask = cv2.bitwise_and(mask_ycrcb, cv2.bitwise_or(mask_hsv_1, mask_hsv_2))
 
-    kernel = np.ones((5, 5), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, _MORPH_KERNEL, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, _MORPH_KERNEL, iterations=1)
     return mask
 
 
@@ -149,7 +305,19 @@ def detect_finger_distance(
 
     if ball_center is None or ball_radius_px is None:
         empty = np.zeros((1, 1), dtype=np.uint8)
-        return FingerDistanceResult(None, 0.0, None, None, [], empty, (0, 0, 1, 1))
+        return FingerDistanceResult(
+            distance_px=None,
+            finger_area_px=0.0,
+            contact_area_px=0.0,
+            contact_ratio=0.0,
+            near_area_normalized=0.0,
+            normalized_gap=None,
+            nearest_ball_point=None,
+            nearest_finger_point=None,
+            contours=[],
+            skin_mask_roi=empty,
+            roi=(0, 0, 1, 1),
+        )
 
     cx, cy = float(ball_center[0]), float(ball_center[1])
     radius = max(1.0, float(ball_radius_px))
@@ -166,58 +334,111 @@ def detect_finger_distance(
     roi_rgb = frame_rgb[y1:y2, x1:x2]
     if roi_rgb.size == 0:
         empty = np.zeros((1, 1), dtype=np.uint8)
-        return FingerDistanceResult(None, 0.0, None, None, [], empty, (x1, y1, x2, y2))
+        return FingerDistanceResult(
+            distance_px=None,
+            finger_area_px=0.0,
+            contact_area_px=0.0,
+            contact_ratio=0.0,
+            near_area_normalized=0.0,
+            normalized_gap=None,
+            nearest_ball_point=None,
+            nearest_finger_point=None,
+            contours=[],
+            skin_mask_roi=empty,
+            roi=(x1, y1, x2, y2),
+        )
 
     mask = _skin_mask_rgb(roi_rgb)
 
-    # Remove the ball region a little wider than its detected radius.
-    # This prevents the bright ball edge/highlight from staying as a false finger candidate.
+    # Restrict the skin mask to two narrow, radius-normalized rings around the sphere.
+    # This rejects palms/arms elsewhere in the ROI and makes the thresholds independent
+    # of camera magnification.
     cx_roi = int(round(cx - x1))
     cy_roi = int(round(cy - y1))
-    ball_remove_radius = int(round(radius * cfg.ball_remove_radius_scale))
-    cv2.circle(mask, (cx_roi, cy_roi), ball_remove_radius, 0, thickness=-1)
+    yy, xx = np.ogrid[: mask.shape[0], : mask.shape[1]]
+    radial_sq = (xx - cx_roi) ** 2 + (yy - cy_roi) ** 2
+    inner_radius = radius * cfg.ball_remove_radius_scale
+    contact_outer_radius = radius * cfg.contact_outer_radius_scale
+    near_outer_radius = radius * cfg.near_outer_radius_scale
+    analysis_ring = (radial_sq > inner_radius**2) & (
+        radial_sq <= near_outer_radius**2
+    )
+    contact_ring = (radial_sq > inner_radius**2) & (
+        radial_sq <= contact_outer_radius**2
+    )
+    mask = cv2.bitwise_and(mask, mask, mask=analysis_ring.astype(np.uint8) * 255)
 
-    contours_roi, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Remove isolated color noise before calculating contact features.
+    contours_roi, _ = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    filtered_mask = np.zeros_like(mask)
     contours_full: list[np.ndarray] = []
-    best_distance = None
-    best_ball_point = None
-    best_finger_point = None
-    total_finger_area = 0.0
 
     for contour_roi in contours_roi:
         area = cv2.contourArea(contour_roi)
         if area < cfg.min_finger_area_px:
             continue
 
+        cv2.drawContours(filtered_mask, [contour_roi], -1, 255, thickness=-1)
         contour_full = contour_roi + np.array([[[x1, y1]]], dtype=contour_roi.dtype)
         contours_full.append(contour_full)
-        total_finger_area += float(area)
 
-        pts = contour_full.reshape(-1, 2).astype(np.float32)
-        dx = pts[:, 0] - cx
-        dy = pts[:, 1] - cy
-        dist_to_center = np.sqrt(dx * dx + dy * dy)
-        outside_distance = np.maximum(0.0, dist_to_center - radius)
-        idx = int(np.argmin(outside_distance))
-        d = float(outside_distance[idx])
+    skin_pixels = filtered_mask > 0
+    contact_area = float(np.count_nonzero(skin_pixels & contact_ring))
+    near_area = float(np.count_nonzero(skin_pixels))
+    contact_ring_area = max(1, int(np.count_nonzero(contact_ring)))
+    contact_ratio = contact_area / contact_ring_area
+    near_area_normalized = near_area / max(1.0, radius * radius)
 
-        if best_distance is None or d < best_distance:
-            best_distance = d
-            fp = pts[idx]
-            norm = max(1e-6, float(dist_to_center[idx]))
-            bp = np.array([cx, cy], dtype=np.float32) + (fp - np.array([cx, cy])) * (
-                radius / norm
-            )
-            best_finger_point = (int(round(float(fp[0]))), int(round(float(fp[1]))))
-            best_ball_point = (int(round(float(bp[0]))), int(round(float(bp[1]))))
+    best_distance = None
+    normalized_gap = None
+    best_ball_point = None
+    best_finger_point = None
+
+    skin_y, skin_x = np.nonzero(skin_pixels)
+    if skin_x.size:
+        dx = skin_x.astype(np.float32) - float(cx_roi)
+        dy = skin_y.astype(np.float32) - float(cy_roi)
+        distances_to_center = np.sqrt(dx * dx + dy * dy)
+        outside_distances = np.maximum(0.0, distances_to_center - radius)
+
+        # A low percentile is more robust than a single closest noise pixel.
+        best_distance = float(np.percentile(outside_distances, 10.0))
+        normalized_gap = best_distance / radius
+
+        nearest_idx = int(np.argmin(outside_distances))
+        fp_roi = np.array(
+            [skin_x[nearest_idx], skin_y[nearest_idx]],
+            dtype=np.float32,
+        )
+        fp = fp_roi + np.array([x1, y1], dtype=np.float32)
+        norm = max(1e-6, float(distances_to_center[nearest_idx]))
+        bp = np.array([cx, cy], dtype=np.float32) + (
+            fp - np.array([cx, cy], dtype=np.float32)
+        ) * (radius / norm)
+        best_finger_point = (
+            int(round(float(fp[0]))),
+            int(round(float(fp[1]))),
+        )
+        best_ball_point = (
+            int(round(float(bp[0]))),
+            int(round(float(bp[1]))),
+        )
 
     return FingerDistanceResult(
         distance_px=best_distance,
-        finger_area_px=total_finger_area,
+        finger_area_px=near_area,
+        contact_area_px=contact_area,
+        contact_ratio=contact_ratio,
+        near_area_normalized=near_area_normalized,
+        normalized_gap=normalized_gap,
         nearest_ball_point=best_ball_point,
         nearest_finger_point=best_finger_point,
         contours=contours_full,
-        skin_mask_roi=mask,
+        skin_mask_roi=filtered_mask,
         roi=(x1, y1, x2, y2),
     )
 
@@ -245,13 +466,16 @@ def draw_release_debug(
         cv2.circle(frame_bgr, result.nearest_finger_point, 4, (0, 165, 255), -1)
 
     distance_label = (
-        "finger dist: --"
-        if result.distance_px is None
-        else f"finger dist: {result.distance_px:.1f}px"
+        "gap: --"
+        if result.normalized_gap is None
+        else f"gap/r: {result.normalized_gap:.2f}"
     )
     cv2.putText(
         frame_bgr,
-        f"{state} | {distance_label} | area: {result.finger_area_px:.0f}px",
+        (
+            f"{state} | {distance_label} | "
+            f"contact: {result.contact_ratio:.3f}"
+        ),
         (10, 30),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,

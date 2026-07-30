@@ -21,15 +21,22 @@ python3 manual_release_tracking/experiments/release_detection_preview.py
 previewでは、2台のカメラ映像に以下を表示します。
 
 - 球体検出円
-- 指候補輪郭
-- 球体円と指候補輪郭の最短距離
-- 各カメラ別の `dist` と `finger_area`
+- 選択カメラの球近傍にある肌色候補輪郭
+- 球半径で正規化した `gap/r`
+- 球表面の接触リングに占める肌色の割合 `contact`
+- `GRASPED` 時に自動保存した接触基準と現在値の比
+- grasp/release候補の直近フレーム投票数
 - `WAITING_FOR_GRASP` / `GRASPED` / `RELEASED`
 - 推定3D位置、速度、10ms後予測位置
 
 現在のデフォルトでは、release判定には `z` 方向カメラだけを使います。
+この場合、肌色抽出も `z` カメラだけで実行します。
 `manual_release_tracking/experiments/release_detection_preview.py` 末尾の
 `cfg.release_preview_camera` を変更すると、`xy`, `z`, `either`, `both` を切り替えられます。
+
+判定は固定ピクセル値だけではなく、球半径で正規化した接触量と、
+`GRASPED` になった直後の基準値からの相対変化を使用します。
+一時的な肌色抽出失敗や短時間の球検出ロストだけでは `RELEASED` にしません。
 
 `SPACE` で判定状態をリセットし、`ESC` で終了します。
 
