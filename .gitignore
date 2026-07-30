@@ -181,3 +181,6 @@ tracking/datasets/test/images/
 # calibration imgs
 tracking/calibration/stereo_images
 tracking/calibration/intrinsic_images
+
+# Downloaded MediaPipe task models
+manual_release_tracking/models/*.task

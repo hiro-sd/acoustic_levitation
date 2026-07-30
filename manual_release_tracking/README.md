@@ -43,6 +43,56 @@ previewでは、2台のカメラ映像に以下を表示します。
 
 `SPACE` で判定状態をリセットし、`ESC` で終了します。
 
+## MediaPipe Hand Landmarker preview
+
+現在の肌色previewとは別に、MediaPipe Tasks版Hand Landmarkerで親指先と
+人差し指先を追跡するpreviewを実行できます。AUTDには接続しません。
+
+初回のみ、依存パッケージと公式モデルを準備します。
+
+```bash
+cd /Users/yoshidahiroto/Downloads/修士関連/acoustic_levitation
+python -m pip install -r manual_release_tracking/requirements-mediapipe.txt
+python manual_release_tracking/experiments/download_mediapipe_hand_model.py
+```
+
+previewを実行します。
+
+```bash
+python manual_release_tracking/experiments/mediapipe_release_detection_preview.py
+```
+
+MediaPipeは各カメラに1つずつ、`num_hands=1`、`LIVE_STREAM`で非同期実行します。
+カメラ・球検出ループを不要に重くしないよう、デフォルトでは各カメラ最大60 fpsで
+MediaPipeへ投入し、処理中に古くなった結果は制御ループで待ちません。
+古い推論結果で現在の球位置を評価しないよう、各結果はMediaPipeへ渡した画像の
+撮影時刻と、その画像で検出した球中心・半径に紐づけています。
+
+画面には以下を表示します。
+
+- 親指先（オレンジ）と人差し指先（緑）
+- 各指先から球表面までの正規化距離 `gap/r`
+- 球中心から見た2指の角度
+- XY、Z、両カメラ一致によるpreview状態
+- MediaPipe結果FPS
+- 撮影から結果取得までの遅延 `Result latency`
+- 最新結果が現在から何ms前かを示す `Result age`
+- 単眼・両眼の手動正解ラベル区間における誤判定率
+
+比較用キー:
+
+- `G`: 正解をGRASPEDにする
+- `N`: 正解をNOT_GRASPED / RELEASEDにする
+- `U`: 正解不明として誤判定率の集計から除外する
+- `C`: 誤判定率をリセットする
+- `SPACE`: preview状態をリセットする
+- `ESC`: 終了する
+
+両眼のpreview判定は、GRASPEDにはXY・Z両方の接触候補を要求します。
+一方、GRASPED後はいずれかのカメラで指先が離れた状態が継続すると
+RELEASEDになります。これは把持の誤認を抑えつつ、releaseを遅らせすぎないための
+preview用の非対称判定です。
+
 ## 操作
 
 - 起動直後は、球体検出とステレオ3D位置推定だけを行います。AUTDの音場は出ません。
