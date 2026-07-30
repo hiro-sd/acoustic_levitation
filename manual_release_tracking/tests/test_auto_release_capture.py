@@ -13,6 +13,7 @@ from manual_release_tracking.core.auto_release_capture import (
     MotionEstimate3D,
     StereoMotionEstimator,
     capture_intensity_for_vz,
+    limit_upward_capture_target_z,
     predict_capture_position,
     update_capture_stability,
 )
@@ -67,6 +68,37 @@ class CapturePredictionTest(unittest.TestCase):
         self.assertEqual(capture_intensity_for_vz(10.0), 0.6)
         self.assertEqual(capture_intensity_for_vz(-50.0), 0.7)
         self.assertEqual(capture_intensity_for_vz(-150.0), 0.8)
+
+    def test_upward_velocity_immediately_uses_point_five(self):
+        self.assertEqual(capture_intensity_for_vz(20.0), 0.6)
+        self.assertEqual(capture_intensity_for_vz(20.1), 0.5)
+        self.assertEqual(capture_intensity_for_vz(200.0), 0.5)
+
+    def test_upward_brake_prevents_target_z_from_increasing(self):
+        self.assertEqual(
+            limit_upward_capture_target_z(
+                410.0,
+                400.0,
+                upward_brake_active=True,
+            ),
+            400.0,
+        )
+        self.assertEqual(
+            limit_upward_capture_target_z(
+                390.0,
+                400.0,
+                upward_brake_active=True,
+            ),
+            390.0,
+        )
+        self.assertEqual(
+            limit_upward_capture_target_z(
+                410.0,
+                400.0,
+                upward_brake_active=False,
+            ),
+            410.0,
+        )
 
     def test_local_hold_requires_confirmed_stable_velocity_duration(self):
         since, ready = update_capture_stability(

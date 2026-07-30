@@ -66,6 +66,8 @@ if __name__ == "__main__":
     # velocity-dependent braking intensity. Normal LOCAL_HOLD remains 0.6.
     cfg.auto_release_slow_down_vz_mm_s = -30.0
     cfg.auto_release_fast_down_vz_mm_s = -100.0
+    cfg.auto_release_upward_vz_mm_s = 20.0
+    cfg.auto_release_upward_intensity_ratio = 0.5
     cfg.auto_release_slow_intensity_ratio = 0.7
     cfg.auto_release_max_intensity_ratio = 0.8
     cfg.auto_release_local_hold_vz_abs_mm_s = 30.0

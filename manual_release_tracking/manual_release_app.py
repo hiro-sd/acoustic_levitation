@@ -61,6 +61,7 @@ from manual_release_tracking.core.auto_release_capture import (
     AutoReleaseCaptureLogger,
     StereoMotionEstimator,
     capture_intensity_for_vz,
+    limit_upward_capture_target_z,
     predict_capture_position,
     update_capture_stability,
 )
@@ -310,6 +311,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
             capture_initial_prediction = None
             pending_capture_command_seq = None
             pending_capture_sent_logged = False
+            capture_upward_brake_active = False
             prev_enter_pressed = False
             prev_demo_toggle_pressed = False
             prev_log_trigger_pressed = False
@@ -447,6 +449,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal capture_initial_prediction
                 nonlocal pending_capture_command_seq
                 nonlocal pending_capture_sent_logged
+                nonlocal capture_upward_brake_active
                 nonlocal current_intensity_ratio
                 nonlocal return_setpoint
                 nonlocal last_target
@@ -506,6 +509,13 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     maximum_ratio=float(
                         getattr(cfg, "auto_release_max_intensity_ratio", 0.8)
                     ),
+                    upward_ratio=float(
+                        getattr(
+                            cfg,
+                            "auto_release_upward_intensity_ratio",
+                            0.5,
+                        )
+                    ),
                     fast_down_threshold_mm_s=float(
                         getattr(
                             cfg,
@@ -518,6 +528,13 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                             cfg,
                             "auto_release_slow_down_vz_mm_s",
                             -30.0,
+                        )
+                    ),
+                    upward_threshold_mm_s=float(
+                        getattr(
+                            cfg,
+                            "auto_release_upward_vz_mm_s",
+                            20.0,
                         )
                     ),
                 )
@@ -533,6 +550,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 capture_start_estimate = estimate
                 capture_initial_prediction = prediction
                 pending_capture_sent_logged = False
+                capture_upward_brake_active = False
                 mode_transition_reason = "release_candidate_capture_align"
 
                 pending_capture_command_seq = set_tracking_target(
@@ -582,6 +600,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal current_intensity_ratio
                 nonlocal capture_started_at
                 nonlocal capture_stable_since
+                nonlocal capture_upward_brake_active
 
                 tracking_active = False
                 auto_hold_active = False
@@ -597,6 +616,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 current_intensity_ratio = 0.0
                 capture_started_at = None
                 capture_stable_since = None
+                capture_upward_brake_active = False
                 controller.reset(last_target)
 
                 # Keep the sender thread alive for the next release, but make the
@@ -1254,12 +1274,28 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 gravity_mm_s2=float(cfg.gravity_mm_s2),
                                 apply_gravity=True,
                             )
+                            upward_vz_threshold = float(
+                                getattr(
+                                    cfg,
+                                    "auto_release_upward_vz_mm_s",
+                                    20.0,
+                                )
+                            )
+                            upward_brake_now = (
+                                float(motion_estimate.vz_mm_s)
+                                > upward_vz_threshold
+                            )
+                            limited_target_z = limit_upward_capture_target_z(
+                                prediction.z_mm,
+                                last_target.z,
+                                upward_brake_active=upward_brake_now,
+                            )
                             target = Target3D(
                                 x=float(prediction.x_mm),
                                 y=float(prediction.y_mm),
                                 z=float(
                                     np.clip(
-                                        prediction.z_mm,
+                                        limited_target_z,
                                         cfg.z_min,
                                         cfg.z_max,
                                     )
@@ -1282,6 +1318,13 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                         0.8,
                                     )
                                 ),
+                                upward_ratio=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_upward_intensity_ratio",
+                                        0.5,
+                                    )
+                                ),
                                 fast_down_threshold_mm_s=float(
                                     getattr(
                                         cfg,
@@ -1296,6 +1339,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                         -30.0,
                                     )
                                 ),
+                                upward_threshold_mm_s=upward_vz_threshold,
                             )
                             vx_now = float(motion_estimate.vx_mm_s)
                             vy_now = float(motion_estimate.vy_mm_s)
@@ -1314,6 +1358,29 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     motion_estimate.y_mm - target.y,
                                 )
                             )
+
+                            if upward_brake_now != capture_upward_brake_active:
+                                capture_upward_brake_active = upward_brake_now
+                                capture_logger.write(
+                                    event=(
+                                        "capture_upward_brake_started"
+                                        if upward_brake_now
+                                        else "capture_upward_brake_ended"
+                                    ),
+                                    release_timestamp_ms=(
+                                        auto_release_timestamp_ms
+                                    ),
+                                    event_time_sec=now_capture,
+                                    estimate=motion_estimate,
+                                    prediction=prediction,
+                                    target=target,
+                                    intensity=capture_intensity_ratio,
+                                    reason=(
+                                        f"vz>{upward_vz_threshold:.1f}"
+                                        if upward_brake_now
+                                        else f"vz<={upward_vz_threshold:.1f}"
+                                    ),
+                                )
 
                             stable_vz_limit = float(
                                 getattr(
@@ -1355,6 +1422,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 control_mode = LOCAL_HOLD
                                 local_hold_start_time = time.time()
                                 capture_stable_since = None
+                                capture_upward_brake_active = False
                                 current_intensity_ratio = float(
                                     cfg.static_intensity_ratio
                                 )

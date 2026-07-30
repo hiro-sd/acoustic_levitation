@@ -172,16 +172,32 @@ def capture_intensity_for_vz(
     normal_ratio: float = 0.6,
     slow_ratio: float = 0.7,
     maximum_ratio: float = 0.8,
+    upward_ratio: float = 0.5,
     fast_down_threshold_mm_s: float = -100.0,
     slow_down_threshold_mm_s: float = -30.0,
+    upward_threshold_mm_s: float = 20.0,
 ) -> float:
     """Small release-specific braking schedule; z is positive upward."""
     vz = float(vz_mm_s)
+    if vz > float(upward_threshold_mm_s):
+        return float(upward_ratio)
     if vz < float(fast_down_threshold_mm_s):
         return float(maximum_ratio)
     if vz < float(slow_down_threshold_mm_s):
         return float(slow_ratio)
     return float(normal_ratio)
+
+
+def limit_upward_capture_target_z(
+    predicted_z_mm: float,
+    previous_target_z_mm: float,
+    *,
+    upward_brake_active: bool,
+) -> float:
+    """Do not let the capture field chase a sphere that is moving upward."""
+    if not upward_brake_active:
+        return float(predicted_z_mm)
+    return float(min(predicted_z_mm, previous_target_z_mm))
 
 
 def update_capture_stability(
