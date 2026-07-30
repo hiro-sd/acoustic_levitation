@@ -17,6 +17,7 @@ from manual_release_tracking.release_detector import (
     detect_finger_distance,
 )
 from manual_release_tracking.experiments.release_detection_preview import (
+    _combine_release_states,
     _resize_pair_to_same_size,
     _to_bgr,
 )
@@ -51,6 +52,7 @@ class ReleaseStateMachineTest(unittest.TestCase):
             grasp_required_votes=5,
             release_window_frames=5,
             release_required_votes=4,
+            released_latch_frames=3,
             ball_lost_grace_frames=3,
         )
         self.machine = ReleaseStateMachine(self.cfg)
@@ -100,6 +102,23 @@ class ReleaseStateMachineTest(unittest.TestCase):
         state = self.machine.update(None, ball_detected=False)
         self.assertEqual(state, ReleaseState.WAITING_FOR_GRASP)
         self.assertEqual(self.machine.transition_reason, "ball_lost_timeout")
+
+    def test_release_rearms_and_allows_second_grasp(self):
+        self._arm()
+        for _ in range(self.cfg.release_required_votes):
+            state = self.machine.update(self.release, ball_detected=True)
+        self.assertEqual(state, ReleaseState.RELEASED)
+
+        for _ in range(self.cfg.released_latch_frames - 1):
+            state = self.machine.update(self.release, ball_detected=True)
+            self.assertEqual(state, ReleaseState.RELEASED)
+
+        state = self.machine.update(self.release, ball_detected=True)
+        self.assertEqual(state, ReleaseState.WAITING_FOR_GRASP)
+        self.assertEqual(self.machine.transition_reason, "ready_for_regrasp")
+
+        self._arm()
+        self.assertEqual(self.machine.state, ReleaseState.GRASPED)
 
 
 class ContactRingFeatureTest(unittest.TestCase):
@@ -160,6 +179,32 @@ class PreviewDisplayTest(unittest.TestCase):
 
         self.assertEqual(shown_xy.shape, shown_z.shape)
         self.assertEqual(shown_xy.shape[:2], (720, 720))
+
+    def test_both_mode_requires_state_agreement(self):
+        self.assertEqual(
+            _combine_release_states(
+                "both",
+                ReleaseState.GRASPED,
+                ReleaseState.WAITING_FOR_GRASP,
+            ),
+            ReleaseState.WAITING_FOR_GRASP,
+        )
+        self.assertEqual(
+            _combine_release_states(
+                "both",
+                ReleaseState.GRASPED,
+                ReleaseState.GRASPED,
+            ),
+            ReleaseState.GRASPED,
+        )
+        self.assertEqual(
+            _combine_release_states(
+                "both",
+                ReleaseState.RELEASED,
+                ReleaseState.RELEASED,
+            ),
+            ReleaseState.RELEASED,
+        )
 
 
 if __name__ == "__main__":

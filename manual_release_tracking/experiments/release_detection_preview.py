@@ -332,7 +332,10 @@ def run_release_detection_preview(cfg: AppConfig):
         print("  Hold/pinch the sphere, then release it.")
         print(f"  Release decision camera: {release_camera}")
         print("  Contact features are radius-normalized and learned while GRASPED.")
+        if release_camera == "both":
+            print("  BOTH mode: both synchronized views must agree on each state.")
         print("  Watch contact ratio and WAITING/GRASPED/RELEASED state.")
+        print("  RELEASED automatically rearms for the next grasp.")
         print("  Press [SPACE] to reset the state machine.")
         print("  Press [ESC] to exit.")
         print("=================================================")
@@ -663,5 +666,5 @@ if __name__ == "__main__":
         log_enabled=False,
     )
     cfg.release_preview_pred_sec = 0.010
-    cfg.release_preview_camera = "z"
+    cfg.release_preview_camera = "both"
     run_release_detection_preview(cfg)

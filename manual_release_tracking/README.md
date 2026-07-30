@@ -29,14 +29,16 @@ previewでは、2台のカメラ映像に以下を表示します。
 - `WAITING_FOR_GRASP` / `GRASPED` / `RELEASED`
 - 推定3D位置、速度、10ms後予測位置
 
-現在のデフォルトでは、release判定には `z` 方向カメラだけを使います。
-この場合、肌色抽出も `z` カメラだけで実行します。
+現在のデフォルトでは、奥行き方向の画像上の重なりを接触と誤認しにくくするため、
+`both` でXY・Z両カメラの判定一致を要求します。
 `manual_release_tracking/experiments/release_detection_preview.py` 末尾の
 `cfg.release_preview_camera` を変更すると、`xy`, `z`, `either`, `both` を切り替えられます。
 
 判定は固定ピクセル値だけではなく、球半径で正規化した接触量と、
 `GRASPED` になった直後の基準値からの相対変化を使用します。
 一時的な肌色抽出失敗や短時間の球検出ロストだけでは `RELEASED` にしません。
+`RELEASED` は終端状態ではなく、短時間表示した後に自動で
+`WAITING_FOR_GRASP`へ戻り、次の把持を判定できます。
 
 `SPACE` で判定状態をリセットし、`ESC` で終了します。
 

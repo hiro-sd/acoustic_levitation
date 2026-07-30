@@ -71,6 +71,7 @@ class ReleaseDetectorConfig:
     release_near_area_normalized_max: float = 0.020
     release_window_frames: int = 5
     release_required_votes: int = 4
+    released_latch_frames: int = 20
     baseline_update_alpha: float = 0.02
     ball_lost_grace_frames: int = 5
 
@@ -108,6 +109,7 @@ class ReleaseStateMachine:
             maxlen=self.cfg.grasp_window_frames
         )
         self._ball_lost_count = 0
+        self._released_frames = 0
         self.baseline_contact_ratio: float | None = None
         self.baseline_gap_normalized: float | None = None
         self.debug = ReleaseDecisionDebug()
@@ -120,6 +122,7 @@ class ReleaseStateMachine:
         self._grasp_contact_samples.clear()
         self._grasp_gap_samples.clear()
         self._ball_lost_count = 0
+        self._released_frames = 0
         self.baseline_contact_ratio = None
         self.baseline_gap_normalized = None
         self.debug = ReleaseDecisionDebug()
@@ -232,6 +235,7 @@ class ReleaseStateMachine:
                 and sum(self._release_votes) >= self.cfg.release_required_votes
             ):
                 self.state = ReleaseState.RELEASED
+                self._released_frames = 0
                 self.transition_reason = "contact_ring_separated"
             elif (
                 not release_candidate
@@ -249,6 +253,16 @@ class ReleaseStateMachine:
                 self.baseline_gap_normalized = (
                     (1.0 - alpha) * baseline_gap + alpha * float(gap)
                 )
+
+        elif self.state == ReleaseState.RELEASED:
+            # RELEASED is an event/display latch rather than a terminal state.
+            # Clear the previous grip baseline after a short visible period so that
+            # the next grasp starts an independent grasp-release cycle.
+            self._released_frames += 1
+            if self._released_frames >= self.cfg.released_latch_frames:
+                self.reset()
+                self.transition_reason = "ready_for_regrasp"
+                return self.state
 
         self.debug = ReleaseDecisionDebug(
             grasp_candidate=grasp_candidate,
