@@ -71,7 +71,9 @@ class ReleaseDetectorConfig:
     release_near_area_normalized_max: float = 0.020
     release_window_frames: int = 5
     release_required_votes: int = 4
-    released_latch_frames: int = 20
+    # Keep RELEASED visible long enough to verify the transition in the preview.
+    # At about 190 fps, 100 frames is roughly 0.53 seconds.
+    released_latch_frames: int = 100
     baseline_update_alpha: float = 0.02
     ball_lost_grace_frames: int = 5
 
