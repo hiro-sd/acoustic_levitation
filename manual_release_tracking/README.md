@@ -103,6 +103,33 @@ preview用の非対称判定です。
 - `ENTER` は、rトリガー後の一時停止用です。
 - `ESC` で終了します。
 
+## MediaPipe releaseから自動保持
+
+MediaPipe previewと手動保持の確認後、`GRASPED -> RELEASED` を自動的に
+LOCAL_HOLDへ接続する独立実験を実行できます。
+
+```bash
+cd /Users/yoshidahiroto/Downloads/修士関連/acoustic_levitation
+python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
+```
+
+この実験では次の順序で動作します。
+
+1. 起動後は球検出、ステレオ3D推定、手認識だけを行い、音場は出しません。
+2. XY・Z両カメラで親指と人差し指による把持が継続すると `GRASPED` になります。
+3. いずれかのカメラで指先が離れた状態が継続すると、両眼状態が
+   `GRASPED -> RELEASED` へ遷移します。
+4. 新しい `just_released` イベントを1回だけ受理し、その時点で利用できる
+   最新ステレオ3D位置を一時基準にします。
+5. 手動実験と同じ通常PID、円軌道半径19 mm、intensity 0.6で
+   `LOCAL_HOLD`を開始します。
+
+最初の比較実験で原因を分離できるよう、落下速度によるintensity変更、
+必要放射圧計算、`FOLLOW_AND_BRAKE`、homeへの自動復帰は無効です。
+また、非同期MediaPipe結果が80 msより古い場合は自動トリガーを拒否します。
+`r` は従来どおり手動フォールバックとして利用でき、`ENTER`で保持を停止できます。
+
 ## ログ
 
 ログは `manual_release_tracking/manual_release_log.csv` に出力されます。
+自動保持実験のログは `manual_release_tracking/auto_release_log.csv` に出力されます。

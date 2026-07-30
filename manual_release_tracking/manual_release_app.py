@@ -55,7 +55,7 @@ from tracking.core.runtime.demo import SquareZDemo
 from tracking.core.stereo import RigidTransform, StereoTriangulator
 
 
-def run_manual_release_app(cfg: AppConfig):
+def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
     """
     共通実行本体。
 
@@ -318,6 +318,83 @@ def run_manual_release_app(cfg: AppConfig):
                 getattr(cfg, "manual_release_pre_hold_sec", 0.3)
             )
 
+            def arm_local_hold(
+                x_mm,
+                y_mm,
+                z_mm,
+                *,
+                reason: str,
+                label: str,
+                prefer_filtered_z: bool,
+            ) -> bool:
+                nonlocal tracking_active
+                nonlocal control_mode
+                nonlocal descending_frame_count
+                nonlocal follow_xy_reference
+                nonlocal follow_xy_stabilizing
+                nonlocal follow_xy_initial_jump_done
+                nonlocal local_hold_stable_since
+                nonlocal local_hold_start_time
+                nonlocal mode_transition_reason
+                nonlocal current_intensity_ratio
+                nonlocal return_setpoint
+                nonlocal last_target
+
+                if x_mm is None or y_mm is None or z_mm is None:
+                    print(
+                        f"[{label}] ignored: valid stereo 3D position is not available."
+                    )
+                    return False
+
+                z_setpoint = float(z_mm)
+                if (
+                    prefer_filtered_z
+                    and controller.prev_particle_z_filt is not None
+                ):
+                    z_setpoint = float(controller.prev_particle_z_filt)
+
+                return_setpoint = HomePosition(
+                    x=float(x_mm),
+                    y=float(y_mm),
+                    z=z_setpoint,
+                )
+                last_target = Target3D(
+                    return_setpoint.x,
+                    return_setpoint.y,
+                    return_setpoint.z,
+                )
+
+                controller.reset(last_target)
+                tracking_active = True
+                control_mode = LOCAL_HOLD
+                descending_frame_count = 0
+                follow_xy_reference = None
+                follow_xy_stabilizing = False
+                follow_xy_initial_jump_done = False
+                local_hold_stable_since = None
+                local_hold_start_time = time.time()
+                mode_transition_reason = reason
+                current_intensity_ratio = float(cfg.static_intensity_ratio)
+
+                set_tracking_target(
+                    sender,
+                    cfg,
+                    last_target.x,
+                    last_target.y,
+                    last_target.z,
+                    home,
+                    current_radius,
+                    current_intensity_ratio,
+                )
+
+                print(
+                    f"[{label}] LOCAL_HOLD started at "
+                    f"({return_setpoint.x:.1f}, "
+                    f"{return_setpoint.y:.1f}, "
+                    f"{return_setpoint.z:.1f}) mm."
+                )
+                return True
+
             def current_log_mode() -> str:
                 if not tracking_active:
                     return "FIXED"
@@ -326,13 +403,21 @@ def run_manual_release_app(cfg: AppConfig):
                 return "PID_NO_DELAY"
 
             print("=================================================")
-            print("  READY FOR MANUAL RELEASE HANDOFF.")
-            print("  No ultrasound is emitted until the manual trigger.")
-            print(
-                f"  Pinch/hold the sphere in view, press "
-                f"[{manual_release_key.upper()}], wait about "
-                f"{manual_release_pre_hold_sec:.1f}s, then release."
-            )
+            if auto_release_trigger is None:
+                print("  READY FOR MANUAL RELEASE HANDOFF.")
+                print("  No ultrasound is emitted until the manual trigger.")
+                print(
+                    f"  Pinch/hold the sphere in view, press "
+                    f"[{manual_release_key.upper()}], wait about "
+                    f"{manual_release_pre_hold_sec:.1f}s, then release."
+                )
+            else:
+                print("  READY FOR AUTOMATIC MEDIAPIPE RELEASE HANDOFF.")
+                print("  No ultrasound is emitted before GRASPED -> RELEASED.")
+                print(
+                    f"  [{manual_release_key.upper()}] remains available as "
+                    "a manual fallback trigger."
+                )
             print("  Press [ENTER] only to PAUSE after the trigger.")
             print(
                 f"  Press [{cfg.delay_compensation_toggle_key.upper()}] to "
@@ -642,7 +727,23 @@ def run_manual_release_app(cfg: AppConfig):
                             (255, 255, 0),
                             2,
                         )
-                
+
+                auto_release_status = None
+                if auto_release_trigger is not None:
+                    auto_release_status = auto_release_trigger.update(
+                        frame_xy=frame_xy,
+                        frame_xy_time=frame_xy_time,
+                        ball_xy=det_xy,
+                        frame_z=frame_z,
+                        frame_z_time=frame_z_time,
+                        ball_z=det_z,
+                    )
+                    if do_display:
+                        auto_release_trigger.draw(
+                            frame_xy_bgr,
+                            frame_z_bgr,
+                        )
+
                 if cfg.enable_z_intensity_boost and tracking_active:
                     target_intensity_ratio = compute_z_intensity_boost_ratio(
                         cfg,
@@ -663,59 +764,45 @@ def run_manual_release_app(cfg: AppConfig):
 
                 manual_release_pressed = is_key_pressed(manual_release_key)
                 if manual_release_pressed and not prev_manual_release_pressed:
-                    if x_mm is None or y_mm is None or z_mm is None:
+                    if arm_local_hold(
+                        x_mm,
+                        y_mm,
+                        z_mm,
+                        reason="manual_release_trigger",
+                        label="MANUAL_RELEASE",
+                        prefer_filtered_z=True,
+                    ):
                         print(
-                            "[MANUAL_RELEASE] ignored: valid stereo 3D position is not available."
-                        )
-                    else:
-                        z_setpoint = (
-                            controller.prev_particle_z_filt
-                            if controller.prev_particle_z_filt is not None
-                            else z_mm
-                        )
-                        return_setpoint = HomePosition(
-                            x=float(x_mm),
-                            y=float(y_mm),
-                            z=float(z_setpoint),
-                        )
-                        last_target = Target3D(
-                            return_setpoint.x,
-                            return_setpoint.y,
-                            return_setpoint.z,
-                        )
-
-                        controller.reset(last_target)
-                        tracking_active = True
-                        control_mode = LOCAL_HOLD
-                        descending_frame_count = 0
-                        follow_xy_reference = None
-                        follow_xy_stabilizing = False
-                        follow_xy_initial_jump_done = False
-                        local_hold_stable_since = None
-                        local_hold_start_time = time.time()
-                        mode_transition_reason = "manual_release_trigger"
-                        current_intensity_ratio = float(cfg.static_intensity_ratio)
-
-                        set_tracking_target(
-                            sender,
-                            cfg,
-                            last_target.x,
-                            last_target.y,
-                            last_target.z,
-                            home,
-                            current_radius,
-                            current_intensity_ratio,
-                        )
-
-                        print(
-                            "[MANUAL_RELEASE] LOCAL_HOLD armed at "
-                            f"({return_setpoint.x:.1f}, "
-                            f"{return_setpoint.y:.1f}, "
-                            f"{return_setpoint.z:.1f}) mm. "
                             f"Release after ~{manual_release_pre_hold_sec:.1f}s."
                         )
 
                 prev_manual_release_pressed = manual_release_pressed
+
+                if (
+                    auto_release_status is not None
+                    and auto_release_status.event is not None
+                    and not tracking_active
+                ):
+                    event = auto_release_status.event
+                    reason = (
+                        "mediapipe_release_trigger"
+                        f";result_age_ms={event.result_age_ms:.1f}"
+                        f";pair_skew_ms={event.result_pair_skew_ms:.1f}"
+                    )
+                    if arm_local_hold(
+                        x_mm,
+                        y_mm,
+                        z_mm,
+                        reason=reason,
+                        label="AUTO_RELEASE",
+                        prefer_filtered_z=False,
+                    ):
+                        print(
+                            "[AUTO_RELEASE] accepted GRASPED -> RELEASED: "
+                            f"result_age={event.result_age_ms:.1f} ms, "
+                            f"pair_skew={event.result_pair_skew_ms:.1f} ms, "
+                            f"intensity={current_intensity_ratio:.3f}"
+                        )
 
                 # Control
                 if tracking_active:
@@ -1231,6 +1318,12 @@ def run_manual_release_app(cfg: AppConfig):
         if sender is not None:
             try:
                 sender.stop()
+            except Exception:
+                pass
+
+        if auto_release_trigger is not None:
+            try:
+                auto_release_trigger.close()
             except Exception:
                 pass
 
