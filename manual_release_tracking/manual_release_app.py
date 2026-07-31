@@ -59,6 +59,7 @@ from manual_release_tracking.core.mediapipe_release_trigger import (
 from manual_release_tracking.core.auto_release_capture import (
     CAPTURE_ALIGN,
     AutoReleaseCaptureLogger,
+    AutoReleaseDelayLogger,
     StereoMotionEstimator,
     capture_align_target_xy,
     capture_intensity_for_vz,
@@ -255,6 +256,15 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 cfg,
                 "auto_release_capture_log_path",
                 "./manual_release_tracking/auto_release_capture_events.csv",
+            )
+        )
+    )
+    delay_logger = AutoReleaseDelayLogger(
+        str(
+            getattr(
+                cfg,
+                "auto_release_delay_log_path",
+                "./manual_release_tracking/auto_release_delay_measurements.csv",
             )
         )
     )
@@ -1079,6 +1089,27 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 f"camera={auto_release_status.decision_camera}"
                             ),
                         )
+                        if (
+                            capture_start_estimate is not None
+                            and capture_initial_prediction is not None
+                            and auto_release_timestamp_ms is not None
+                        ):
+                            delay_logger.write(
+                                release_timestamp_ms=auto_release_timestamp_ms,
+                                estimate=capture_start_estimate,
+                                prediction=capture_initial_prediction,
+                                sent=sent,
+                                candidate_command_seq=(
+                                    pending_capture_command_seq
+                                ),
+                                configured_prediction_delay_sec=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_actuation_prediction_sec",
+                                        0.010,
+                                    )
+                                ),
+                            )
                         # Re-arm the detector immediately. A later confirmed grasp
                         # now means that the user caught the sphere again.
                         auto_release_trigger.reset()
@@ -1142,11 +1173,10 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     pending_capture_command_seq is not None
                     and not pending_capture_sent_logged
                 ):
-                    sent = sender.get_last_sent_telemetry()
-                    if (
-                        sent is not None
-                        and sent.sequence >= pending_capture_command_seq
-                    ):
+                    sent = sender.get_first_sent_at_or_after(
+                        pending_capture_command_seq
+                    )
+                    if sent is not None:
                         pending_capture_sent_logged = True
                         capture_logger.write(
                             event="capture_field_sent",

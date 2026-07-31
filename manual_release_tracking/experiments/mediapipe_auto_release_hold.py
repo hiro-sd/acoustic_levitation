@@ -77,6 +77,9 @@ if __name__ == "__main__":
     cfg.auto_release_capture_log_path = (
         "./manual_release_tracking/auto_release_capture_events.csv"
     )
+    cfg.auto_release_delay_log_path = (
+        "./manual_release_tracking/auto_release_delay_measurements.csv"
+    )
 
     # R remains a fallback. Automatic mode starts from the first explicit
     # XY-camera separation after GRASPED; contact return cancels it.

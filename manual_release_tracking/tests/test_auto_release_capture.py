@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -10,6 +11,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from manual_release_tracking.core.auto_release_capture import (
     AutoReleaseCaptureLogger,
+    AutoReleaseDelayLogger,
     MotionEstimate3D,
     StereoMotionEstimator,
     capture_align_target_xy,
@@ -213,6 +215,67 @@ class AutoReleaseCaptureLoggerTest(unittest.TestCase):
             self.assertEqual(rows[0]["elapsed_from_release_ms"], "20.000")
             self.assertEqual(rows[0]["intensity"], "0.700")
             self.assertEqual(rows[0]["command_seq"], "3")
+
+    def test_writes_decomposed_effective_delay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "delay.csv"
+            logger = AutoReleaseDelayLogger(str(path))
+            estimate = MotionEstimate3D(
+                1.0,
+                10.0,
+                20.0,
+                400.0,
+                1.0,
+                2.0,
+                -30.0,
+            )
+            prediction = predict_capture_position(
+                estimate,
+                now_sec=1.0,
+                actuation_delay_sec=0.01,
+                gravity_mm_s2=9800.0,
+            )
+            sent = SimpleNamespace(
+                sequence=3,
+                dequeued_time_sec=1.007,
+                send_started_time_sec=1.009,
+                sent_time_sec=1.012,
+                target=SimpleNamespace(
+                    x=10.0,
+                    y=20.0,
+                    z=399.0,
+                    intensity_ratio=0.7,
+                    enqueued_time_sec=1.005,
+                ),
+            )
+
+            logger.write(
+                release_timestamp_ms=990,
+                estimate=estimate,
+                prediction=prediction,
+                sent=sent,
+                candidate_command_seq=3,
+                configured_prediction_delay_sec=0.01,
+            )
+
+            with path.open(newline="", encoding="utf-8") as file:
+                rows = list(csv.DictReader(file))
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["release_to_enqueue_ms"], "15.000")
+            self.assertEqual(
+                rows[0]["enqueue_to_send_complete_ms"],
+                "7.000",
+            )
+            self.assertEqual(rows[0]["enqueue_to_dequeue_ms"], "2.000")
+            self.assertEqual(rows[0]["dequeue_to_send_start_ms"], "2.000")
+            self.assertEqual(rows[0]["autd_send_duration_ms"], "3.000")
+            self.assertEqual(
+                rows[0]["measurement_to_send_complete_ms"],
+                "12.000",
+            )
+            self.assertEqual(rows[0]["prediction_shortfall_ms"], "2.000")
+            self.assertEqual(rows[0]["command_superseded"], "0")
 
 
 if __name__ == "__main__":

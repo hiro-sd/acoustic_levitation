@@ -187,3 +187,4 @@ manual_release_tracking/models/*.task
 
 # Runtime logs from manual/automatic release experiments
 manual_release_tracking/auto_release_capture_events.csv
+manual_release_tracking/auto_release_delay_measurements.csv

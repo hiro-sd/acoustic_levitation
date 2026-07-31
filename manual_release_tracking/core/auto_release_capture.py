@@ -338,3 +338,154 @@ class AutoReleaseCaptureLogger:
                     str(reason),
                 ]
             )
+
+
+DELAY_LOG_HEADER = [
+    "wall_timestamp",
+    "release_timestamp_ms",
+    "measurement_time_sec",
+    "command_enqueued_time_sec",
+    "sender_dequeued_time_sec",
+    "autd_send_started_time_sec",
+    "autd_send_completed_time_sec",
+    "release_to_enqueue_ms",
+    "measurement_to_enqueue_ms",
+    "enqueue_to_send_complete_ms",
+    "enqueue_to_dequeue_ms",
+    "dequeue_to_send_start_ms",
+    "autd_send_duration_ms",
+    "measurement_to_send_complete_ms",
+    "release_to_send_complete_ms",
+    "configured_prediction_delay_ms",
+    "prediction_horizon_ms",
+    "prediction_shortfall_ms",
+    "candidate_command_seq",
+    "sent_command_seq",
+    "command_superseded",
+    "x_mm",
+    "y_mm",
+    "z_mm",
+    "vx_mm_s",
+    "vy_mm_s",
+    "vz_mm_s",
+    "predicted_x_mm",
+    "predicted_y_mm",
+    "predicted_z_mm",
+    "target_x_mm",
+    "target_y_mm",
+    "target_z_mm",
+    "intensity",
+]
+
+
+class AutoReleaseDelayLogger:
+    """One row per initial release command for effective-delay estimation."""
+
+    def __init__(self, path: str):
+        self.path = str(path)
+
+    @staticmethod
+    def _number(value, digits: int = 6):
+        if value is None:
+            return ""
+        return f"{float(value):.{digits}f}"
+
+    def write(
+        self,
+        *,
+        release_timestamp_ms: int,
+        estimate: MotionEstimate3D,
+        prediction: PredictedCapture,
+        sent,
+        candidate_command_seq: int,
+        configured_prediction_delay_sec: float,
+    ):
+        directory = os.path.dirname(self.path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        exists = os.path.exists(self.path) and os.path.getsize(self.path) > 0
+
+        release_time_sec = float(release_timestamp_ms) / 1000.0
+        enqueued_time_sec = float(sent.target.enqueued_time_sec)
+        dequeued_time_sec = float(sent.dequeued_time_sec)
+        send_started_time_sec = float(sent.send_started_time_sec)
+        send_completed_time_sec = float(sent.sent_time_sec)
+        measurement_to_send_sec = (
+            send_completed_time_sec - float(estimate.measurement_time_sec)
+        )
+        prediction_shortfall_sec = (
+            measurement_to_send_sec - float(prediction.horizon_sec)
+        )
+
+        with open(self.path, "a", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            if not exists:
+                writer.writerow(DELAY_LOG_HEADER)
+            writer.writerow(
+                [
+                    f"{time.time():.6f}",
+                    int(release_timestamp_ms),
+                    self._number(estimate.measurement_time_sec),
+                    self._number(enqueued_time_sec),
+                    self._number(dequeued_time_sec),
+                    self._number(send_started_time_sec),
+                    self._number(send_completed_time_sec),
+                    self._number(
+                        (enqueued_time_sec - release_time_sec) * 1000.0,
+                        3,
+                    ),
+                    self._number(
+                        (
+                            enqueued_time_sec
+                            - float(estimate.measurement_time_sec)
+                        )
+                        * 1000.0,
+                        3,
+                    ),
+                    self._number(
+                        (send_completed_time_sec - enqueued_time_sec)
+                        * 1000.0,
+                        3,
+                    ),
+                    self._number(
+                        (dequeued_time_sec - enqueued_time_sec) * 1000.0,
+                        3,
+                    ),
+                    self._number(
+                        (send_started_time_sec - dequeued_time_sec) * 1000.0,
+                        3,
+                    ),
+                    self._number(
+                        (send_completed_time_sec - send_started_time_sec)
+                        * 1000.0,
+                        3,
+                    ),
+                    self._number(measurement_to_send_sec * 1000.0, 3),
+                    self._number(
+                        (send_completed_time_sec - release_time_sec) * 1000.0,
+                        3,
+                    ),
+                    self._number(
+                        float(configured_prediction_delay_sec) * 1000.0,
+                        3,
+                    ),
+                    self._number(prediction.horizon_sec * 1000.0, 3),
+                    self._number(prediction_shortfall_sec * 1000.0, 3),
+                    int(candidate_command_seq),
+                    int(sent.sequence),
+                    int(sent.sequence != int(candidate_command_seq)),
+                    self._number(estimate.x_mm, 3),
+                    self._number(estimate.y_mm, 3),
+                    self._number(estimate.z_mm, 3),
+                    self._number(estimate.vx_mm_s, 3),
+                    self._number(estimate.vy_mm_s, 3),
+                    self._number(estimate.vz_mm_s, 3),
+                    self._number(prediction.x_mm, 3),
+                    self._number(prediction.y_mm, 3),
+                    self._number(prediction.z_mm, 3),
+                    self._number(sent.target.x, 3),
+                    self._number(sent.target.y, 3),
+                    self._number(sent.target.z, 3),
+                    self._number(sent.target.intensity_ratio, 3),
+                ]
+            )

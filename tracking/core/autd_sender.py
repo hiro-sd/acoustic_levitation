@@ -1,5 +1,6 @@
 import time
 import threading
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -133,6 +134,7 @@ class TargetCommand:
     x: float
     y: float
     z: float
+    enqueued_time_sec: float
     mask_center_x: float | None = None
     mask_center_y: float | None = None
     radius: float | None = None
@@ -142,6 +144,8 @@ class TargetCommand:
 @dataclass(frozen=True)
 class SentCommandTelemetry:
     sequence: int
+    dequeued_time_sec: float
+    send_started_time_sec: float
     sent_time_sec: float
     target: TargetCommand
 
@@ -162,6 +166,7 @@ class AutdSender:
         self._target: TargetCommand | None = None
         self._seq = 0
         self._last_sent: SentCommandTelemetry | None = None
+        self._sent_history: deque[SentCommandTelemetry] = deque(maxlen=256)
 
         self._running = threading.Event()
         self._thread: threading.Thread | None = None
@@ -194,6 +199,7 @@ class AutdSender:
                 x=float(x),
                 y=float(y),
                 z=float(z),
+                enqueued_time_sec=float(time.perf_counter()),
                 mask_center_x=None if mask_center_x is None else float(mask_center_x),
                 mask_center_y=None if mask_center_y is None else float(mask_center_y),
                 radius=None if radius is None else float(radius),
@@ -223,6 +229,16 @@ class AutdSender:
     def get_last_sent_telemetry(self) -> SentCommandTelemetry | None:
         with self._lock:
             return self._last_sent
+
+    def get_first_sent_at_or_after(
+        self,
+        sequence: int,
+    ) -> SentCommandTelemetry | None:
+        with self._lock:
+            for telemetry in self._sent_history:
+                if telemetry.sequence >= int(sequence):
+                    return telemetry
+        return None
 
     def _send_output_mask_if_needed(self, target: TargetCommand):
         """
@@ -350,15 +366,20 @@ class AutdSender:
 
                 self._send_output_mask_if_needed(target)
                 self._send_intensity_if_needed(target)
+                send_started_time_sec = time.perf_counter()
                 self.autd.send(datagram)
 
                 t2 = time.perf_counter()
                 with self._lock:
-                    self._last_sent = SentCommandTelemetry(
+                    telemetry = SentCommandTelemetry(
                         sequence=int(seq),
+                        dequeued_time_sec=float(t0),
+                        send_started_time_sec=float(send_started_time_sec),
                         sent_time_sec=float(t2),
                         target=target,
                     )
+                    self._last_sent = telemetry
+                    self._sent_history.append(telemetry)
 
                 build_ms = (t1 - t0) * 1000.0
                 send_ms = (t2 - t1) * 1000.0

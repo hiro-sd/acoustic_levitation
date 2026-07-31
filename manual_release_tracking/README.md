@@ -160,3 +160,11 @@ Zカメラは引き続きステレオ3D位置推定に使用しますが、Media
 - 予測時間と10 ms先の予測位置
 - 実際のtarget、intensity、AUTDコマンドsequence
 - release確定、候補取消、再把持停止、LOCAL_HOLD遷移の理由
+
+実効遅延の測定専用ログは、実行時に自動で
+`manual_release_tracking/auto_release_delay_measurements.csv`へ追記されます。
+1つの初期捕捉コマンドにつき1行で、3D測定からコマンド投入、送信スレッド取得、
+AUTD送信開始・完了までの時間を分解して記録します。
+`prediction_shortfall_ms`は、現在の予測時間がAUTD送信完了までに何ms不足したかを
+表します。`command_superseded=1`の行は、初期コマンドが後続更新に置き換えられた
+試行なので、遅延の代表値を求める際は分けて扱います。
