@@ -128,10 +128,13 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
    経過時間と実測したAUTD送信遅延13 msを考慮した予測位置へ
    音場中心を合わせます。
 6. `CAPTURE_ALIGN` 中は下降速度に応じてintensity 0.6、0.7、最大0.8を選び、
-   最初の予測位置へ音場を生成します。それ以降、XYは最初の予測位置に固定し、
-   Zだけを更新します。上向き速度が20 mm/sを超えた場合はintensityを即座に
-   0.5へ下げ、音場中心のZを直前値より上へ動かしません。
-7. release確定後、`|vz| <= 30 mm/s` が50 ms続くと、その位置を一時基準にして
+   初回だけ自由落下モデルで音場位置を予測します。送信完了後は自由落下
+   予測をやめ、初期位置・速度、最大測定力、作業空間から生成した
+   一定減速の `z_ref(t), v_ref(t)` を追従します。XYは初回予測位置に固定します。
+   上向き速度が20 mm/sを超えた場合はintensityを0.5へ下げ、
+   音場中心のZを直前値より上へ動かしません。
+7. 制動軌道が完了し、Z速度、XY速度、球と音場のXY距離、Z軌道誤差が
+   すべて設定範囲内で50 ms続くと、その位置を一時基準にして
    intensity 0.6の通常PID `LOCAL_HOLD`へ移ります。
 8. 自動開始した捕捉・保持中にXYカメラの `GRASPED` が再成立した場合は、
    再把持または誤releaseと判断し、intensityを0にして音場を停止します。
@@ -140,8 +143,10 @@ Zカメラは引き続きステレオ3D位置推定に使用しますが、Media
 実行せず、GRASPED/RELEASED判定には影響しません。判定カメラは実験設定の
 `cfg.mediapipe_auto_release_camera` で `xy`, `z`, `both` から選択できます。
 
-最初の比較実験で原因を分離できるよう、落下速度によるintensity変更、
-必要放射圧計算、`FOLLOW_AND_BRAKE`、homeへの自動復帰は無効です。
+現在は制動軌道の効果を分離するため、intensityは従来の速度別段階制御を
+維持しています。計画時に必要力と飽和は計算・記録しますが、力から直接
+intensityを決める制御はまだ使用しません。`FOLLOW_AND_BRAKE`とhomeへの自動復帰も
+無効です。
 また、非同期MediaPipe結果が80 msより古い場合は自動トリガーを拒否します。
 `r` は従来どおり手動フォールバックとして利用でき、`ENTER`で保持を停止できます。
 `r` で手動開始した保持はMediaPipeの再GRASPEDでは停止しません。
@@ -169,3 +174,8 @@ AUTD送信開始・完了までの時間を分解して記録します。
 `prediction_shortfall_ms`は、現在の予測時間がAUTD送信完了までに何ms不足したかを
 表します。`command_superseded=1`の行は、初期コマンドが後続更新に置き換えられた
 試行なので、遅延の代表値を求める際は分けて扱います。
+
+制動軌道と実測球状態の比較は、
+`manual_release_tracking/auto_release_trajectory_log.csv`へ自動記録されます。
+各新規3D測定に対し、計画停止時間・停止位置・必要力、`z_ref/v_ref`、
+実測`z/vz`、誤差補正、target、intensityを記録します。

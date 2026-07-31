@@ -12,12 +12,16 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from manual_release_tracking.core.auto_release_capture import (
     AutoReleaseCaptureLogger,
     AutoReleaseDelayLogger,
+    AutoReleaseTrajectoryLogger,
     MotionEstimate3D,
     StereoMotionEstimator,
     capture_align_target_xy,
     capture_intensity_for_vz,
+    braking_reference_at,
     limit_upward_capture_target_z,
+    make_braking_plan,
     predict_capture_position,
+    trajectory_target_z,
     update_capture_stability,
 )
 from tracking.core.models import Target3D
@@ -175,6 +179,118 @@ class CapturePredictionTest(unittest.TestCase):
         )
         self.assertTrue(ready)
 
+    def test_braking_plan_expands_duration_to_available_force(self):
+        plan = make_braking_plan(
+            start_time_sec=1.0,
+            initial_z_mm=400.0,
+            initial_vz_mm_s=-500.0,
+            nominal_duration_sec=0.12,
+            maximum_duration_sec=1.0,
+            minimum_duration_sec=0.05,
+            ball_mass_kg=0.0005,
+            gravity_mm_s2=9806.65,
+            maximum_force_mN=6.0,
+            z_min_mm=250.0,
+            workspace_margin_mm=10.0,
+        )
+
+        self.assertTrue(plan.feasible)
+        self.assertAlmostEqual(plan.duration_sec, 0.22796, places=4)
+        self.assertAlmostEqual(plan.required_force_mN, 6.0, places=6)
+        self.assertAlmostEqual(plan.stopping_distance_mm, 56.99, places=2)
+
+    def test_braking_plan_marks_insufficient_workspace(self):
+        plan = make_braking_plan(
+            start_time_sec=1.0,
+            initial_z_mm=280.0,
+            initial_vz_mm_s=-500.0,
+            nominal_duration_sec=0.12,
+            maximum_duration_sec=1.0,
+            minimum_duration_sec=0.05,
+            ball_mass_kg=0.0005,
+            gravity_mm_s2=9806.65,
+            maximum_force_mN=6.0,
+            z_min_mm=250.0,
+            workspace_margin_mm=10.0,
+        )
+
+        self.assertFalse(plan.feasible)
+        self.assertTrue(plan.workspace_limited)
+        self.assertTrue(plan.force_saturated)
+        self.assertAlmostEqual(plan.duration_sec, 0.08)
+        self.assertAlmostEqual(plan.stop_z_mm, 260.0)
+
+    def test_braking_reference_reaches_zero_velocity_at_stop(self):
+        plan = make_braking_plan(
+            start_time_sec=1.0,
+            initial_z_mm=400.0,
+            initial_vz_mm_s=-100.0,
+            nominal_duration_sec=0.12,
+            maximum_duration_sec=1.0,
+            minimum_duration_sec=0.05,
+            ball_mass_kg=0.0005,
+            gravity_mm_s2=9806.65,
+            maximum_force_mN=6.0,
+            z_min_mm=250.0,
+            workspace_margin_mm=10.0,
+        )
+        halfway = braking_reference_at(
+            plan,
+            now_sec=1.0 + plan.duration_sec / 2.0,
+        )
+        stopped = braking_reference_at(
+            plan,
+            now_sec=1.0 + plan.duration_sec,
+        )
+
+        self.assertAlmostEqual(halfway.vz_mm_s, -50.0)
+        self.assertTrue(stopped.complete)
+        self.assertAlmostEqual(stopped.vz_mm_s, 0.0)
+        self.assertAlmostEqual(stopped.z_mm, plan.stop_z_mm)
+
+    def test_trajectory_target_correction_is_bounded(self):
+        target_z, correction = trajectory_target_z(
+            reference_z_mm=390.0,
+            reference_vz_mm_s=-100.0,
+            measured_z_mm=370.0,
+            measured_vz_mm_s=-500.0,
+            position_gain=0.3,
+            velocity_gain=0.01,
+            maximum_correction_mm=5.0,
+        )
+
+        self.assertEqual(correction, 5.0)
+        self.assertEqual(target_z, 395.0)
+
+    def test_local_hold_rejects_unsettled_xy_or_incomplete_trajectory(self):
+        since, ready = update_capture_stability(
+            now_sec=1.0,
+            vz_mm_s=0.0,
+            release_confirmed=True,
+            stable_since_sec=None,
+            maximum_abs_vz_mm_s=30.0,
+            required_duration_sec=0.05,
+            trajectory_complete=False,
+            vxy_mm_s=0.0,
+            maximum_vxy_mm_s=30.0,
+        )
+        self.assertIsNone(since)
+        self.assertFalse(ready)
+
+        since, ready = update_capture_stability(
+            now_sec=1.0,
+            vz_mm_s=0.0,
+            release_confirmed=True,
+            stable_since_sec=None,
+            maximum_abs_vz_mm_s=30.0,
+            required_duration_sec=0.05,
+            trajectory_complete=True,
+            vxy_mm_s=70.0,
+            maximum_vxy_mm_s=30.0,
+        )
+        self.assertIsNone(since)
+        self.assertFalse(ready)
+
 
 class AutoReleaseCaptureLoggerTest(unittest.TestCase):
     def test_writes_release_timing_and_prediction(self):
@@ -276,6 +392,55 @@ class AutoReleaseCaptureLoggerTest(unittest.TestCase):
             )
             self.assertEqual(rows[0]["prediction_shortfall_ms"], "2.000")
             self.assertEqual(rows[0]["command_superseded"], "0")
+
+    def test_writes_trajectory_reference_and_tracking_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trajectory.csv"
+            logger = AutoReleaseTrajectoryLogger(str(path))
+            plan = make_braking_plan(
+                start_time_sec=1.0,
+                initial_z_mm=400.0,
+                initial_vz_mm_s=-100.0,
+                nominal_duration_sec=0.12,
+                maximum_duration_sec=1.0,
+                minimum_duration_sec=0.05,
+                ball_mass_kg=0.0005,
+                gravity_mm_s2=9806.65,
+                maximum_force_mN=6.0,
+                z_min_mm=250.0,
+                workspace_margin_mm=10.0,
+            )
+            reference = braking_reference_at(plan, now_sec=1.06)
+            estimate = MotionEstimate3D(
+                measurement_time_sec=1.06,
+                x_mm=10.0,
+                y_mm=20.0,
+                z_mm=395.0,
+                vx_mm_s=1.0,
+                vy_mm_s=2.0,
+                vz_mm_s=-40.0,
+            )
+
+            logger.write(
+                release_timestamp_ms=990,
+                estimate=estimate,
+                plan=plan,
+                reference=reference,
+                target=Target3D(10.0, 20.0, 396.0),
+                target_z_correction_mm=1.0,
+                xy_distance_mm=2.0,
+                commanded_intensity=0.7,
+                upward_brake_active=False,
+            )
+            logger.close()
+
+            with path.open(newline="", encoding="utf-8") as file:
+                rows = list(csv.DictReader(file))
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["elapsed_from_field_ms"], "60.000")
+            self.assertEqual(rows[0]["commanded_intensity"], "0.700")
+            self.assertEqual(rows[0]["upward_brake_active"], "0")
 
 
 if __name__ == "__main__":

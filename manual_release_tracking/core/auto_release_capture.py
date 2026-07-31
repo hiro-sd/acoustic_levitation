@@ -33,6 +33,33 @@ class PredictedCapture:
     vz_mm_s: float
 
 
+@dataclass(frozen=True)
+class BrakingPlan:
+    start_time_sec: float
+    initial_z_mm: float
+    initial_vz_mm_s: float
+    duration_sec: float
+    acceleration_mm_s2: float
+    stop_z_mm: float
+    stopping_distance_mm: float
+    available_drop_mm: float
+    required_force_mN: float
+    maximum_force_mN: float
+    force_saturated: bool
+    workspace_limited: bool
+    timeout_limited: bool
+    feasible: bool
+
+
+@dataclass(frozen=True)
+class BrakingReference:
+    elapsed_sec: float
+    z_mm: float
+    vz_mm_s: float
+    acceleration_mm_s2: float
+    complete: bool
+
+
 class StereoMotionEstimator:
     """Lightweight filtered position/velocity estimator that runs before control."""
 
@@ -166,6 +193,174 @@ def predict_capture_position(
     )
 
 
+def make_braking_plan(
+    *,
+    start_time_sec: float,
+    initial_z_mm: float,
+    initial_vz_mm_s: float,
+    nominal_duration_sec: float,
+    maximum_duration_sec: float,
+    minimum_duration_sec: float,
+    ball_mass_kg: float,
+    gravity_mm_s2: float,
+    maximum_force_mN: float,
+    z_min_mm: float,
+    workspace_margin_mm: float,
+) -> BrakingPlan:
+    """Create a constant-deceleration Z trajectory within force/workspace limits."""
+    mass_kg = max(1e-9, float(ball_mass_kg))
+    gravity = max(0.0, float(gravity_mm_s2))
+    initial_vz = float(initial_vz_mm_s)
+    downward_speed = max(0.0, -initial_vz)
+    minimum_duration = max(1e-3, float(minimum_duration_sec))
+    nominal_duration = max(minimum_duration, float(nominal_duration_sec))
+    maximum_duration = max(minimum_duration, float(maximum_duration_sec))
+    maximum_force = max(0.0, float(maximum_force_mN))
+    lower_boundary_z = float(z_min_mm) + max(0.0, float(workspace_margin_mm))
+    available_drop = max(0.0, float(initial_z_mm) - lower_boundary_z)
+
+    if downward_speed <= 1e-9:
+        weight_mn = mass_kg * (gravity / 1000.0) * 1000.0
+        return BrakingPlan(
+            start_time_sec=float(start_time_sec),
+            initial_z_mm=float(initial_z_mm),
+            initial_vz_mm_s=initial_vz,
+            duration_sec=0.0,
+            acceleration_mm_s2=0.0,
+            stop_z_mm=float(initial_z_mm),
+            stopping_distance_mm=0.0,
+            available_drop_mm=available_drop,
+            required_force_mN=float(weight_mn),
+            maximum_force_mN=maximum_force,
+            force_saturated=weight_mn > maximum_force,
+            workspace_limited=False,
+            timeout_limited=False,
+            feasible=weight_mn <= maximum_force,
+        )
+
+    maximum_gross_acceleration = (
+        maximum_force / 1000.0 / mass_kg * 1000.0
+    )
+    maximum_net_acceleration = maximum_gross_acceleration - gravity
+    if maximum_net_acceleration > 0.0:
+        force_limited_duration = downward_speed / maximum_net_acceleration
+    else:
+        force_limited_duration = float("inf")
+
+    ideal_duration = max(nominal_duration, force_limited_duration)
+    workspace_max_duration = (
+        2.0 * available_drop / downward_speed
+        if available_drop > 0.0
+        else 0.0
+    )
+    workspace_limited = ideal_duration > workspace_max_duration
+    timeout_limited = ideal_duration > maximum_duration
+    feasible = (
+        np.isfinite(ideal_duration)
+        and not workspace_limited
+        and not timeout_limited
+    )
+
+    if feasible:
+        duration = ideal_duration
+    else:
+        candidates = [maximum_duration]
+        if workspace_max_duration > 0.0:
+            candidates.append(workspace_max_duration)
+        if np.isfinite(ideal_duration):
+            candidates.append(ideal_duration)
+        duration = max(minimum_duration, min(candidates))
+
+    acceleration = downward_speed / duration
+    stopping_distance = 0.5 * downward_speed * duration
+    stop_z = max(lower_boundary_z, float(initial_z_mm) - stopping_distance)
+    required_force = (
+        mass_kg
+        * ((gravity + acceleration) / 1000.0)
+        * 1000.0
+    )
+    force_saturated = required_force > maximum_force + 1e-9
+
+    return BrakingPlan(
+        start_time_sec=float(start_time_sec),
+        initial_z_mm=float(initial_z_mm),
+        initial_vz_mm_s=initial_vz,
+        duration_sec=float(duration),
+        acceleration_mm_s2=float(acceleration),
+        stop_z_mm=float(stop_z),
+        stopping_distance_mm=float(stopping_distance),
+        available_drop_mm=float(available_drop),
+        required_force_mN=float(required_force),
+        maximum_force_mN=maximum_force,
+        force_saturated=bool(force_saturated),
+        workspace_limited=bool(workspace_limited),
+        timeout_limited=bool(timeout_limited),
+        feasible=bool(feasible and not force_saturated),
+    )
+
+
+def braking_reference_at(
+    plan: BrakingPlan,
+    *,
+    now_sec: float,
+) -> BrakingReference:
+    if plan.duration_sec <= 0.0:
+        return BrakingReference(
+            elapsed_sec=max(0.0, float(now_sec) - plan.start_time_sec),
+            z_mm=plan.stop_z_mm,
+            vz_mm_s=0.0,
+            acceleration_mm_s2=0.0,
+            complete=True,
+        )
+
+    elapsed = max(0.0, float(now_sec) - plan.start_time_sec)
+    t = min(elapsed, plan.duration_sec)
+    z_ref = (
+        plan.initial_z_mm
+        + plan.initial_vz_mm_s * t
+        + 0.5 * plan.acceleration_mm_s2 * t * t
+    )
+    vz_ref = plan.initial_vz_mm_s + plan.acceleration_mm_s2 * t
+    complete = elapsed >= plan.duration_sec
+    if complete:
+        z_ref = plan.stop_z_mm
+        vz_ref = 0.0
+
+    return BrakingReference(
+        elapsed_sec=float(elapsed),
+        z_mm=float(z_ref),
+        vz_mm_s=float(vz_ref),
+        acceleration_mm_s2=float(plan.acceleration_mm_s2),
+        complete=bool(complete),
+    )
+
+
+def trajectory_target_z(
+    *,
+    reference_z_mm: float,
+    reference_vz_mm_s: float,
+    measured_z_mm: float,
+    measured_vz_mm_s: float,
+    position_gain: float,
+    velocity_gain: float,
+    maximum_correction_mm: float,
+) -> tuple[float, float]:
+    correction = (
+        float(position_gain)
+        * (float(reference_z_mm) - float(measured_z_mm))
+        + float(velocity_gain)
+        * (float(reference_vz_mm_s) - float(measured_vz_mm_s))
+    )
+    correction = float(
+        np.clip(
+            correction,
+            -abs(float(maximum_correction_mm)),
+            abs(float(maximum_correction_mm)),
+        )
+    )
+    return float(reference_z_mm) + correction, correction
+
+
 def capture_intensity_for_vz(
     vz_mm_s: float,
     *,
@@ -221,8 +416,24 @@ def update_capture_stability(
     stable_since_sec: float | None,
     maximum_abs_vz_mm_s: float,
     required_duration_sec: float,
+    trajectory_complete: bool = True,
+    vxy_mm_s: float = 0.0,
+    maximum_vxy_mm_s: float = float("inf"),
+    xy_distance_mm: float = 0.0,
+    maximum_xy_distance_mm: float = float("inf"),
+    z_tracking_error_mm: float = 0.0,
+    maximum_z_tracking_error_mm: float = float("inf"),
 ) -> tuple[float | None, bool]:
-    if not release_confirmed or abs(float(vz_mm_s)) > float(maximum_abs_vz_mm_s):
+    stable = (
+        bool(release_confirmed)
+        and bool(trajectory_complete)
+        and abs(float(vz_mm_s)) <= float(maximum_abs_vz_mm_s)
+        and abs(float(vxy_mm_s)) <= float(maximum_vxy_mm_s)
+        and abs(float(xy_distance_mm)) <= float(maximum_xy_distance_mm)
+        and abs(float(z_tracking_error_mm))
+        <= float(maximum_z_tracking_error_mm)
+    )
+    if not stable:
         return None, False
     if stable_since_sec is None:
         return float(now_sec), False
@@ -489,3 +700,120 @@ class AutoReleaseDelayLogger:
                     self._number(sent.target.intensity_ratio, 3),
                 ]
             )
+
+
+TRAJECTORY_LOG_HEADER = [
+    "wall_timestamp",
+    "release_timestamp_ms",
+    "measurement_time_sec",
+    "elapsed_from_field_ms",
+    "plan_duration_ms",
+    "plan_stop_z_mm",
+    "plan_stopping_distance_mm",
+    "plan_required_force_mN",
+    "plan_maximum_force_mN",
+    "plan_feasible",
+    "plan_force_saturated",
+    "plan_workspace_limited",
+    "x_mm",
+    "y_mm",
+    "z_mm",
+    "vx_mm_s",
+    "vy_mm_s",
+    "vz_mm_s",
+    "reference_z_mm",
+    "reference_vz_mm_s",
+    "reference_acceleration_mm_s2",
+    "z_error_mm",
+    "vz_error_mm_s",
+    "target_z_correction_mm",
+    "target_x_mm",
+    "target_y_mm",
+    "target_z_mm",
+    "xy_distance_mm",
+    "commanded_intensity",
+    "upward_brake_active",
+    "trajectory_complete",
+]
+
+
+class AutoReleaseTrajectoryLogger:
+    """Automatic per-measurement log for braking-trajectory validation."""
+
+    def __init__(self, path: str):
+        self.path = str(path)
+        self._file = None
+        self._writer = None
+
+    @staticmethod
+    def _number(value, digits: int = 6):
+        if value is None:
+            return ""
+        return f"{float(value):.{digits}f}"
+
+    def write(
+        self,
+        *,
+        release_timestamp_ms: int,
+        estimate: MotionEstimate3D,
+        plan: BrakingPlan,
+        reference: BrakingReference,
+        target,
+        target_z_correction_mm: float,
+        xy_distance_mm: float,
+        commanded_intensity: float,
+        upward_brake_active: bool,
+    ):
+        if self._writer is None:
+            directory = os.path.dirname(self.path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            exists = os.path.exists(self.path) and os.path.getsize(self.path) > 0
+            self._file = open(self.path, "a", newline="", encoding="utf-8")
+            self._writer = csv.writer(self._file)
+            if not exists:
+                self._writer.writerow(TRAJECTORY_LOG_HEADER)
+
+        self._writer.writerow(
+            [
+                    f"{time.time():.6f}",
+                    int(release_timestamp_ms),
+                    self._number(estimate.measurement_time_sec),
+                    self._number(reference.elapsed_sec * 1000.0, 3),
+                    self._number(plan.duration_sec * 1000.0, 3),
+                    self._number(plan.stop_z_mm, 3),
+                    self._number(plan.stopping_distance_mm, 3),
+                    self._number(plan.required_force_mN, 3),
+                    self._number(plan.maximum_force_mN, 3),
+                    int(plan.feasible),
+                    int(plan.force_saturated),
+                    int(plan.workspace_limited),
+                    self._number(estimate.x_mm, 3),
+                    self._number(estimate.y_mm, 3),
+                    self._number(estimate.z_mm, 3),
+                    self._number(estimate.vx_mm_s, 3),
+                    self._number(estimate.vy_mm_s, 3),
+                    self._number(estimate.vz_mm_s, 3),
+                    self._number(reference.z_mm, 3),
+                    self._number(reference.vz_mm_s, 3),
+                    self._number(reference.acceleration_mm_s2, 3),
+                    self._number(reference.z_mm - estimate.z_mm, 3),
+                    self._number(reference.vz_mm_s - estimate.vz_mm_s, 3),
+                    self._number(target_z_correction_mm, 3),
+                    self._number(target.x, 3),
+                    self._number(target.y, 3),
+                    self._number(target.z, 3),
+                    self._number(xy_distance_mm, 3),
+                    self._number(commanded_intensity, 3),
+                    int(upward_brake_active),
+                    int(reference.complete),
+            ]
+        )
+
+    def close(self):
+        try:
+            if self._file is not None:
+                self._file.close()
+        finally:
+            self._file = None
+            self._writer = None

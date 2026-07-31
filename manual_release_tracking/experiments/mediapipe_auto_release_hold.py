@@ -62,8 +62,18 @@ if __name__ == "__main__":
     cfg.auto_release_max_motion_age_sec = 0.050
     cfg.auto_release_actuation_prediction_sec = 0.013
 
-    # CAPTURE_ALIGN follows the predicted sphere position with a modest,
-    # velocity-dependent braking intensity. Normal LOCAL_HOLD remains 0.6.
+    # Build a constant-deceleration Z reference after the first field is sent.
+    # Intensity remains the existing velocity-based staged schedule for this
+    # experiment so that trajectory and force-control effects stay separable.
+    cfg.auto_release_nominal_stop_time_sec = 0.120
+    cfg.auto_release_min_stop_time_sec = 0.050
+    cfg.auto_release_z_workspace_margin_mm = 10.0
+    cfg.auto_release_trajectory_kp_z = 0.30
+    cfg.auto_release_trajectory_kd_z = 0.01
+    cfg.auto_release_trajectory_max_correction_mm = 5.0
+
+    # Keep the existing velocity-dependent staged intensity while validating
+    # the new braking trajectory. Normal LOCAL_HOLD remains 0.6.
     cfg.auto_release_slow_down_vz_mm_s = -30.0
     cfg.auto_release_fast_down_vz_mm_s = -100.0
     cfg.auto_release_upward_vz_mm_s = 20.0
@@ -71,6 +81,9 @@ if __name__ == "__main__":
     cfg.auto_release_slow_intensity_ratio = 0.7
     cfg.auto_release_max_intensity_ratio = 0.8
     cfg.auto_release_local_hold_vz_abs_mm_s = 30.0
+    cfg.auto_release_local_hold_vxy_max_mm_s = 30.0
+    cfg.auto_release_local_hold_xy_distance_max_mm = 15.0
+    cfg.auto_release_local_hold_z_error_max_mm = 10.0
     cfg.auto_release_local_hold_stable_sec = 0.050
     cfg.auto_release_capture_measurement_timeout_sec = 0.100
     cfg.auto_release_capture_timeout_sec = 1.0
@@ -79,6 +92,9 @@ if __name__ == "__main__":
     )
     cfg.auto_release_delay_log_path = (
         "./manual_release_tracking/auto_release_delay_measurements.csv"
+    )
+    cfg.auto_release_trajectory_log_path = (
+        "./manual_release_tracking/auto_release_trajectory_log.csv"
     )
 
     # R remains a fallback. Automatic mode starts from the first explicit
