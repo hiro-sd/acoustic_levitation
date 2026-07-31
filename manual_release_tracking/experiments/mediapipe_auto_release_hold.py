@@ -60,7 +60,7 @@ if __name__ == "__main__":
     cfg.auto_release_velocity_current_weight = 0.50
     cfg.auto_release_motion_max_gap_sec = 0.10
     cfg.auto_release_max_motion_age_sec = 0.050
-    cfg.auto_release_actuation_prediction_sec = 0.010
+    cfg.auto_release_actuation_prediction_sec = 0.013
 
     # CAPTURE_ALIGN follows the predicted sphere position with a modest,
     # velocity-dependent braking intensity. Normal LOCAL_HOLD remains 0.6.

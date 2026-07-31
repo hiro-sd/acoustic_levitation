@@ -125,7 +125,8 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
    待たずに予測位置へ音場を出します。接触へ戻った場合は候補を取り消して
    intensityを0にします。
 5. 球を持っている間からステレオ3D位置・速度を常時推定し、最新測定値の
-   経過時間とAUTD反映遅延10 msを考慮した予測位置へ音場中心を合わせます。
+   経過時間と実測したAUTD送信遅延13 msを考慮した予測位置へ
+   音場中心を合わせます。
 6. `CAPTURE_ALIGN` 中は下降速度に応じてintensity 0.6、0.7、最大0.8を選び、
    最初の予測位置へ音場を生成します。それ以降、XYは最初の予測位置に固定し、
    Zだけを更新します。上向き速度が20 mm/sを超えた場合はintensityを即座に
@@ -157,7 +158,7 @@ Zカメラは引き続きステレオ3D位置推定に使用しますが、Media
 - 最初に指先が離れたMediaPipe画像のタイムスタンプ
 - release候補からAUTDコマンド投入・実送信までの時間
 - 送信時に使用したステレオ位置と速度
-- 予測時間と10 ms先の予測位置
+- 予測時間と実測遅延を考慮した予測位置
 - 実際のtarget、intensity、AUTDコマンドsequence
 - release確定、候補取消、再把持停止、LOCAL_HOLD遷移の理由
 
