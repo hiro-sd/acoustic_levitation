@@ -9,6 +9,7 @@ import numpy as np
 
 
 CAPTURE_ALIGN = "CAPTURE_ALIGN"
+CAPTURE_SETTLE = "CAPTURE_SETTLE"
 
 
 @dataclass(frozen=True)
@@ -434,6 +435,30 @@ def update_capture_stability(
         <= float(maximum_z_tracking_error_mm)
     )
     if not stable:
+        return None, False
+    if stable_since_sec is None:
+        return float(now_sec), False
+    ready = (
+        float(now_sec) - float(stable_since_sec)
+        >= float(required_duration_sec)
+    )
+    return float(stable_since_sec), bool(ready)
+
+
+def update_brake_exit_stability(
+    *,
+    now_sec: float,
+    vz_mm_s: float,
+    release_confirmed: bool,
+    stable_since_sec: float | None,
+    minimum_vz_mm_s: float,
+    required_duration_sec: float,
+) -> tuple[float | None, bool]:
+    """Detect sustained deceleration before handing control to settling PID."""
+    if (
+        not bool(release_confirmed)
+        or float(vz_mm_s) < float(minimum_vz_mm_s)
+    ):
         return None, False
     if stable_since_sec is None:
         return float(now_sec), False

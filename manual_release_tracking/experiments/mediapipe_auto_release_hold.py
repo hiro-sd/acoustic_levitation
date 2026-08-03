@@ -71,6 +71,8 @@ if __name__ == "__main__":
     cfg.auto_release_trajectory_kp_z = 0.30
     cfg.auto_release_trajectory_kd_z = 0.01
     cfg.auto_release_trajectory_max_correction_mm = 5.0
+    cfg.auto_release_brake_exit_vz_mm_s = -30.0
+    cfg.auto_release_brake_exit_stable_sec = 0.015
 
     # Keep the existing velocity-dependent staged intensity while validating
     # the new braking trajectory. Normal LOCAL_HOLD remains 0.6.
@@ -85,6 +87,8 @@ if __name__ == "__main__":
     cfg.auto_release_local_hold_xy_distance_max_mm = 15.0
     cfg.auto_release_local_hold_z_error_max_mm = 10.0
     cfg.auto_release_local_hold_stable_sec = 0.050
+    # Loss of stereo tracking still silences the field. The 1 s capture limit
+    # only forces CAPTURE_ALIGN -> CAPTURE_SETTLE; it no longer stops output.
     cfg.auto_release_capture_measurement_timeout_sec = 0.100
     cfg.auto_release_capture_timeout_sec = 1.0
     cfg.auto_release_capture_log_path = (

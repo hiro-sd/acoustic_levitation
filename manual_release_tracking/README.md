@@ -133,11 +133,18 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
    一定減速の `z_ref(t), v_ref(t)` を追従します。XYは初回予測位置に固定します。
    上向き速度が20 mm/sを超えた場合はintensityを0.5へ下げ、
    音場中心のZを直前値より上へ動かしません。
-7. 制動軌道が完了し、Z速度、XY速度、球と音場のXY距離、Z軌道誤差が
-   すべて設定範囲内で50 ms続くと、その位置を一時基準にして
-   intensity 0.6の通常PID `LOCAL_HOLD`へ移ります。
-8. 自動開始した捕捉・保持中にXYカメラの `GRASPED` が再成立した場合は、
+7. release確定後、実測Z速度が-30 mm/s以上の状態が15 ms続いた時点で、
+   計画終了時刻を待たずに制動を終えます。その時点のフィルタ済み3D位置を
+   一時基準として、通常PIDを使う `CAPTURE_SETTLE`へ移ります。
+   `CAPTURE_ALIGN`が1秒続いた場合も音場は停止せず、その時点の位置で
+   `CAPTURE_SETTLE`へ強制移行します。
+8. `CAPTURE_SETTLE`でZ速度、XY速度、一時基準からのXY距離とZ誤差が
+   すべて設定範囲内で50 ms続くと、intensity 0.6の`LOCAL_HOLD`へ移ります。
+   `LOCAL_HOLD`に時間制限はありません。
+9. 自動開始した捕捉・保持中にXYカメラの `GRASPED` が再成立した場合は、
    再把持または誤releaseと判断し、intensityを0にして音場を停止します。
+   また、いずれの自動保持状態でもステレオ3D測定が100 ms以上更新されない
+   場合は、安全のため音場を停止します。
 
 Zカメラは引き続きステレオ3D位置推定に使用しますが、MediaPipeの手推論は
 実行せず、GRASPED/RELEASED判定には影響しません。判定カメラは実験設定の
@@ -165,7 +172,7 @@ intensityを決める制御はまだ使用しません。`FOLLOW_AND_BRAKE`とho
 - 送信時に使用したステレオ位置と速度
 - 予測時間と実測遅延を考慮した予測位置
 - 実際のtarget、intensity、AUTDコマンドsequence
-- release確定、候補取消、再把持停止、LOCAL_HOLD遷移の理由
+- release確定、候補取消、`CAPTURE_SETTLE`/`LOCAL_HOLD`遷移、再把持停止の理由
 
 実効遅延の測定専用ログは、実行時に自動で
 `manual_release_tracking/auto_release_delay_measurements.csv`へ追記されます。

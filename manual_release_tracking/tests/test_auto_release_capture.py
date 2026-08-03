@@ -22,6 +22,7 @@ from manual_release_tracking.core.auto_release_capture import (
     make_braking_plan,
     predict_capture_position,
     trajectory_target_z,
+    update_brake_exit_stability,
     update_capture_stability,
 )
 from tracking.core.models import Target3D
@@ -287,6 +288,51 @@ class CapturePredictionTest(unittest.TestCase):
             trajectory_complete=True,
             vxy_mm_s=70.0,
             maximum_vxy_mm_s=30.0,
+        )
+        self.assertIsNone(since)
+        self.assertFalse(ready)
+
+    def test_brake_exit_requires_confirmed_sustained_near_zero_vz(self):
+        since, ready = update_brake_exit_stability(
+            now_sec=1.0,
+            vz_mm_s=-20.0,
+            release_confirmed=False,
+            stable_since_sec=None,
+            minimum_vz_mm_s=-30.0,
+            required_duration_sec=0.015,
+        )
+        self.assertIsNone(since)
+        self.assertFalse(ready)
+
+        since, ready = update_brake_exit_stability(
+            now_sec=1.0,
+            vz_mm_s=-20.0,
+            release_confirmed=True,
+            stable_since_sec=None,
+            minimum_vz_mm_s=-30.0,
+            required_duration_sec=0.015,
+        )
+        self.assertEqual(since, 1.0)
+        self.assertFalse(ready)
+
+        since, ready = update_brake_exit_stability(
+            now_sec=1.016,
+            vz_mm_s=40.0,
+            release_confirmed=True,
+            stable_since_sec=since,
+            minimum_vz_mm_s=-30.0,
+            required_duration_sec=0.015,
+        )
+        self.assertTrue(ready)
+
+    def test_brake_exit_timer_resets_when_descent_accelerates_again(self):
+        since, ready = update_brake_exit_stability(
+            now_sec=1.010,
+            vz_mm_s=-80.0,
+            release_confirmed=True,
+            stable_since_sec=1.0,
+            minimum_vz_mm_s=-30.0,
+            required_duration_sec=0.015,
         )
         self.assertIsNone(since)
         self.assertFalse(ready)
