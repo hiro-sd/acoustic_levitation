@@ -139,7 +139,9 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
    `CAPTURE_ALIGN`が1秒続いた場合も音場は停止せず、その時点の位置で
    `CAPTURE_SETTLE`へ強制移行します。
 8. `CAPTURE_SETTLE`でZ速度、XY速度、一時基準からのXY距離とZ誤差が
-   すべて設定範囲内で50 ms続くと、intensity 0.6の`LOCAL_HOLD`へ移ります。
+   設定範囲内になり、通常intensity 0.6の状態が25 ms続くと
+   `LOCAL_HOLD`へ移ります。移行条件は`|vz| <= 60 mm/s`、
+   XY速度60 mm/s以下、XY距離15 mm以下、Z誤差10 mm以下です。
    `LOCAL_HOLD`に時間制限はありません。
 9. 自動開始した捕捉・保持中にXYカメラの `GRASPED` が再成立した場合は、
    再把持または誤releaseと判断し、intensityを0にして音場を停止します。
@@ -154,6 +156,10 @@ Zカメラは引き続きステレオ3D位置推定に使用しますが、Media
 維持しています。計画時に必要力と飽和は計算・記録しますが、力から直接
 intensityを決める制御はまだ使用しません。`FOLLOW_AND_BRAKE`とhomeへの自動復帰も
 無効です。
+`CAPTURE_SETTLE`では、通常0.6、強い上向き時0.5、強い再下降時0.7の
+3状態を使用します。上向き制動は`vz > 60 mm/s`で開始して`vz < 20 mm/s`まで、
+下降救済は`vz < -80 mm/s`で開始して`vz > -30 mm/s`まで維持するため、
+単一閾値付近でintensityが高速に往復しません。
 また、非同期MediaPipe結果が80 msより古い場合は自動トリガーを拒否します。
 `r` は従来どおり手動フォールバックとして利用でき、`ENTER`で保持を停止できます。
 `r` で手動開始した保持はMediaPipeの再GRASPEDでは停止しません。

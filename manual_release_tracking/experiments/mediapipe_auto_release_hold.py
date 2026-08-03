@@ -82,11 +82,21 @@ if __name__ == "__main__":
     cfg.auto_release_upward_intensity_ratio = 0.5
     cfg.auto_release_slow_intensity_ratio = 0.7
     cfg.auto_release_max_intensity_ratio = 0.8
-    cfg.auto_release_local_hold_vz_abs_mm_s = 30.0
-    cfg.auto_release_local_hold_vxy_max_mm_s = 30.0
+    # CAPTURE_SETTLE uses a latched three-state intensity controller. Separate
+    # enter/exit thresholds prevent 0.5/0.6/0.7 chatter around one velocity.
+    cfg.auto_release_settle_normal_intensity_ratio = 0.6
+    cfg.auto_release_settle_upward_intensity_ratio = 0.5
+    cfg.auto_release_settle_downward_intensity_ratio = 0.7
+    cfg.auto_release_settle_upward_enter_vz_mm_s = 60.0
+    cfg.auto_release_settle_upward_exit_vz_mm_s = 20.0
+    cfg.auto_release_settle_downward_enter_vz_mm_s = -80.0
+    cfg.auto_release_settle_downward_exit_vz_mm_s = -30.0
+
+    cfg.auto_release_local_hold_vz_abs_mm_s = 60.0
+    cfg.auto_release_local_hold_vxy_max_mm_s = 60.0
     cfg.auto_release_local_hold_xy_distance_max_mm = 15.0
     cfg.auto_release_local_hold_z_error_max_mm = 10.0
-    cfg.auto_release_local_hold_stable_sec = 0.050
+    cfg.auto_release_local_hold_stable_sec = 0.025
     # Loss of stereo tracking still silences the field. The 1 s capture limit
     # only forces CAPTURE_ALIGN -> CAPTURE_SETTLE; it no longer stops output.
     cfg.auto_release_capture_measurement_timeout_sec = 0.100

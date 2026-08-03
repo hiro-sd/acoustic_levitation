@@ -60,6 +60,7 @@ from manual_release_tracking.core.mediapipe_release_trigger import (
 from manual_release_tracking.core.auto_release_capture import (
     CAPTURE_ALIGN,
     CAPTURE_SETTLE,
+    SETTLE_INTENSITY_NORMAL,
     AutoReleaseCaptureLogger,
     AutoReleaseDelayLogger,
     AutoReleaseTrajectoryLogger,
@@ -74,6 +75,7 @@ from manual_release_tracking.core.auto_release_capture import (
     trajectory_target_z,
     update_brake_exit_stability,
     update_capture_stability,
+    update_settle_intensity,
 )
 
 
@@ -339,6 +341,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
             capture_brake_exit_last_measurement_time = None
             capture_settle_started_at = None
             capture_settle_last_measurement_time = None
+            capture_settle_intensity_state = SETTLE_INTENSITY_NORMAL
             capture_start_estimate = None
             capture_initial_prediction = None
             capture_onset_prediction = None
@@ -484,6 +487,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal capture_brake_exit_last_measurement_time
                 nonlocal capture_settle_started_at
                 nonlocal capture_settle_last_measurement_time
+                nonlocal capture_settle_intensity_state
                 nonlocal capture_start_estimate
                 nonlocal capture_initial_prediction
                 nonlocal capture_onset_prediction
@@ -593,6 +597,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 capture_brake_exit_last_measurement_time = None
                 capture_settle_started_at = None
                 capture_settle_last_measurement_time = None
+                capture_settle_intensity_state = SETTLE_INTENSITY_NORMAL
                 capture_start_estimate = estimate
                 capture_initial_prediction = prediction
                 capture_onset_prediction = None
@@ -648,6 +653,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal capture_brake_exit_last_measurement_time
                 nonlocal capture_settle_started_at
                 nonlocal capture_settle_last_measurement_time
+                nonlocal capture_settle_intensity_state
                 nonlocal capture_upward_brake_active
                 nonlocal capture_onset_prediction
                 nonlocal capture_braking_plan
@@ -684,31 +690,66 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 capture_brake_exit_last_measurement_time = None
                 capture_settle_started_at = now_sec
                 capture_settle_last_measurement_time = None
+                capture_settle_intensity_state = SETTLE_INTENSITY_NORMAL
                 capture_upward_brake_active = False
                 capture_onset_prediction = None
                 capture_braking_plan = None
                 capture_last_trajectory_log_measurement_time = None
                 mode_transition_reason = reason
-                current_intensity_ratio = capture_intensity_for_vz(
+                (
+                    capture_settle_intensity_state,
+                    current_intensity_ratio,
+                ) = update_settle_intensity(
+                    capture_settle_intensity_state,
                     estimate.vz_mm_s,
-                    normal_ratio=float(cfg.static_intensity_ratio),
-                    slow_ratio=float(
-                        getattr(cfg, "auto_release_slow_intensity_ratio", 0.7)
-                    ),
-                    maximum_ratio=float(
-                        getattr(cfg, "auto_release_max_intensity_ratio", 0.8)
+                    normal_ratio=float(
+                        getattr(
+                            cfg,
+                            "auto_release_settle_normal_intensity_ratio",
+                            cfg.static_intensity_ratio,
+                        )
                     ),
                     upward_ratio=float(
-                        getattr(cfg, "auto_release_upward_intensity_ratio", 0.5)
+                        getattr(
+                            cfg,
+                            "auto_release_settle_upward_intensity_ratio",
+                            0.5,
+                        )
                     ),
-                    fast_down_threshold_mm_s=float(
-                        getattr(cfg, "auto_release_fast_down_vz_mm_s", -100.0)
+                    downward_ratio=float(
+                        getattr(
+                            cfg,
+                            "auto_release_settle_downward_intensity_ratio",
+                            0.7,
+                        )
                     ),
-                    slow_down_threshold_mm_s=float(
-                        getattr(cfg, "auto_release_slow_down_vz_mm_s", -30.0)
+                    upward_enter_vz_mm_s=float(
+                        getattr(
+                            cfg,
+                            "auto_release_settle_upward_enter_vz_mm_s",
+                            60.0,
+                        )
                     ),
-                    upward_threshold_mm_s=float(
-                        getattr(cfg, "auto_release_upward_vz_mm_s", 20.0)
+                    upward_exit_vz_mm_s=float(
+                        getattr(
+                            cfg,
+                            "auto_release_settle_upward_exit_vz_mm_s",
+                            20.0,
+                        )
+                    ),
+                    downward_enter_vz_mm_s=float(
+                        getattr(
+                            cfg,
+                            "auto_release_settle_downward_enter_vz_mm_s",
+                            -80.0,
+                        )
+                    ),
+                    downward_exit_vz_mm_s=float(
+                        getattr(
+                            cfg,
+                            "auto_release_settle_downward_exit_vz_mm_s",
+                            -30.0,
+                        )
                     ),
                 )
                 set_tracking_target(
@@ -731,6 +772,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     intensity=current_intensity_ratio,
                     reason=(
                         f"{reason};vz={float(estimate.vz_mm_s):.1f};"
+                        f"intensity_state={capture_settle_intensity_state};"
                         f"setpoint=({last_target.x:.2f},"
                         f"{last_target.y:.2f},{last_target.z:.2f})"
                     ),
@@ -763,6 +805,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal capture_brake_exit_last_measurement_time
                 nonlocal capture_settle_started_at
                 nonlocal capture_settle_last_measurement_time
+                nonlocal capture_settle_intensity_state
                 nonlocal capture_upward_brake_active
                 nonlocal capture_onset_prediction
                 nonlocal capture_braking_plan
@@ -786,6 +829,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 capture_brake_exit_last_measurement_time = None
                 capture_settle_started_at = None
                 capture_settle_last_measurement_time = None
+                capture_settle_intensity_state = SETTLE_INTENSITY_NORMAL
                 capture_upward_brake_active = False
                 capture_onset_prediction = None
                 capture_braking_plan = None
@@ -879,6 +923,9 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         capture_brake_exit_last_measurement_time = None
                         capture_settle_started_at = None
                         capture_settle_last_measurement_time = None
+                        capture_settle_intensity_state = (
+                            SETTLE_INTENSITY_NORMAL
+                        )
                         control_mode = NORMAL_HOLD
                         descending_frame_count = 0
                         follow_xy_reference = None
@@ -1840,52 +1887,89 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                             z_tracking_error = float(
                                 abs(motion_estimate.z_mm - return_setpoint.z)
                             )
-                            capture_intensity_ratio = capture_intensity_for_vz(
+                            new_settle_measurement = (
+                                capture_settle_last_measurement_time
+                                != motion_estimate.measurement_time_sec
+                            )
+                            previous_settle_intensity_state = (
+                                capture_settle_intensity_state
+                            )
+                            (
+                                capture_settle_intensity_state,
+                                capture_intensity_ratio,
+                            ) = update_settle_intensity(
+                                capture_settle_intensity_state,
                                 vz_now,
-                                normal_ratio=float(cfg.static_intensity_ratio),
-                                slow_ratio=float(
+                                normal_ratio=float(
                                     getattr(
                                         cfg,
-                                        "auto_release_slow_intensity_ratio",
-                                        0.7,
-                                    )
-                                ),
-                                maximum_ratio=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_max_intensity_ratio",
-                                        0.8,
+                                        "auto_release_settle_normal_intensity_ratio",
+                                        cfg.static_intensity_ratio,
                                     )
                                 ),
                                 upward_ratio=float(
                                     getattr(
                                         cfg,
-                                        "auto_release_upward_intensity_ratio",
+                                        "auto_release_settle_upward_intensity_ratio",
                                         0.5,
                                     )
                                 ),
-                                fast_down_threshold_mm_s=float(
+                                downward_ratio=float(
                                     getattr(
                                         cfg,
-                                        "auto_release_fast_down_vz_mm_s",
-                                        -100.0,
+                                        "auto_release_settle_downward_intensity_ratio",
+                                        0.7,
                                     )
                                 ),
-                                slow_down_threshold_mm_s=float(
+                                upward_enter_vz_mm_s=float(
                                     getattr(
                                         cfg,
-                                        "auto_release_slow_down_vz_mm_s",
-                                        -30.0,
+                                        "auto_release_settle_upward_enter_vz_mm_s",
+                                        60.0,
                                     )
                                 ),
-                                upward_threshold_mm_s=float(
+                                upward_exit_vz_mm_s=float(
                                     getattr(
                                         cfg,
-                                        "auto_release_upward_vz_mm_s",
+                                        "auto_release_settle_upward_exit_vz_mm_s",
                                         20.0,
                                     )
                                 ),
+                                downward_enter_vz_mm_s=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_settle_downward_enter_vz_mm_s",
+                                        -80.0,
+                                    )
+                                ),
+                                downward_exit_vz_mm_s=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_settle_downward_exit_vz_mm_s",
+                                        -30.0,
+                                    )
+                                ),
                             )
+                            if (
+                                new_settle_measurement
+                                and capture_settle_intensity_state
+                                != previous_settle_intensity_state
+                            ):
+                                capture_logger.write(
+                                    event="capture_settle_intensity_changed",
+                                    release_timestamp_ms=(
+                                        auto_release_timestamp_ms
+                                    ),
+                                    event_time_sec=now_capture,
+                                    estimate=motion_estimate,
+                                    target=target,
+                                    intensity=capture_intensity_ratio,
+                                    reason=(
+                                        f"{previous_settle_intensity_state}->"
+                                        f"{capture_settle_intensity_state};"
+                                        f"vz={vz_now:.1f}"
+                                    ),
+                                )
                             recovery_telemetry.vz_mm_s = vz_now
                             recovery_telemetry.xy_distance_to_target_mm = float(
                                 np.hypot(
@@ -1933,10 +2017,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 )
                             )
                             capture_ready = False
-                            if (
-                                capture_settle_last_measurement_time
-                                != motion_estimate.measurement_time_sec
-                            ):
+                            if new_settle_measurement:
                                 (
                                     capture_stable_since,
                                     capture_ready,
@@ -1958,6 +2039,10 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     maximum_z_tracking_error_mm=(
                                         stable_z_error_limit
                                     ),
+                                    intensity_stable=(
+                                        capture_settle_intensity_state
+                                        == SETTLE_INTENSITY_NORMAL
+                                    ),
                                 )
                                 capture_settle_last_measurement_time = (
                                     motion_estimate.measurement_time_sec
@@ -1968,6 +2053,9 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 capture_stable_since = None
                                 capture_settle_started_at = None
                                 capture_settle_last_measurement_time = None
+                                capture_settle_intensity_state = (
+                                    SETTLE_INTENSITY_NORMAL
+                                )
                                 current_intensity_ratio = float(
                                     cfg.static_intensity_ratio
                                 )
@@ -1987,6 +2075,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     target=target,
                                     intensity=current_intensity_ratio,
                                     reason=(
+                                        "intensity_state=NORMAL;"
                                         f"abs_vz<={stable_vz_limit:.1f};"
                                         f"vxy<={stable_vxy_limit:.1f};"
                                         f"xy_distance<="

@@ -10,6 +10,9 @@ import numpy as np
 
 CAPTURE_ALIGN = "CAPTURE_ALIGN"
 CAPTURE_SETTLE = "CAPTURE_SETTLE"
+SETTLE_INTENSITY_NORMAL = "NORMAL"
+SETTLE_INTENSITY_UPWARD_DAMPING = "UPWARD_DAMPING"
+SETTLE_INTENSITY_DOWNWARD_RESCUE = "DOWNWARD_RESCUE"
 
 
 @dataclass(frozen=True)
@@ -384,6 +387,47 @@ def capture_intensity_for_vz(
     return float(normal_ratio)
 
 
+def update_settle_intensity(
+    current_state: str,
+    vz_mm_s: float,
+    *,
+    normal_ratio: float = 0.6,
+    upward_ratio: float = 0.5,
+    downward_ratio: float = 0.7,
+    upward_enter_vz_mm_s: float = 60.0,
+    upward_exit_vz_mm_s: float = 20.0,
+    downward_enter_vz_mm_s: float = -80.0,
+    downward_exit_vz_mm_s: float = -30.0,
+) -> tuple[str, float]:
+    """Apply hysteresis to SETTLE intensity so it cannot chatter at one threshold."""
+    state = str(current_state)
+    vz = float(vz_mm_s)
+
+    if state == SETTLE_INTENSITY_UPWARD_DAMPING:
+        if vz < float(downward_enter_vz_mm_s):
+            state = SETTLE_INTENSITY_DOWNWARD_RESCUE
+        elif vz < float(upward_exit_vz_mm_s):
+            state = SETTLE_INTENSITY_NORMAL
+    elif state == SETTLE_INTENSITY_DOWNWARD_RESCUE:
+        if vz > float(upward_enter_vz_mm_s):
+            state = SETTLE_INTENSITY_UPWARD_DAMPING
+        elif vz > float(downward_exit_vz_mm_s):
+            state = SETTLE_INTENSITY_NORMAL
+    else:
+        state = SETTLE_INTENSITY_NORMAL
+        if vz > float(upward_enter_vz_mm_s):
+            state = SETTLE_INTENSITY_UPWARD_DAMPING
+        elif vz < float(downward_enter_vz_mm_s):
+            state = SETTLE_INTENSITY_DOWNWARD_RESCUE
+
+    ratios = {
+        SETTLE_INTENSITY_NORMAL: float(normal_ratio),
+        SETTLE_INTENSITY_UPWARD_DAMPING: float(upward_ratio),
+        SETTLE_INTENSITY_DOWNWARD_RESCUE: float(downward_ratio),
+    }
+    return state, ratios[state]
+
+
 def limit_upward_capture_target_z(
     predicted_z_mm: float,
     previous_target_z_mm: float,
@@ -424,6 +468,7 @@ def update_capture_stability(
     maximum_xy_distance_mm: float = float("inf"),
     z_tracking_error_mm: float = 0.0,
     maximum_z_tracking_error_mm: float = float("inf"),
+    intensity_stable: bool = True,
 ) -> tuple[float | None, bool]:
     stable = (
         bool(release_confirmed)
@@ -433,6 +478,7 @@ def update_capture_stability(
         and abs(float(xy_distance_mm)) <= float(maximum_xy_distance_mm)
         and abs(float(z_tracking_error_mm))
         <= float(maximum_z_tracking_error_mm)
+        and bool(intensity_stable)
     )
     if not stable:
         return None, False

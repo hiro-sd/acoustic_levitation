@@ -14,6 +14,9 @@ from manual_release_tracking.core.auto_release_capture import (
     AutoReleaseDelayLogger,
     AutoReleaseTrajectoryLogger,
     MotionEstimate3D,
+    SETTLE_INTENSITY_DOWNWARD_RESCUE,
+    SETTLE_INTENSITY_NORMAL,
+    SETTLE_INTENSITY_UPWARD_DAMPING,
     StereoMotionEstimator,
     capture_align_target_xy,
     capture_intensity_for_vz,
@@ -24,6 +27,7 @@ from manual_release_tracking.core.auto_release_capture import (
     trajectory_target_z,
     update_brake_exit_stability,
     update_capture_stability,
+    update_settle_intensity,
 )
 from tracking.core.models import Target3D
 
@@ -81,6 +85,47 @@ class CapturePredictionTest(unittest.TestCase):
         self.assertEqual(capture_intensity_for_vz(20.0), 0.6)
         self.assertEqual(capture_intensity_for_vz(20.1), 0.5)
         self.assertEqual(capture_intensity_for_vz(200.0), 0.5)
+
+    def test_settle_upward_damping_has_hysteresis(self):
+        state, ratio = update_settle_intensity(
+            SETTLE_INTENSITY_NORMAL,
+            61.0,
+        )
+        self.assertEqual(state, SETTLE_INTENSITY_UPWARD_DAMPING)
+        self.assertEqual(ratio, 0.5)
+
+        state, ratio = update_settle_intensity(state, 30.0)
+        self.assertEqual(state, SETTLE_INTENSITY_UPWARD_DAMPING)
+        self.assertEqual(ratio, 0.5)
+
+        state, ratio = update_settle_intensity(state, 19.0)
+        self.assertEqual(state, SETTLE_INTENSITY_NORMAL)
+        self.assertEqual(ratio, 0.6)
+
+    def test_settle_downward_rescue_has_hysteresis(self):
+        state, ratio = update_settle_intensity(
+            SETTLE_INTENSITY_NORMAL,
+            -81.0,
+        )
+        self.assertEqual(state, SETTLE_INTENSITY_DOWNWARD_RESCUE)
+        self.assertEqual(ratio, 0.7)
+
+        state, ratio = update_settle_intensity(state, -50.0)
+        self.assertEqual(state, SETTLE_INTENSITY_DOWNWARD_RESCUE)
+        self.assertEqual(ratio, 0.7)
+
+        state, ratio = update_settle_intensity(state, -29.0)
+        self.assertEqual(state, SETTLE_INTENSITY_NORMAL)
+        self.assertEqual(ratio, 0.6)
+
+    def test_settle_normal_does_not_switch_for_small_velocity_noise(self):
+        for vz in (59.0, 30.0, 0.0, -30.0, -79.0):
+            state, ratio = update_settle_intensity(
+                SETTLE_INTENSITY_NORMAL,
+                vz,
+            )
+            self.assertEqual(state, SETTLE_INTENSITY_NORMAL)
+            self.assertEqual(ratio, 0.6)
 
     def test_upward_brake_prevents_target_z_from_increasing(self):
         self.assertEqual(
@@ -333,6 +378,25 @@ class CapturePredictionTest(unittest.TestCase):
             stable_since_sec=1.0,
             minimum_vz_mm_s=-30.0,
             required_duration_sec=0.015,
+        )
+        self.assertIsNone(since)
+        self.assertFalse(ready)
+
+    def test_local_hold_rejects_non_normal_settle_intensity(self):
+        since, ready = update_capture_stability(
+            now_sec=1.0,
+            vz_mm_s=0.0,
+            release_confirmed=True,
+            stable_since_sec=None,
+            maximum_abs_vz_mm_s=60.0,
+            required_duration_sec=0.025,
+            vxy_mm_s=0.0,
+            maximum_vxy_mm_s=60.0,
+            xy_distance_mm=0.0,
+            maximum_xy_distance_mm=15.0,
+            z_tracking_error_mm=0.0,
+            maximum_z_tracking_error_mm=10.0,
+            intensity_stable=False,
         )
         self.assertIsNone(since)
         self.assertFalse(ready)
