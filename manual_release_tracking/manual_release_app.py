@@ -72,6 +72,7 @@ from manual_release_tracking.core.auto_release_capture import (
     limit_upward_capture_target_z,
     make_braking_plan,
     predict_capture_position,
+    should_start_return_home,
     trajectory_target_z,
     update_brake_exit_stability,
     update_capture_stability,
@@ -1570,6 +1571,51 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     )
 
                     if meas.detected_xy or meas.detected_z:
+                        # An automatic release is held at its temporary position
+                        # first. Once the dwell time expires, reuse the existing
+                        # speed-limited RETURN_TO_HOME controller.
+                        return_delay_sec = float(
+                            getattr(
+                                cfg,
+                                "auto_release_local_hold_before_return_sec",
+                                3.0,
+                            )
+                        )
+                        if (
+                            control_mode == LOCAL_HOLD
+                            and should_start_return_home(
+                                now_sec=time.time(),
+                                local_hold_started_sec=local_hold_start_time,
+                                delay_sec=return_delay_sec,
+                                automatic_hold=auto_hold_active,
+                            )
+                        ):
+                            control_mode = RETURN_TO_HOME
+                            local_hold_start_time = None
+                            mode_transition_reason = (
+                                "auto_release_local_hold_elapsed"
+                            )
+                            capture_logger.write(
+                                event="local_hold_to_return_home",
+                                release_timestamp_ms=auto_release_timestamp_ms,
+                                estimate=motion_estimate,
+                                target=last_target,
+                                intensity=current_intensity_ratio,
+                                reason=(
+                                    f"local_hold_elapsed_sec="
+                                    f"{return_delay_sec:.3f};"
+                                    f"home=({home.x:.2f},{home.y:.2f},"
+                                    f"{home.z:.2f})"
+                                ),
+                            )
+                            print(
+                                "[AUTO_RELEASE] LOCAL_HOLD -> "
+                                "RETURN_TO_HOME "
+                                f"after {return_delay_sec:.1f}s; "
+                                f"home=({home.x:.1f}, {home.y:.1f}, "
+                                f"{home.z:.1f}) mm"
+                            )
+
                         # 1. RETURN_TO_HOME中は一時基準位置をゆっくりhomeへ戻す。
                         #    LOCAL_HOLD中はreturn_setpointを一時基準としてその場保持する。
                         if control_mode == RETURN_TO_HOME:
@@ -2334,7 +2380,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 local_hold_stable_since = None
 
                         # 5. LOCAL_HOLD中は一時基準でその場保持する。
-                        #    現段階では捕捉可否の確認を優先し、元のhomeへは自動復帰しない。
+                        #    自動releaseでは設定時間後にRETURN_TO_HOMEへ移る。
 
                         # 6. RETURN_TO_HOME完了判定
                         if control_mode == RETURN_TO_HOME:
@@ -2367,6 +2413,22 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                         home.z,
                                     )
                                 )
+
+                                if auto_hold_active:
+                                    capture_logger.write(
+                                        event="return_home_completed",
+                                        release_timestamp_ms=(
+                                            auto_release_timestamp_ms
+                                        ),
+                                        estimate=motion_estimate,
+                                        target=Target3D(
+                                            home.x,
+                                            home.y,
+                                            home.z,
+                                        ),
+                                        intensity=current_intensity_ratio,
+                                        reason="return_home_done",
+                                    )
 
                                 print("[RECOVERY] RETURN_TO_HOME -> NORMAL_HOLD")
 

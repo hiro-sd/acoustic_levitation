@@ -97,6 +97,9 @@ if __name__ == "__main__":
     cfg.auto_release_local_hold_xy_distance_max_mm = 15.0
     cfg.auto_release_local_hold_z_error_max_mm = 10.0
     cfg.auto_release_local_hold_stable_sec = 0.025
+    # Hold at the released position first, then move the PID reference back to
+    # AUTD center / z=400 using the existing speed-limited return controller.
+    cfg.auto_release_local_hold_before_return_sec = 3.0
     # Loss of stereo tracking still silences the field. The 1 s capture limit
     # only forces CAPTURE_ALIGN -> CAPTURE_SETTLE; it no longer stops output.
     cfg.auto_release_capture_measurement_timeout_sec = 0.100

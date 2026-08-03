@@ -142,8 +142,10 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
    設定範囲内になり、通常intensity 0.6の状態が25 ms続くと
    `LOCAL_HOLD`へ移ります。移行条件は`|vz| <= 60 mm/s`、
    XY速度60 mm/s以下、XY距離15 mm以下、Z誤差10 mm以下です。
-   `LOCAL_HOLD`に時間制限はありません。
-9. 自動開始した捕捉・保持中にXYカメラの `GRASPED` が再成立した場合は、
+9. `LOCAL_HOLD`で離した位置を3秒間保持した後、既存の速度制限付き
+   `RETURN_TO_HOME`へ移り、基準位置をAUTD中心・Z=400 mmへ徐々に戻します。
+   復帰完了後も通常PIDでhomeを保持します。
+10. 自動開始した捕捉・保持中にXYカメラの `GRASPED` が再成立した場合は、
    再把持または誤releaseと判断し、intensityを0にして音場を停止します。
    また、いずれの自動保持状態でもステレオ3D測定が100 ms以上更新されない
    場合は、安全のため音場を停止します。
@@ -154,8 +156,7 @@ Zカメラは引き続きステレオ3D位置推定に使用しますが、Media
 
 現在は制動軌道の効果を分離するため、intensityは従来の速度別段階制御を
 維持しています。計画時に必要力と飽和は計算・記録しますが、力から直接
-intensityを決める制御はまだ使用しません。`FOLLOW_AND_BRAKE`とhomeへの自動復帰も
-無効です。
+intensityを決める制御はまだ使用しません。`FOLLOW_AND_BRAKE`は無効です。
 `CAPTURE_SETTLE`では、通常0.6、強い上向き時0.5、強い再下降時0.7の
 3状態を使用します。上向き制動は`vz > 60 mm/s`で開始して`vz < 20 mm/s`まで、
 下降救済は`vz < -80 mm/s`で開始して`vz > -30 mm/s`まで維持するため、

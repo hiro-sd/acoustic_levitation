@@ -491,6 +491,20 @@ def update_capture_stability(
     return float(stable_since_sec), bool(ready)
 
 
+def should_start_return_home(
+    *,
+    now_sec: float,
+    local_hold_started_sec: float | None,
+    delay_sec: float,
+    automatic_hold: bool,
+) -> bool:
+    """Return whether an automatic LOCAL_HOLD has reached its dwell time."""
+    if not bool(automatic_hold) or local_hold_started_sec is None:
+        return False
+    elapsed_sec = max(0.0, float(now_sec) - float(local_hold_started_sec))
+    return elapsed_sec >= max(0.0, float(delay_sec))
+
+
 def update_brake_exit_stability(
     *,
     now_sec: float,

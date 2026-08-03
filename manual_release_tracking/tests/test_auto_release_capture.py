@@ -24,6 +24,7 @@ from manual_release_tracking.core.auto_release_capture import (
     limit_upward_capture_target_z,
     make_braking_plan,
     predict_capture_position,
+    should_start_return_home,
     trajectory_target_z,
     update_brake_exit_stability,
     update_capture_stability,
@@ -126,6 +127,42 @@ class CapturePredictionTest(unittest.TestCase):
             )
             self.assertEqual(state, SETTLE_INTENSITY_NORMAL)
             self.assertEqual(ratio, 0.6)
+
+    def test_automatic_local_hold_returns_after_configured_delay(self):
+        self.assertFalse(
+            should_start_return_home(
+                now_sec=12.999,
+                local_hold_started_sec=10.0,
+                delay_sec=3.0,
+                automatic_hold=True,
+            )
+        )
+        self.assertTrue(
+            should_start_return_home(
+                now_sec=13.0,
+                local_hold_started_sec=10.0,
+                delay_sec=3.0,
+                automatic_hold=True,
+            )
+        )
+
+    def test_manual_or_unstarted_local_hold_does_not_auto_return(self):
+        self.assertFalse(
+            should_start_return_home(
+                now_sec=20.0,
+                local_hold_started_sec=10.0,
+                delay_sec=3.0,
+                automatic_hold=False,
+            )
+        )
+        self.assertFalse(
+            should_start_return_home(
+                now_sec=20.0,
+                local_hold_started_sec=None,
+                delay_sec=3.0,
+                automatic_hold=True,
+            )
+        )
 
     def test_upward_brake_prevents_target_z_from_increasing(self):
         self.assertEqual(
