@@ -100,6 +100,8 @@ if __name__ == "__main__":
     # Hold at the released position first, then move the PID reference back to
     # AUTD center / z=400 using the existing speed-limited return controller.
     cfg.auto_release_local_hold_before_return_sec = 3.0
+    cfg.return_home_speed_xy_mm_s = 15.0
+    cfg.return_home_speed_z_mm_s = 10.0
     # Loss of stereo tracking still silences the field. The 1 s capture limit
     # only forces CAPTURE_ALIGN -> CAPTURE_SETTLE; it no longer stops output.
     cfg.auto_release_capture_measurement_timeout_sec = 0.100

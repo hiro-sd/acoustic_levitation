@@ -144,7 +144,8 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
    XY速度60 mm/s以下、XY距離15 mm以下、Z誤差10 mm以下です。
 9. `LOCAL_HOLD`で離した位置を3秒間保持した後、既存の速度制限付き
    `RETURN_TO_HOME`へ移り、基準位置をAUTD中心・Z=400 mmへ徐々に戻します。
-   復帰完了後も通常PIDでhomeを保持します。
+   基準位置の移動速度はXY 15 mm/s、Z 10 mm/sです。復帰完了後も
+   通常PIDでhomeを保持します。
 10. 自動開始した捕捉・保持中にXYカメラの `GRASPED` が再成立した場合は、
    再把持または誤releaseと判断し、intensityを0にして音場を停止します。
    また、いずれの自動保持状態でもステレオ3D測定が100 ms以上更新されない
