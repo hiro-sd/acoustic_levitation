@@ -127,7 +127,10 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
 5. 球を持っている間からステレオ3D位置・速度を常時推定し、最新測定値の
    経過時間と実測したAUTD送信遅延13 msを考慮した予測位置へ
    音場中心を合わせます。
-6. `CAPTURE_ALIGN` 中は下降速度に応じてintensity 0.6、0.7、最大0.8を選び、
+6. `CAPTURE_ALIGN` 中は現在のZ速度を120 msで停止させるための必要力を
+   `F = m(g + u/T)`で計算し、補正したロードセルモデル
+   `(0.5, 0.6, 0.7, 0.8) = (4, 5, 6, 7) mN`から、必要力を満たす最小の
+   intensityを選びます。7 mNを超える場合は0.8で飽和を記録します。
    初回だけ自由落下モデルで音場位置を予測します。送信完了後は自由落下
    予測をやめ、初期位置・速度、最大測定力、作業空間から生成した
    一定減速の `z_ref(t), v_ref(t)` を追従します。XYは初回予測位置に固定します。
@@ -144,7 +147,7 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
    XY速度60 mm/s以下、XY距離15 mm以下、Z誤差10 mm以下です。
 9. `LOCAL_HOLD`で離した位置を3秒間保持した後、既存の速度制限付き
    `RETURN_TO_HOME`へ移り、基準位置をAUTD中心・Z=400 mmへ徐々に戻します。
-   基準位置の移動速度はXY 15 mm/s、Z 10 mm/sです。復帰完了後も
+   基準位置の移動速度はXY 20 mm/s、Z 15 mm/sです。復帰完了後も
    通常PIDでhomeを保持します。
 10. 自動開始した捕捉・保持中にXYカメラの `GRASPED` が再成立した場合は、
    再把持または誤releaseと判断し、intensityを0にして音場を停止します。
@@ -155,13 +158,10 @@ Zカメラは引き続きステレオ3D位置推定に使用しますが、Media
 実行せず、GRASPED/RELEASED判定には影響しません。判定カメラは実験設定の
 `cfg.mediapipe_auto_release_camera` で `xy`, `z`, `both` から選択できます。
 
-現在は制動軌道の効果を分離するため、intensityは従来の速度別段階制御を
-維持しています。計画時に必要力と飽和は計算・記録しますが、力から直接
-intensityを決める制御はまだ使用しません。`FOLLOW_AND_BRAKE`は無効です。
-`CAPTURE_SETTLE`では、通常0.6、強い上向き時0.5、強い再下降時0.7の
-3状態を使用します。上向き制動は`vz > 60 mm/s`で開始して`vz < 20 mm/s`まで、
-下降救済は`vz < -80 mm/s`で開始して`vz > -30 mm/s`まで維持するため、
-単一閾値付近でintensityが高速に往復しません。
+`CAPTURE_SETTLE`でも同じ必要力ベースの段階選択を使います。intensity低下時は
+0.05 mNのヒステリシスを設け、力の境界付近での高速な往復を抑えます。
+上向き制動は安全対策として残し、`vz > 60 mm/s`で0.5にして
+`vz < 20 mm/s`まで維持します。`FOLLOW_AND_BRAKE`は無効です。
 また、非同期MediaPipe結果が80 msより古い場合は自動トリガーを拒否します。
 `r` は従来どおり手動フォールバックとして利用でき、`ENTER`で保持を停止できます。
 `r` で手動開始した保持はMediaPipeの再GRASPEDでは停止しません。

@@ -74,23 +74,30 @@ if __name__ == "__main__":
     cfg.auto_release_brake_exit_vz_mm_s = -30.0
     cfg.auto_release_brake_exit_stable_sec = 0.015
 
-    # Keep the existing velocity-dependent staged intensity while validating
-    # the new braking trajectory. Normal LOCAL_HOLD remains 0.6.
-    cfg.auto_release_slow_down_vz_mm_s = -30.0
-    cfg.auto_release_fast_down_vz_mm_s = -100.0
+    # Convert the measured/predicted Z velocity to the force needed to stop in
+    # 120 ms, then select the smallest load-cell level that can provide it.
+    # This experiment shifts the measured model by +1 mN so intensity 0.6
+    # corresponds to the approximately 5 mN needed for static levitation.
+    cfg.fall_capture_time_sec = 0.120
+    cfg.fall_capture_force_safety_factor = 1.0
+    cfg.fall_capture_max_intensity_ratio = 0.8
+    cfg.fall_capture_intensity_levels = (0.5, 0.6, 0.7, 0.8)
+    cfg.fall_capture_loadcell_model = (
+        (0.5, 4.0),
+        (0.6, 5.0),
+        (0.7, 6.0),
+        (0.8, 7.0),
+    )
+    cfg.auto_release_force_down_hysteresis_mN = 0.05
     cfg.auto_release_upward_vz_mm_s = 20.0
     cfg.auto_release_upward_intensity_ratio = 0.5
-    cfg.auto_release_slow_intensity_ratio = 0.7
     cfg.auto_release_max_intensity_ratio = 0.8
-    # CAPTURE_SETTLE uses a latched three-state intensity controller. Separate
-    # enter/exit thresholds prevent 0.5/0.6/0.7 chatter around one velocity.
+    # CAPTURE_SETTLE uses the same force command. The upward safety latch is
+    # retained so an upward-moving sphere immediately receives intensity 0.5.
     cfg.auto_release_settle_normal_intensity_ratio = 0.6
     cfg.auto_release_settle_upward_intensity_ratio = 0.5
-    cfg.auto_release_settle_downward_intensity_ratio = 0.7
     cfg.auto_release_settle_upward_enter_vz_mm_s = 60.0
     cfg.auto_release_settle_upward_exit_vz_mm_s = 20.0
-    cfg.auto_release_settle_downward_enter_vz_mm_s = -80.0
-    cfg.auto_release_settle_downward_exit_vz_mm_s = -30.0
 
     cfg.auto_release_local_hold_vz_abs_mm_s = 60.0
     cfg.auto_release_local_hold_vxy_max_mm_s = 60.0
@@ -100,8 +107,8 @@ if __name__ == "__main__":
     # Hold at the released position first, then move the PID reference back to
     # AUTD center / z=400 using the existing speed-limited return controller.
     cfg.auto_release_local_hold_before_return_sec = 3.0
-    cfg.return_home_speed_xy_mm_s = 15.0
-    cfg.return_home_speed_z_mm_s = 10.0
+    cfg.return_home_speed_xy_mm_s = 20.0
+    cfg.return_home_speed_z_mm_s = 15.0
     # Loss of stereo tracking still silences the field. The 1 s capture limit
     # only forces CAPTURE_ALIGN -> CAPTURE_SETTLE; it no longer stops output.
     cfg.auto_release_capture_measurement_timeout_sec = 0.100

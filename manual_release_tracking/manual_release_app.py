@@ -37,6 +37,7 @@ from tracking.core.control.recovery import (
     RETURN_TO_HOME,
     RecoveryTelemetry,
     apply_capture_intensity_slew,
+    capture_force_command_for_velocity,
     capture_intensity_from_force,
     fall_detection_reason,
     is_return_home_done,
@@ -60,7 +61,9 @@ from manual_release_tracking.core.mediapipe_release_trigger import (
 from manual_release_tracking.core.auto_release_capture import (
     CAPTURE_ALIGN,
     CAPTURE_SETTLE,
+    SETTLE_INTENSITY_DOWNWARD_RESCUE,
     SETTLE_INTENSITY_NORMAL,
+    SETTLE_INTENSITY_UPWARD_DAMPING,
     AutoReleaseCaptureLogger,
     AutoReleaseDelayLogger,
     AutoReleaseTrajectoryLogger,
@@ -68,7 +71,6 @@ from manual_release_tracking.core.auto_release_capture import (
     StereoMotionEstimator,
     braking_reference_at,
     capture_align_target_xy,
-    capture_intensity_for_vz,
     limit_upward_capture_target_z,
     make_braking_plan,
     predict_capture_position,
@@ -76,7 +78,6 @@ from manual_release_tracking.core.auto_release_capture import (
     trajectory_target_z,
     update_brake_exit_stability,
     update_capture_stability,
-    update_settle_intensity,
 )
 
 
@@ -399,6 +400,78 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 getattr(cfg, "manual_release_pre_hold_sec", 0.3)
             )
 
+            def force_command_for_vz(vz_mm_s, current_intensity=None):
+                return capture_force_command_for_velocity(
+                    cfg,
+                    float(vz_mm_s),
+                    current_intensity=current_intensity,
+                    downward_hysteresis_mN=float(
+                        getattr(
+                            cfg,
+                            "auto_release_force_down_hysteresis_mN",
+                            0.05,
+                        )
+                    ),
+                )
+
+            def settle_force_intensity(
+                vz_mm_s,
+                current_state,
+                current_intensity,
+            ):
+                """Force-based settling with the existing upward safety latch."""
+                vz = float(vz_mm_s)
+                upward_enter = float(
+                    getattr(
+                        cfg,
+                        "auto_release_settle_upward_enter_vz_mm_s",
+                        60.0,
+                    )
+                )
+                upward_exit = float(
+                    getattr(
+                        cfg,
+                        "auto_release_settle_upward_exit_vz_mm_s",
+                        20.0,
+                    )
+                )
+                force_command = force_command_for_vz(
+                    vz,
+                    current_intensity=current_intensity,
+                )
+
+                upward_latched = (
+                    current_state == SETTLE_INTENSITY_UPWARD_DAMPING
+                    and vz >= upward_exit
+                )
+                if vz > upward_enter or upward_latched:
+                    return (
+                        SETTLE_INTENSITY_UPWARD_DAMPING,
+                        float(
+                            getattr(
+                                cfg,
+                                "auto_release_settle_upward_intensity_ratio",
+                                0.5,
+                            )
+                        ),
+                        force_command,
+                    )
+
+                normal_ratio = float(
+                    getattr(
+                        cfg,
+                        "auto_release_settle_normal_intensity_ratio",
+                        cfg.static_intensity_ratio,
+                    )
+                )
+                commanded = float(force_command.commanded_intensity)
+                state = (
+                    SETTLE_INTENSITY_DOWNWARD_RESCUE
+                    if commanded > normal_ratio + 1e-9
+                    else SETTLE_INTENSITY_NORMAL
+                )
+                return state, commanded, force_command
+
             def arm_local_hold(
                 x_mm,
                 y_mm,
@@ -547,44 +620,22 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     y=float(estimate.y_mm),
                     z=float(estimate.z_mm),
                 )
-                current_intensity_ratio = capture_intensity_for_vz(
-                    estimate.vz_mm_s,
-                    normal_ratio=float(cfg.static_intensity_ratio),
-                    slow_ratio=float(
-                        getattr(cfg, "auto_release_slow_intensity_ratio", 0.7)
-                    ),
-                    maximum_ratio=float(
-                        getattr(cfg, "auto_release_max_intensity_ratio", 0.8)
-                    ),
-                    upward_ratio=float(
+                initial_force_command = force_command_for_vz(
+                    prediction.vz_mm_s,
+                )
+                current_intensity_ratio = float(
+                    initial_force_command.commanded_intensity
+                )
+                if prediction.vz_mm_s > float(
+                    getattr(cfg, "auto_release_upward_vz_mm_s", 20.0)
+                ):
+                    current_intensity_ratio = float(
                         getattr(
                             cfg,
                             "auto_release_upward_intensity_ratio",
                             0.5,
                         )
-                    ),
-                    fast_down_threshold_mm_s=float(
-                        getattr(
-                            cfg,
-                            "auto_release_fast_down_vz_mm_s",
-                            -100.0,
-                        )
-                    ),
-                    slow_down_threshold_mm_s=float(
-                        getattr(
-                            cfg,
-                            "auto_release_slow_down_vz_mm_s",
-                            -30.0,
-                        )
-                    ),
-                    upward_threshold_mm_s=float(
-                        getattr(
-                            cfg,
-                            "auto_release_upward_vz_mm_s",
-                            20.0,
-                        )
-                    ),
-                )
+                    )
 
                 controller.reset(last_target)
                 tracking_active = True
@@ -627,7 +678,13 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     target=last_target,
                     intensity=current_intensity_ratio,
                     command_seq=pending_capture_command_seq,
-                    reason="first_explicit_fingertip_separation",
+                    reason=(
+                        "first_explicit_fingertip_separation;"
+                        f"required_force_mN="
+                        f"{initial_force_command.required_force_mN:.3f};"
+                        f"force_saturated="
+                        f"{int(initial_force_command.saturated)}"
+                    ),
                 )
                 print(
                     "[AUTO_RELEASE] RELEASE_CANDIDATE -> CAPTURE_ALIGN "
@@ -700,58 +757,11 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 (
                     capture_settle_intensity_state,
                     current_intensity_ratio,
-                ) = update_settle_intensity(
-                    capture_settle_intensity_state,
+                    settle_force_command,
+                ) = settle_force_intensity(
                     estimate.vz_mm_s,
-                    normal_ratio=float(
-                        getattr(
-                            cfg,
-                            "auto_release_settle_normal_intensity_ratio",
-                            cfg.static_intensity_ratio,
-                        )
-                    ),
-                    upward_ratio=float(
-                        getattr(
-                            cfg,
-                            "auto_release_settle_upward_intensity_ratio",
-                            0.5,
-                        )
-                    ),
-                    downward_ratio=float(
-                        getattr(
-                            cfg,
-                            "auto_release_settle_downward_intensity_ratio",
-                            0.7,
-                        )
-                    ),
-                    upward_enter_vz_mm_s=float(
-                        getattr(
-                            cfg,
-                            "auto_release_settle_upward_enter_vz_mm_s",
-                            60.0,
-                        )
-                    ),
-                    upward_exit_vz_mm_s=float(
-                        getattr(
-                            cfg,
-                            "auto_release_settle_upward_exit_vz_mm_s",
-                            20.0,
-                        )
-                    ),
-                    downward_enter_vz_mm_s=float(
-                        getattr(
-                            cfg,
-                            "auto_release_settle_downward_enter_vz_mm_s",
-                            -80.0,
-                        )
-                    ),
-                    downward_exit_vz_mm_s=float(
-                        getattr(
-                            cfg,
-                            "auto_release_settle_downward_exit_vz_mm_s",
-                            -30.0,
-                        )
-                    ),
+                    capture_settle_intensity_state,
+                    current_intensity_ratio,
                 )
                 set_tracking_target(
                     sender,
@@ -774,6 +784,10 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     reason=(
                         f"{reason};vz={float(estimate.vz_mm_s):.1f};"
                         f"intensity_state={capture_settle_intensity_state};"
+                        f"required_force_mN="
+                        f"{settle_force_command.required_force_mN:.3f};"
+                        f"force_saturated="
+                        f"{int(settle_force_command.saturated)};"
                         f"setpoint=({last_target.x:.2f},"
                         f"{last_target.y:.2f},{last_target.z:.2f})"
                     ),
@@ -1795,46 +1809,21 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     )
                                 ),
                             )
-                            capture_intensity_ratio = capture_intensity_for_vz(
+                            force_command = force_command_for_vz(
                                 motion_estimate.vz_mm_s,
-                                normal_ratio=float(cfg.static_intensity_ratio),
-                                slow_ratio=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_slow_intensity_ratio",
-                                        0.7,
-                                    )
-                                ),
-                                maximum_ratio=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_max_intensity_ratio",
-                                        0.8,
-                                    )
-                                ),
-                                upward_ratio=float(
+                                current_intensity=current_intensity_ratio,
+                            )
+                            capture_intensity_ratio = float(
+                                force_command.commanded_intensity
+                            )
+                            if upward_brake_now:
+                                capture_intensity_ratio = float(
                                     getattr(
                                         cfg,
                                         "auto_release_upward_intensity_ratio",
                                         0.5,
                                     )
-                                ),
-                                fast_down_threshold_mm_s=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_fast_down_vz_mm_s",
-                                        -100.0,
-                                    )
-                                ),
-                                slow_down_threshold_mm_s=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_slow_down_vz_mm_s",
-                                        -30.0,
-                                    )
-                                ),
-                                upward_threshold_mm_s=upward_vz_threshold,
-                            )
+                                )
                             vx_now = float(motion_estimate.vx_mm_s)
                             vy_now = float(motion_estimate.vy_mm_s)
                             vz_now = float(motion_estimate.vz_mm_s)
@@ -1846,13 +1835,12 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                             recovery_telemetry.commanded_intensity = (
                                 capture_intensity_ratio
                             )
-                            if capture_braking_plan is not None:
-                                recovery_telemetry.required_force_mN = (
-                                    capture_braking_plan.required_force_mN
-                                )
-                                recovery_telemetry.capture_force_saturated = (
-                                    capture_braking_plan.force_saturated
-                                )
+                            recovery_telemetry.required_force_mN = (
+                                force_command.required_force_mN
+                            )
+                            recovery_telemetry.capture_force_saturated = (
+                                force_command.saturated
+                            )
                             recovery_telemetry.xy_distance_to_target_mm = float(
                                 np.hypot(
                                     motion_estimate.x_mm - target.x,
@@ -1940,66 +1928,29 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                             previous_settle_intensity_state = (
                                 capture_settle_intensity_state
                             )
+                            previous_settle_intensity_ratio = float(
+                                current_intensity_ratio
+                            )
                             (
                                 capture_settle_intensity_state,
                                 capture_intensity_ratio,
-                            ) = update_settle_intensity(
-                                capture_settle_intensity_state,
+                                settle_force_command,
+                            ) = settle_force_intensity(
                                 vz_now,
-                                normal_ratio=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_settle_normal_intensity_ratio",
-                                        cfg.static_intensity_ratio,
-                                    )
-                                ),
-                                upward_ratio=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_settle_upward_intensity_ratio",
-                                        0.5,
-                                    )
-                                ),
-                                downward_ratio=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_settle_downward_intensity_ratio",
-                                        0.7,
-                                    )
-                                ),
-                                upward_enter_vz_mm_s=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_settle_upward_enter_vz_mm_s",
-                                        60.0,
-                                    )
-                                ),
-                                upward_exit_vz_mm_s=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_settle_upward_exit_vz_mm_s",
-                                        20.0,
-                                    )
-                                ),
-                                downward_enter_vz_mm_s=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_settle_downward_enter_vz_mm_s",
-                                        -80.0,
-                                    )
-                                ),
-                                downward_exit_vz_mm_s=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_settle_downward_exit_vz_mm_s",
-                                        -30.0,
-                                    )
-                                ),
+                                capture_settle_intensity_state,
+                                current_intensity_ratio,
                             )
                             if (
                                 new_settle_measurement
-                                and capture_settle_intensity_state
-                                != previous_settle_intensity_state
+                                and (
+                                    capture_settle_intensity_state
+                                    != previous_settle_intensity_state
+                                    or abs(
+                                        float(capture_intensity_ratio)
+                                        - previous_settle_intensity_ratio
+                                    )
+                                    > 1e-9
+                                )
                             ):
                                 capture_logger.write(
                                     event="capture_settle_intensity_changed",
@@ -2013,7 +1964,14 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     reason=(
                                         f"{previous_settle_intensity_state}->"
                                         f"{capture_settle_intensity_state};"
-                                        f"vz={vz_now:.1f}"
+                                        f"intensity="
+                                        f"{previous_settle_intensity_ratio:.2f}->"
+                                        f"{float(capture_intensity_ratio):.2f};"
+                                        f"vz={vz_now:.1f};"
+                                        f"required_force_mN="
+                                        f"{settle_force_command.required_force_mN:.3f};"
+                                        f"force_saturated="
+                                        f"{int(settle_force_command.saturated)}"
                                     ),
                                 )
                             recovery_telemetry.vz_mm_s = vz_now
@@ -2025,6 +1983,12 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                             )
                             recovery_telemetry.commanded_intensity = (
                                 capture_intensity_ratio
+                            )
+                            recovery_telemetry.required_force_mN = (
+                                settle_force_command.required_force_mN
+                            )
+                            recovery_telemetry.capture_force_saturated = (
+                                settle_force_command.saturated
                             )
 
                             stable_vz_limit = float(

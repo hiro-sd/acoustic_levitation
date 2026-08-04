@@ -128,6 +128,42 @@ def capture_intensity_from_force(
     )
 
 
+def capture_force_command_for_velocity(
+    cfg: AppConfig,
+    predicted_vz_mm_s: float,
+    *,
+    current_intensity: float | None = None,
+    downward_hysteresis_mN: float = 0.0,
+) -> CaptureForceCommand:
+    """Convert downward velocity to force and then to a staged intensity.
+
+    Intensity increases take effect immediately. A decrease crosses the force
+    boundary only after the requested lower level has the configured margin,
+    which avoids rapid switching at a load-cell-model boundary.
+    """
+    required_force = required_capture_force_mN(cfg, predicted_vz_mm_s)
+    requested = capture_intensity_from_force(cfg, required_force)
+    commanded = float(requested.commanded_intensity)
+
+    if (
+        current_intensity is not None
+        and commanded < float(current_intensity)
+    ):
+        lower_level_force = measured_force_for_intensity_mN(cfg, commanded)
+        decrease_boundary = lower_level_force - max(
+            0.0,
+            float(downward_hysteresis_mN),
+        )
+        if required_force > decrease_boundary:
+            commanded = float(current_intensity)
+
+    return CaptureForceCommand(
+        required_force_mN=float(required_force),
+        commanded_intensity=float(commanded),
+        saturated=bool(requested.saturated),
+    )
+
+
 def apply_capture_intensity_slew(
     current: float,
     target: float,
