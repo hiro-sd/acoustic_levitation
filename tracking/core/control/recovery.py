@@ -128,12 +128,46 @@ def capture_intensity_from_force(
     )
 
 
+def capture_intensity_interpolated_from_force(
+    cfg: AppConfig,
+    required_force_mN: float,
+) -> CaptureForceCommand:
+    """Invert the load-cell model with piecewise-linear interpolation."""
+    maximum_intensity = float(cfg.fall_capture_max_intensity_ratio)
+    model = sorted(
+        (
+            (float(intensity), float(force_mn))
+            for intensity, force_mn in cfg.fall_capture_loadcell_model
+            if float(intensity) <= maximum_intensity + 1e-9
+        ),
+        key=lambda point: point[1],
+    )
+    if not model:
+        model = [(maximum_intensity, 0.0)]
+
+    forces = np.asarray([point[1] for point in model], dtype=float)
+    intensities = np.asarray([point[0] for point in model], dtype=float)
+    required = float(required_force_mN)
+    commanded = float(np.interp(required, forces, intensities))
+    saturated = required > float(forces[-1]) + 1e-9
+    return CaptureForceCommand(
+        required_force_mN=required,
+        commanded_intensity=float(
+            np.clip(commanded, intensities[0], maximum_intensity)
+        ),
+        saturated=bool(saturated),
+    )
+
+
 def capture_force_command_for_velocity(
     cfg: AppConfig,
     predicted_vz_mm_s: float,
     *,
     current_intensity: float | None = None,
     downward_hysteresis_mN: float = 0.0,
+    interpolate_intensity: bool = False,
+    minimum_intensity: float | None = None,
+    intensity_deadband: float = 0.0,
 ) -> CaptureForceCommand:
     """Convert downward velocity to force and then to a staged intensity.
 
@@ -142,10 +176,24 @@ def capture_force_command_for_velocity(
     which avoids rapid switching at a load-cell-model boundary.
     """
     required_force = required_capture_force_mN(cfg, predicted_vz_mm_s)
-    requested = capture_intensity_from_force(cfg, required_force)
+    requested = (
+        capture_intensity_interpolated_from_force(cfg, required_force)
+        if interpolate_intensity
+        else capture_intensity_from_force(cfg, required_force)
+    )
     commanded = float(requested.commanded_intensity)
 
-    if (
+    if minimum_intensity is not None:
+        commanded = max(commanded, float(minimum_intensity))
+
+    if interpolate_intensity:
+        if (
+            current_intensity is not None
+            and abs(commanded - float(current_intensity))
+            < max(0.0, float(intensity_deadband))
+        ):
+            commanded = float(current_intensity)
+    elif (
         current_intensity is not None
         and commanded < float(current_intensity)
     ):

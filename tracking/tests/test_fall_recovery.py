@@ -9,6 +9,7 @@ from tracking.core.config import AppConfig
 from tracking.core.control.recovery import (
     apply_capture_intensity_slew,
     capture_force_command_for_velocity,
+    capture_intensity_interpolated_from_force,
     capture_intensity_from_force,
     fall_detection_reason,
     measured_force_for_intensity_mN,
@@ -127,6 +128,101 @@ class FallRecoveryForceTests(unittest.TestCase):
 
         self.assertEqual(near_boundary.commanded_intensity, 0.7)
         self.assertEqual(settled.commanded_intensity, 0.6)
+
+    def test_force_interpolation_returns_continuous_intensity(self):
+        cfg = AppConfig(
+            fall_capture_max_intensity_ratio=0.8,
+            fall_capture_loadcell_model=(
+                (0.5, 4.0),
+                (0.6, 5.0),
+                (0.7, 6.0),
+                (0.8, 7.0),
+            ),
+        )
+
+        command = capture_intensity_interpolated_from_force(cfg, 5.5)
+
+        self.assertAlmostEqual(command.commanded_intensity, 0.65)
+        self.assertFalse(command.saturated)
+
+    def test_interpolated_velocity_command_keeps_static_floor(self):
+        cfg = AppConfig(
+            ball_mass_kg=0.0005,
+            fall_capture_time_sec=0.12,
+            fall_capture_force_safety_factor=1.0,
+            fall_capture_max_intensity_ratio=0.8,
+            fall_capture_loadcell_model=(
+                (0.5, 4.0),
+                (0.6, 5.0),
+                (0.7, 6.0),
+                (0.8, 7.0),
+            ),
+        )
+
+        hold = capture_force_command_for_velocity(
+            cfg,
+            0.0,
+            interpolate_intensity=True,
+            minimum_intensity=0.6,
+        )
+        falling = capture_force_command_for_velocity(
+            cfg,
+            -150.0,
+            interpolate_intensity=True,
+            minimum_intensity=0.6,
+        )
+
+        self.assertEqual(hold.commanded_intensity, 0.6)
+        self.assertAlmostEqual(falling.commanded_intensity, 0.6528325)
+
+    def test_interpolated_command_saturates_at_configured_maximum(self):
+        cfg = AppConfig(
+            ball_mass_kg=0.0005,
+            fall_capture_time_sec=0.12,
+            fall_capture_force_safety_factor=1.0,
+            fall_capture_max_intensity_ratio=0.8,
+            fall_capture_loadcell_model=(
+                (0.5, 4.0),
+                (0.6, 5.0),
+                (0.7, 6.0),
+                (0.8, 7.0),
+            ),
+        )
+
+        command = capture_force_command_for_velocity(
+            cfg,
+            -600.0,
+            interpolate_intensity=True,
+            minimum_intensity=0.6,
+        )
+
+        self.assertEqual(command.commanded_intensity, 0.8)
+        self.assertTrue(command.saturated)
+
+    def test_interpolated_command_ignores_sub_deadband_change(self):
+        cfg = AppConfig(
+            ball_mass_kg=0.0005,
+            fall_capture_time_sec=0.12,
+            fall_capture_force_safety_factor=1.0,
+            fall_capture_max_intensity_ratio=0.8,
+            fall_capture_loadcell_model=(
+                (0.5, 4.0),
+                (0.6, 5.0),
+                (0.7, 6.0),
+                (0.8, 7.0),
+            ),
+        )
+
+        command = capture_force_command_for_velocity(
+            cfg,
+            -150.0,
+            current_intensity=0.65,
+            interpolate_intensity=True,
+            minimum_intensity=0.6,
+            intensity_deadband=0.005,
+        )
+
+        self.assertEqual(command.commanded_intensity, 0.65)
 
     def test_intensity_slew_rises_immediately_and_falls_slowly(self):
         cfg = AppConfig(fall_intensity_down_slew_per_sec=0.4)

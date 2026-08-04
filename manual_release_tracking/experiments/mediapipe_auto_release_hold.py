@@ -88,7 +88,8 @@ if __name__ == "__main__":
         (0.7, 6.0),
         (0.8, 7.0),
     )
-    cfg.auto_release_force_down_hysteresis_mN = 0.05
+    cfg.auto_release_interpolate_intensity = True
+    cfg.auto_release_intensity_deadband_ratio = 0.005
     cfg.auto_release_upward_vz_mm_s = 20.0
     cfg.auto_release_upward_intensity_ratio = 0.5
     cfg.auto_release_max_intensity_ratio = 0.8

@@ -412,6 +412,21 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                             0.05,
                         )
                     ),
+                    interpolate_intensity=bool(
+                        getattr(
+                            cfg,
+                            "auto_release_interpolate_intensity",
+                            False,
+                        )
+                    ),
+                    minimum_intensity=float(cfg.static_intensity_ratio),
+                    intensity_deadband=float(
+                        getattr(
+                            cfg,
+                            "auto_release_intensity_deadband_ratio",
+                            cfg.intensity_update_eps,
+                        )
+                    ),
                 )
 
             def settle_force_intensity(
