@@ -71,6 +71,7 @@ from manual_release_tracking.core.auto_release_capture import (
     RecentStereoHistory,
     StereoMotionEstimator,
     braking_reference_at,
+    clamp_target_xy_to_ball,
     limit_upward_capture_target_z,
     make_braking_plan,
     predict_capture_position,
@@ -78,6 +79,8 @@ from manual_release_tracking.core.auto_release_capture import (
     trajectory_target_z,
     update_brake_exit_stability,
     update_capture_stability,
+    update_xy_handoff_stability,
+    velocity_damping_target_xy,
     xy_braking_reference_at,
 )
 
@@ -401,6 +404,8 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
             capture_braking_plan = None
             capture_xy_pid_active = False
             capture_xy_pid_setpoint = None
+            capture_xy_handoff_stable_since = None
+            capture_xy_handoff_last_measurement_time = None
             capture_last_trajectory_log_measurement_time = None
             pending_capture_command_seq = None
             pending_capture_sent_logged = False
@@ -701,6 +706,8 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal capture_braking_plan
                 nonlocal capture_xy_pid_active
                 nonlocal capture_xy_pid_setpoint
+                nonlocal capture_xy_handoff_stable_since
+                nonlocal capture_xy_handoff_last_measurement_time
                 nonlocal capture_last_trajectory_log_measurement_time
                 nonlocal pending_capture_command_seq
                 nonlocal pending_capture_sent_logged
@@ -799,6 +806,8 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 capture_braking_plan = None
                 capture_xy_pid_active = False
                 capture_xy_pid_setpoint = None
+                capture_xy_handoff_stable_since = None
+                capture_xy_handoff_last_measurement_time = None
                 capture_last_trajectory_log_measurement_time = None
                 pending_capture_sent_logged = False
                 capture_upward_brake_active = False
@@ -867,6 +876,8 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal capture_braking_plan
                 nonlocal capture_xy_pid_active
                 nonlocal capture_xy_pid_setpoint
+                nonlocal capture_xy_handoff_stable_since
+                nonlocal capture_xy_handoff_last_measurement_time
                 nonlocal capture_last_trajectory_log_measurement_time
                 nonlocal current_intensity_ratio
                 nonlocal return_setpoint
@@ -906,6 +917,8 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 capture_braking_plan = None
                 capture_xy_pid_active = False
                 capture_xy_pid_setpoint = None
+                capture_xy_handoff_stable_since = None
+                capture_xy_handoff_last_measurement_time = None
                 capture_last_trajectory_log_measurement_time = None
                 mode_transition_reason = reason
                 (
@@ -980,6 +993,8 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal capture_braking_plan
                 nonlocal capture_xy_pid_active
                 nonlocal capture_xy_pid_setpoint
+                nonlocal capture_xy_handoff_stable_since
+                nonlocal capture_xy_handoff_last_measurement_time
                 nonlocal capture_last_trajectory_log_measurement_time
 
                 tracking_active = False
@@ -1006,6 +1021,8 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 capture_braking_plan = None
                 capture_xy_pid_active = False
                 capture_xy_pid_setpoint = None
+                capture_xy_handoff_stable_since = None
+                capture_xy_handoff_last_measurement_time = None
                 capture_last_trajectory_log_measurement_time = None
                 controller.reset(last_target)
 
@@ -1674,9 +1691,13 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                             - capture_braking_plan.start_time_sec
                             >= xy_braking_duration_sec
                         )
-                        if brake_exit_ready and xy_braking_complete:
+                        if (
+                            brake_exit_ready
+                            and xy_braking_complete
+                            and capture_xy_pid_active
+                        ):
                             enter_capture_settle(
-                                "measured_vz_near_zero_and_xy_braking_complete",
+                                "measured_vz_near_zero_and_xy_handoff_stable",
                                 motion_estimate,
                                 event_time_sec=now_capture_guard,
                             )
@@ -1923,13 +1944,11 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 f"{home.z:.1f}) mm"
                             )
 
-                        # Once the 120 ms XY braking reference ends, do not
-                        # leave XY frozen while Z is still braking. Use the
-                        # planned XY stop point as a fixed setpoint and hand XY
-                        # over to the normal PID controller. If Z was already
-                        # stable, the guard above has moved to CAPTURE_SETTLE
-                        # instead, so this handoff is only used while ALIGN
-                        # continues for Z.
+                        # After the nominal XY braking trajectory, keep a
+                        # velocity-damping target until the measured lateral
+                        # motion is actually stable. Time alone is not enough:
+                        # the recent experiments showed that immediate PID
+                        # handoff can pull the field outside the capture range.
                         if (
                             control_mode == CAPTURE_ALIGN
                             and not capture_xy_pid_active
@@ -1951,34 +1970,97 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 ),
                             )
                             if xy_handoff_reference.complete:
-                                capture_xy_pid_active = True
-                                capture_xy_pid_setpoint = HomePosition(
-                                    x=float(xy_handoff_reference.x_mm),
-                                    y=float(xy_handoff_reference.y_mm),
-                                    z=float(return_setpoint.z),
-                                )
-                                controller.reset(
-                                    Target3D(
-                                        capture_xy_pid_setpoint.x,
-                                        capture_xy_pid_setpoint.y,
-                                        last_target.z,
+                                if (
+                                    capture_xy_handoff_last_measurement_time
+                                    != motion_estimate.measurement_time_sec
+                                ):
+                                    vxy_for_handoff = float(
+                                        np.hypot(
+                                            motion_estimate.vx_mm_s,
+                                            motion_estimate.vy_mm_s,
+                                        )
                                     )
-                                )
-                                capture_logger.write(
-                                    event="capture_xy_braking_to_pid",
-                                    release_timestamp_ms=(
-                                        auto_release_timestamp_ms
-                                    ),
-                                    estimate=motion_estimate,
-                                    target=last_target,
-                                    intensity=current_intensity_ratio,
-                                    reason=(
-                                        "xy_braking_complete_z_align_continues;"
-                                        f"setpoint=("
-                                        f"{capture_xy_pid_setpoint.x:.2f},"
-                                        f"{capture_xy_pid_setpoint.y:.2f})"
-                                    ),
-                                )
+                                    xy_distance_for_handoff = float(
+                                        np.hypot(
+                                            motion_estimate.x_mm
+                                            - last_target.x,
+                                            motion_estimate.y_mm
+                                            - last_target.y,
+                                        )
+                                    )
+                                    (
+                                        capture_xy_handoff_stable_since,
+                                        xy_handoff_ready,
+                                    ) = update_xy_handoff_stability(
+                                        now_sec=(
+                                            motion_estimate.measurement_time_sec
+                                        ),
+                                        vxy_mm_s=vxy_for_handoff,
+                                        xy_distance_mm=(
+                                            xy_distance_for_handoff
+                                        ),
+                                        stable_since_sec=(
+                                            capture_xy_handoff_stable_since
+                                        ),
+                                        maximum_vxy_mm_s=float(
+                                            getattr(
+                                                cfg,
+                                                "auto_release_xy_handoff_vxy_max_mm_s",
+                                                60.0,
+                                            )
+                                        ),
+                                        maximum_xy_distance_mm=float(
+                                            getattr(
+                                                cfg,
+                                                "auto_release_xy_handoff_distance_max_mm",
+                                                10.0,
+                                            )
+                                        ),
+                                        required_duration_sec=float(
+                                            getattr(
+                                                cfg,
+                                                "auto_release_xy_handoff_stable_sec",
+                                                0.020,
+                                            )
+                                        ),
+                                    )
+                                    capture_xy_handoff_last_measurement_time = (
+                                        motion_estimate.measurement_time_sec
+                                    )
+                                    if xy_handoff_ready:
+                                        capture_xy_pid_active = True
+                                        capture_xy_pid_setpoint = HomePosition(
+                                            x=float(motion_estimate.x_mm),
+                                            y=float(motion_estimate.y_mm),
+                                            z=float(return_setpoint.z),
+                                        )
+                                        controller.reset(
+                                            Target3D(
+                                                capture_xy_pid_setpoint.x,
+                                                capture_xy_pid_setpoint.y,
+                                                last_target.z,
+                                            )
+                                        )
+                                        capture_logger.write(
+                                            event="capture_xy_damping_to_pid",
+                                            release_timestamp_ms=(
+                                                auto_release_timestamp_ms
+                                            ),
+                                            estimate=motion_estimate,
+                                            target=last_target,
+                                            intensity=(
+                                                current_intensity_ratio
+                                            ),
+                                            reason=(
+                                                "xy_motion_stable;"
+                                                f"vxy={vxy_for_handoff:.2f};"
+                                                "xy_distance="
+                                                f"{xy_distance_for_handoff:.2f};"
+                                                f"setpoint=("
+                                                f"{capture_xy_pid_setpoint.x:.2f},"
+                                                f"{capture_xy_pid_setpoint.y:.2f})"
+                                            ),
+                                        )
 
                         # 1. RETURN_TO_HOME中は一時基準位置をゆっくりhomeへ戻す。
                         #    LOCAL_HOLD中はreturn_setpointを一時基準としてその場保持する。
@@ -2178,16 +2260,39 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 last_target.z,
                                 upward_brake_active=upward_brake_now,
                             )
-                            capture_target_x = float(
-                                target.x
-                                if capture_xy_pid_active
-                                else prediction.x_mm
-                            )
-                            capture_target_y = float(
-                                target.y
-                                if capture_xy_pid_active
-                                else prediction.y_mm
-                            )
+                            if capture_xy_pid_active:
+                                capture_target_x = float(target.x)
+                                capture_target_y = float(target.y)
+                            elif (
+                                xy_trajectory_reference is not None
+                                and xy_trajectory_reference.complete
+                            ):
+                                (
+                                    capture_target_x,
+                                    capture_target_y,
+                                ) = velocity_damping_target_xy(
+                                    ball_x_mm=motion_estimate.x_mm,
+                                    ball_y_mm=motion_estimate.y_mm,
+                                    vx_mm_s=motion_estimate.vx_mm_s,
+                                    vy_mm_s=motion_estimate.vy_mm_s,
+                                    damping_horizon_sec=float(
+                                        getattr(
+                                            cfg,
+                                            "auto_release_xy_damping_horizon_sec",
+                                            0.050,
+                                        )
+                                    ),
+                                    maximum_offset_mm=float(
+                                        getattr(
+                                            cfg,
+                                            "auto_release_xy_damping_max_offset_mm",
+                                            12.0,
+                                        )
+                                    ),
+                                )
+                            else:
+                                capture_target_x = float(prediction.x_mm)
+                                capture_target_y = float(prediction.y_mm)
                             target = Target3D(
                                 x=capture_target_x,
                                 y=capture_target_y,
@@ -2198,6 +2303,24 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                         cfg.z_max,
                                     )
                                 ),
+                            )
+                            xy_target_limit = clamp_target_xy_to_ball(
+                                target_x_mm=target.x,
+                                target_y_mm=target.y,
+                                ball_x_mm=motion_estimate.x_mm,
+                                ball_y_mm=motion_estimate.y_mm,
+                                maximum_distance_mm=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_xy_capture_radius_mm",
+                                        15.0,
+                                    )
+                                ),
+                            )
+                            target = Target3D(
+                                x=xy_target_limit.x_mm,
+                                y=xy_target_limit.y_mm,
+                                z=target.z,
                             )
                             force_command = force_command_for_vz(
                                 motion_estimate.vz_mm_s,
@@ -2732,6 +2855,37 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     target = enter_local_hold("captured_vz_stable")
                             else:
                                 local_hold_stable_since = None
+
+                        # During automatic capture, never command an XY center
+                        # outside the measured acoustic influence range. This
+                        # applies both to the damping phase and to SETTLE PID,
+                        # whose derivative term can otherwise create a large
+                        # target offset while lateral speed remains high.
+                        if (
+                            control_mode in [CAPTURE_ALIGN, CAPTURE_SETTLE]
+                            and motion_estimate is not None
+                        ):
+                            xy_target_limit = clamp_target_xy_to_ball(
+                                target_x_mm=target.x,
+                                target_y_mm=target.y,
+                                ball_x_mm=motion_estimate.x_mm,
+                                ball_y_mm=motion_estimate.y_mm,
+                                maximum_distance_mm=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_xy_capture_radius_mm",
+                                        15.0,
+                                    )
+                                ),
+                            )
+                            target = Target3D(
+                                x=xy_target_limit.x_mm,
+                                y=xy_target_limit.y_mm,
+                                z=target.z,
+                            )
+                            recovery_telemetry.xy_distance_to_target_mm = (
+                                xy_target_limit.distance_mm
+                            )
 
                         # 5. LOCAL_HOLD中は一時基準でその場保持する。
                         #    自動releaseでは設定時間後にRETURN_TO_HOMEへ移る。

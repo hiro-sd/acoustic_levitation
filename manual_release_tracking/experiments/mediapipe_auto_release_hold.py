@@ -87,6 +87,17 @@ if __name__ == "__main__":
     cfg.auto_release_nominal_stop_time_sec = 0.120
     cfg.auto_release_min_stop_time_sec = 0.050
     cfg.auto_release_xy_stop_time_sec = 0.120
+    # Do not hand XY to normal PID merely because 120 ms elapsed. After the
+    # planned trajectory, keep the field slightly behind lateral motion until
+    # both speed and sphere-to-field distance remain stable for 20 ms.
+    cfg.auto_release_xy_damping_horizon_sec = 0.050
+    cfg.auto_release_xy_damping_max_offset_mm = 12.0
+    cfg.auto_release_xy_handoff_vxy_max_mm_s = 60.0
+    cfg.auto_release_xy_handoff_distance_max_mm = 10.0
+    cfg.auto_release_xy_handoff_stable_sec = 0.020
+    # The measured acoustic influence range is about 20 mm. Use a conservative
+    # 15 mm command limit during both ALIGN and SETTLE.
+    cfg.auto_release_xy_capture_radius_mm = 15.0
     cfg.auto_release_z_workspace_margin_mm = 10.0
     cfg.auto_release_trajectory_kp_z = 0.30
     cfg.auto_release_trajectory_kd_z = 0.01

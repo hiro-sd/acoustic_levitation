@@ -23,6 +23,7 @@ from manual_release_tracking.core.auto_release_capture import (
     capture_align_target_xy,
     capture_intensity_for_vz,
     braking_reference_at,
+    clamp_target_xy_to_ball,
     limit_upward_capture_target_z,
     make_braking_plan,
     predict_capture_position,
@@ -31,6 +32,8 @@ from manual_release_tracking.core.auto_release_capture import (
     update_brake_exit_stability,
     update_capture_stability,
     update_settle_intensity,
+    update_xy_handoff_stability,
+    velocity_damping_target_xy,
     xy_braking_reference_at,
 )
 from tracking.core.models import Target3D
@@ -419,6 +422,69 @@ class CapturePredictionTest(unittest.TestCase):
         self.assertEqual(stopped.vx_mm_s, 0.0)
         self.assertEqual(stopped.vy_mm_s, 0.0)
         self.assertTrue(stopped.complete)
+
+    def test_velocity_damping_target_is_behind_motion_and_bounded(self):
+        target_x, target_y = velocity_damping_target_xy(
+            ball_x_mm=100.0,
+            ball_y_mm=200.0,
+            vx_mm_s=300.0,
+            vy_mm_s=400.0,
+            damping_horizon_sec=0.050,
+            maximum_offset_mm=12.0,
+        )
+
+        self.assertAlmostEqual(target_x, 92.8)
+        self.assertAlmostEqual(target_y, 190.4)
+
+    def test_xy_target_is_clamped_inside_capture_radius(self):
+        limited = clamp_target_xy_to_ball(
+            target_x_mm=130.0,
+            target_y_mm=240.0,
+            ball_x_mm=100.0,
+            ball_y_mm=200.0,
+            maximum_distance_mm=15.0,
+        )
+
+        self.assertTrue(limited.limited)
+        self.assertAlmostEqual(limited.x_mm, 109.0)
+        self.assertAlmostEqual(limited.y_mm, 212.0)
+        self.assertAlmostEqual(limited.distance_mm, 15.0)
+
+    def test_xy_handoff_requires_sustained_speed_and_distance(self):
+        since, ready = update_xy_handoff_stability(
+            now_sec=1.0,
+            vxy_mm_s=50.0,
+            xy_distance_mm=8.0,
+            stable_since_sec=None,
+            maximum_vxy_mm_s=60.0,
+            maximum_xy_distance_mm=10.0,
+            required_duration_sec=0.020,
+        )
+        self.assertEqual(since, 1.0)
+        self.assertFalse(ready)
+
+        since, ready = update_xy_handoff_stability(
+            now_sec=1.021,
+            vxy_mm_s=55.0,
+            xy_distance_mm=9.0,
+            stable_since_sec=since,
+            maximum_vxy_mm_s=60.0,
+            maximum_xy_distance_mm=10.0,
+            required_duration_sec=0.020,
+        )
+        self.assertTrue(ready)
+
+        since, ready = update_xy_handoff_stability(
+            now_sec=1.030,
+            vxy_mm_s=61.0,
+            xy_distance_mm=9.0,
+            stable_since_sec=since,
+            maximum_vxy_mm_s=60.0,
+            maximum_xy_distance_mm=10.0,
+            required_duration_sec=0.020,
+        )
+        self.assertIsNone(since)
+        self.assertFalse(ready)
 
     def test_local_hold_requires_confirmed_stable_velocity_duration(self):
         since, ready = update_capture_stability(

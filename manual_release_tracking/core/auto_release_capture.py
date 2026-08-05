@@ -86,6 +86,14 @@ class XYBrakingReference:
     complete: bool
 
 
+@dataclass(frozen=True)
+class XYTargetLimit:
+    x_mm: float
+    y_mm: float
+    distance_mm: float
+    limited: bool
+
+
 class StereoMotionEstimator:
     """Filtered position and multi-frame velocity estimator run before control.
 
@@ -596,6 +604,88 @@ def xy_braking_reference_at(
         vy_mm_s=float(vy_ref),
         complete=bool(complete),
     )
+
+
+def velocity_damping_target_xy(
+    *,
+    ball_x_mm: float,
+    ball_y_mm: float,
+    vx_mm_s: float,
+    vy_mm_s: float,
+    damping_horizon_sec: float,
+    maximum_offset_mm: float,
+) -> tuple[float, float]:
+    """Place the field slightly behind lateral motion to generate restoring force."""
+    vx = float(vx_mm_s)
+    vy = float(vy_mm_s)
+    speed = float(np.hypot(vx, vy))
+    if speed <= 1e-9:
+        return float(ball_x_mm), float(ball_y_mm)
+
+    offset = min(
+        max(0.0, float(maximum_offset_mm)),
+        speed * max(0.0, float(damping_horizon_sec)),
+    )
+    return (
+        float(ball_x_mm) - vx / speed * offset,
+        float(ball_y_mm) - vy / speed * offset,
+    )
+
+
+def clamp_target_xy_to_ball(
+    *,
+    target_x_mm: float,
+    target_y_mm: float,
+    ball_x_mm: float,
+    ball_y_mm: float,
+    maximum_distance_mm: float,
+) -> XYTargetLimit:
+    """Keep the commanded XY center inside the measured acoustic capture range."""
+    dx = float(target_x_mm) - float(ball_x_mm)
+    dy = float(target_y_mm) - float(ball_y_mm)
+    distance = float(np.hypot(dx, dy))
+    maximum_distance = max(0.0, float(maximum_distance_mm))
+    if distance <= maximum_distance or distance <= 1e-9:
+        return XYTargetLimit(
+            x_mm=float(target_x_mm),
+            y_mm=float(target_y_mm),
+            distance_mm=distance,
+            limited=False,
+        )
+
+    scale = maximum_distance / distance
+    return XYTargetLimit(
+        x_mm=float(ball_x_mm) + dx * scale,
+        y_mm=float(ball_y_mm) + dy * scale,
+        distance_mm=maximum_distance,
+        limited=True,
+    )
+
+
+def update_xy_handoff_stability(
+    *,
+    now_sec: float,
+    vxy_mm_s: float,
+    xy_distance_mm: float,
+    stable_since_sec: float | None,
+    maximum_vxy_mm_s: float,
+    maximum_xy_distance_mm: float,
+    required_duration_sec: float,
+) -> tuple[float | None, bool]:
+    """Require a short stable interval before handing XY to normal PID."""
+    stable = (
+        abs(float(vxy_mm_s)) <= float(maximum_vxy_mm_s)
+        and abs(float(xy_distance_mm)) <= float(maximum_xy_distance_mm)
+    )
+    if not stable:
+        return None, False
+    if stable_since_sec is None:
+        return float(now_sec), False
+    ready = (
+        float(now_sec) - float(stable_since_sec)
+        >= max(0.0, float(required_duration_sec))
+    )
+    return float(stable_since_sec), bool(ready)
 
 
 def trajectory_target_z(
