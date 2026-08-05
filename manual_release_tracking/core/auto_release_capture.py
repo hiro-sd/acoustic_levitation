@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import os
 import time
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -24,6 +25,9 @@ class MotionEstimate3D:
     vx_mm_s: float
     vy_mm_s: float
     vz_mm_s: float
+    sample_count: int = 1
+    history_span_sec: float = 0.0
+    velocity_ready: bool = True
 
 
 @dataclass(frozen=True)
@@ -75,7 +79,14 @@ class XYBrakingReference:
 
 
 class StereoMotionEstimator:
-    """Lightweight filtered position/velocity estimator that runs before control."""
+    """Filtered position and multi-frame velocity estimator run before control.
+
+    Position keeps the existing lightweight exponential filter. Velocity is
+    obtained from a least-squares line fitted to a short history of filtered
+    XYZ positions, rather than from only the newest frame interval. Callers may
+    keep one estimator running continuously or reset a dedicated estimator at
+    release so that its history contains only post-release measurements.
+    """
 
     def __init__(
         self,
@@ -83,6 +94,10 @@ class StereoMotionEstimator:
         position_current_weight: float = 0.55,
         velocity_current_weight: float = 0.50,
         max_update_gap_sec: float = 0.10,
+        velocity_window_sec: float = 0.050,
+        minimum_velocity_samples: int = 5,
+        minimum_velocity_span_sec: float = 0.020,
+        known_z_acceleration_mm_s2: float = 0.0,
     ):
         self.position_current_weight = float(
             np.clip(position_current_weight, 0.0, 1.0)
@@ -91,7 +106,18 @@ class StereoMotionEstimator:
             np.clip(velocity_current_weight, 0.0, 1.0)
         )
         self.max_update_gap_sec = float(max_update_gap_sec)
+        self.velocity_window_sec = max(1e-3, float(velocity_window_sec))
+        self.minimum_velocity_samples = max(2, int(minimum_velocity_samples))
+        self.minimum_velocity_span_sec = max(
+            0.0,
+            float(minimum_velocity_span_sec),
+        )
+        self.known_z_acceleration_mm_s2 = float(
+            known_z_acceleration_mm_s2
+        )
         self._estimate: MotionEstimate3D | None = None
+        self._history: deque[tuple[float, np.ndarray]] = deque()
+        self._last_filtered_position: np.ndarray | None = None
 
     @property
     def latest(self) -> MotionEstimate3D | None:
@@ -99,6 +125,81 @@ class StereoMotionEstimator:
 
     def reset(self):
         self._estimate = None
+        self._history.clear()
+        self._last_filtered_position = None
+
+    def _append_history(self, timestamp: float, position: np.ndarray):
+        self._history.append((float(timestamp), position.copy()))
+        oldest_allowed = float(timestamp) - self.velocity_window_sec
+        while (
+            len(self._history) > 1
+            and self._history[0][0] < oldest_allowed
+        ):
+            self._history.popleft()
+
+    def _motion_from_history(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, int, float, bool]:
+        sample_count = len(self._history)
+        if sample_count == 0:
+            return (
+                np.zeros(3, dtype=float),
+                np.zeros(3, dtype=float),
+                0,
+                0.0,
+                False,
+            )
+
+        times = np.asarray([item[0] for item in self._history], dtype=float)
+        positions = np.asarray(
+            [item[1] for item in self._history],
+            dtype=float,
+        )
+        span_sec = float(times[-1] - times[0])
+        ready = (
+            sample_count >= self.minimum_velocity_samples
+            and span_sec >= self.minimum_velocity_span_sec
+        )
+        if not ready:
+            return (
+                positions[-1].copy(),
+                np.zeros(3, dtype=float),
+                sample_count,
+                span_sec,
+                False,
+            )
+
+        # Fit position and velocity at the newest measurement time. During the
+        # post-release observation window Z is in free flight, so remove the
+        # known 0.5*a*t^2 term before fitting. This avoids returning the average
+        # velocity near the middle of the window when the sphere accelerates.
+        relative_times = times - times[-1]
+        known_acceleration = np.asarray(
+            [0.0, 0.0, self.known_z_acceleration_mm_s2],
+            dtype=float,
+        )
+        corrected_positions = positions - (
+            0.5
+            * relative_times[:, np.newaxis] ** 2
+            * known_acceleration[np.newaxis, :]
+        )
+        design = np.column_stack(
+            [np.ones_like(relative_times), relative_times]
+        )
+        coefficients, *_ = np.linalg.lstsq(
+            design,
+            corrected_positions,
+            rcond=None,
+        )
+        fitted_latest_position = coefficients[0]
+        velocity_at_latest = coefficients[1]
+        return (
+            fitted_latest_position,
+            velocity_at_latest,
+            sample_count,
+            span_sec,
+            True,
+        )
 
     def update(
         self,
@@ -117,6 +218,8 @@ class StereoMotionEstimator:
         timestamp = float(measurement_time_sec)
         previous = self._estimate
         if previous is None:
+            self._append_history(timestamp, values)
+            self._last_filtered_position = values.copy()
             self._estimate = MotionEstimate3D(
                 timestamp,
                 float(values[0]),
@@ -125,6 +228,9 @@ class StereoMotionEstimator:
                 0.0,
                 0.0,
                 0.0,
+                sample_count=1,
+                history_span_sec=0.0,
+                velocity_ready=False,
             )
             return self._estimate
 
@@ -133,6 +239,9 @@ class StereoMotionEstimator:
             return previous
 
         if dt > self.max_update_gap_sec:
+            self._history.clear()
+            self._append_history(timestamp, values)
+            self._last_filtered_position = values.copy()
             self._estimate = MotionEstimate3D(
                 timestamp,
                 float(values[0]),
@@ -141,37 +250,58 @@ class StereoMotionEstimator:
                 0.0,
                 0.0,
                 0.0,
+                sample_count=1,
+                history_span_sec=0.0,
+                velocity_ready=False,
             )
             return self._estimate
 
-        previous_position = np.asarray(
-            [previous.x_mm, previous.y_mm, previous.z_mm],
-            dtype=float,
+        previous_position = (
+            np.asarray(
+                [previous.x_mm, previous.y_mm, previous.z_mm],
+                dtype=float,
+            )
+            if self._last_filtered_position is None
+            else self._last_filtered_position
         )
         position_weight = self.position_current_weight
         filtered_position = (
             position_weight * values
             + (1.0 - position_weight) * previous_position
         )
-        raw_velocity = (filtered_position - previous_position) / max(1e-3, dt)
+        self._last_filtered_position = filtered_position.copy()
+        self._append_history(timestamp, filtered_position)
+        (
+            fitted_position,
+            history_velocity,
+            sample_count,
+            history_span_sec,
+            velocity_ready,
+        ) = self._motion_from_history()
         previous_velocity = np.asarray(
             [previous.vx_mm_s, previous.vy_mm_s, previous.vz_mm_s],
             dtype=float,
         )
         velocity_weight = self.velocity_current_weight
-        filtered_velocity = (
-            velocity_weight * raw_velocity
-            + (1.0 - velocity_weight) * previous_velocity
-        )
+        if velocity_ready:
+            filtered_velocity = (
+                velocity_weight * history_velocity
+                + (1.0 - velocity_weight) * previous_velocity
+            )
+        else:
+            filtered_velocity = np.zeros(3, dtype=float)
 
         self._estimate = MotionEstimate3D(
             timestamp,
-            float(filtered_position[0]),
-            float(filtered_position[1]),
-            float(filtered_position[2]),
+            float(fitted_position[0]),
+            float(fitted_position[1]),
+            float(fitted_position[2]),
             float(filtered_velocity[0]),
             float(filtered_velocity[1]),
             float(filtered_velocity[2]),
+            sample_count=sample_count,
+            history_span_sec=history_span_sec,
+            velocity_ready=velocity_ready,
         )
         return self._estimate
 

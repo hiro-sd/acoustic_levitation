@@ -36,16 +36,103 @@ from tracking.core.models import Target3D
 
 
 class StereoMotionEstimatorTest(unittest.TestCase):
-    def test_estimates_filtered_downward_velocity_before_control(self):
+    def test_estimates_xyz_velocity_from_multiple_frames_before_control(self):
         estimator = StereoMotionEstimator(
             position_current_weight=1.0,
             velocity_current_weight=1.0,
+            velocity_window_sec=0.050,
+            minimum_velocity_samples=5,
+            minimum_velocity_span_sec=0.020,
         )
-        first = estimator.update(1.00, 10.0, 20.0, 400.0)
-        second = estimator.update(1.01, 10.0, 20.0, 399.0)
+        estimates = [
+            estimator.update(
+                1.00 + index * 0.01,
+                10.0 + 100.0 * index * 0.01,
+                20.0 - 50.0 * index * 0.01,
+                400.0 - 200.0 * index * 0.01,
+            )
+            for index in range(5)
+        ]
 
-        self.assertEqual(first.vz_mm_s, 0.0)
-        self.assertAlmostEqual(second.vz_mm_s, -100.0)
+        self.assertFalse(estimates[3].velocity_ready)
+        self.assertTrue(estimates[4].velocity_ready)
+        self.assertEqual(estimates[4].sample_count, 5)
+        self.assertAlmostEqual(estimates[4].history_span_sec, 0.04)
+        self.assertAlmostEqual(estimates[4].vx_mm_s, 100.0)
+        self.assertAlmostEqual(estimates[4].vy_mm_s, -50.0)
+        self.assertAlmostEqual(estimates[4].vz_mm_s, -200.0)
+
+    def test_single_interval_jump_does_not_become_ready_velocity(self):
+        estimator = StereoMotionEstimator(
+            position_current_weight=1.0,
+            velocity_current_weight=1.0,
+            minimum_velocity_samples=5,
+            minimum_velocity_span_sec=0.020,
+        )
+        estimator.update(1.00, 10.0, 20.0, 400.0)
+        second = estimator.update(1.01, 30.0, 40.0, 380.0)
+
+        self.assertFalse(second.velocity_ready)
+        self.assertEqual(second.vx_mm_s, 0.0)
+        self.assertEqual(second.vy_mm_s, 0.0)
+        self.assertEqual(second.vz_mm_s, 0.0)
+
+    def test_noisy_latest_interval_does_not_reverse_window_direction(self):
+        estimator = StereoMotionEstimator(
+            position_current_weight=1.0,
+            velocity_current_weight=1.0,
+            velocity_window_sec=0.050,
+            minimum_velocity_samples=5,
+            minimum_velocity_span_sec=0.020,
+        )
+        # The last interval moves backward because of measurement noise, while
+        # the multi-frame trend is still clearly positive in X and Z.
+        x_values = (0.0, 1.0, 2.0, 3.0, 2.5)
+        z_values = (400.0, 401.0, 402.0, 403.0, 402.5)
+        latest = None
+        for index, (x_mm, z_mm) in enumerate(zip(x_values, z_values)):
+            latest = estimator.update(
+                1.00 + index * 0.01,
+                x_mm,
+                20.0,
+                z_mm,
+            )
+
+        self.assertTrue(latest.velocity_ready)
+        self.assertGreater(latest.vx_mm_s, 0.0)
+        self.assertGreater(latest.vz_mm_s, 0.0)
+
+    def test_post_release_fit_returns_latest_free_fall_velocity(self):
+        gravity = 9800.0
+        estimator = StereoMotionEstimator(
+            position_current_weight=1.0,
+            velocity_current_weight=1.0,
+            velocity_window_sec=0.060,
+            minimum_velocity_samples=5,
+            minimum_velocity_span_sec=0.020,
+            known_z_acceleration_mm_s2=-gravity,
+        )
+        latest = None
+        for index in range(5):
+            relative_time = -0.04 + index * 0.01
+            latest = estimator.update(
+                1.00 + index * 0.01,
+                100.0 + 80.0 * relative_time,
+                200.0 - 40.0 * relative_time,
+                (
+                    400.0
+                    - 300.0 * relative_time
+                    - 0.5 * gravity * relative_time**2
+                ),
+            )
+
+        self.assertTrue(latest.velocity_ready)
+        self.assertAlmostEqual(latest.x_mm, 100.0)
+        self.assertAlmostEqual(latest.y_mm, 200.0)
+        self.assertAlmostEqual(latest.z_mm, 400.0)
+        self.assertAlmostEqual(latest.vx_mm_s, 80.0)
+        self.assertAlmostEqual(latest.vy_mm_s, -40.0)
+        self.assertAlmostEqual(latest.vz_mm_s, -300.0)
 
     def test_invalid_measurement_keeps_last_estimate(self):
         estimator = StereoMotionEstimator()

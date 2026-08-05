@@ -57,10 +57,26 @@ if __name__ == "__main__":
     # Release-specific capture. Position/velocity are estimated continuously,
     # including while the sphere is still held by the user.
     cfg.auto_release_position_current_weight = 0.55
-    cfg.auto_release_velocity_current_weight = 0.50
+    # Velocity is fitted from the recent multi-frame history. The regression
+    # itself provides smoothing, so use its newest result directly rather than
+    # adding another lagging IIR blend.
+    cfg.auto_release_velocity_current_weight = 1.00
     cfg.auto_release_motion_max_gap_sec = 0.10
+    cfg.auto_release_velocity_window_sec = 0.050
+    cfg.auto_release_min_velocity_samples = 5
+    cfg.auto_release_min_velocity_span_sec = 0.020
     cfg.auto_release_max_motion_age_sec = 0.050
     cfg.auto_release_actuation_prediction_sec = 0.013
+
+    # The initial capture command no longer uses motion while the sphere is
+    # held. The first separation resets a dedicated estimator, the field stays
+    # off, and capture starts only after release confirmation plus at least five
+    # post-release stereo frames spanning 20 ms. Z is fitted with known gravity
+    # during this no-field observation window.
+    cfg.auto_release_post_release_window_sec = 0.060
+    cfg.auto_release_post_release_min_samples = 5
+    cfg.auto_release_post_release_min_span_sec = 0.020
+    cfg.auto_release_post_release_timeout_sec = 0.100
 
     # Build constant-deceleration Z and XY references after the first field is
     # sent. XY always uses 120 ms, while Z may extend its nominal 120 ms when
