@@ -68,6 +68,7 @@ from manual_release_tracking.core.auto_release_capture import (
     AutoReleaseDelayLogger,
     AutoReleaseTrajectoryLogger,
     PredictedCapture,
+    RecentStereoHistory,
     StereoMotionEstimator,
     braking_reference_at,
     limit_upward_capture_target_z,
@@ -372,6 +373,15 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 ),
                 known_z_acceleration_mm_s2=-float(cfg.gravity_mm_s2),
             )
+            recent_stereo_history = RecentStereoHistory(
+                retention_sec=float(
+                    getattr(
+                        cfg,
+                        "auto_release_stereo_history_sec",
+                        0.200,
+                    )
+                )
+            )
 
             # 4. Runtime state
             tracking_active = False
@@ -617,6 +627,17 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal release_observation_confirmed
 
                 post_release_motion_estimator.reset()
+                release_time_sec = float(event.timestamp_ms) / 1000.0
+                seeded_sample_count = recent_stereo_history.replay_since(
+                    post_release_motion_estimator,
+                    start_time_sec=release_time_sec,
+                )
+                seeded_estimate = post_release_motion_estimator.latest
+                seeded_span_ms = (
+                    0.0
+                    if seeded_estimate is None
+                    else seeded_estimate.history_span_sec * 1000.0
+                )
                 release_observation_event = event
                 release_observation_started_at = time.perf_counter()
                 release_observation_confirmed = False
@@ -624,14 +645,19 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     event="post_release_observation_started",
                     release_timestamp_ms=int(event.timestamp_ms),
                     event_time_sec=release_observation_started_at,
-                    estimate=None,
+                    estimate=seeded_estimate,
                     target=None,
                     intensity=0.0,
-                    reason="field_off_collecting_post_release_frames",
+                    reason=(
+                        "field_off_collecting_post_release_frames;"
+                        f"buffered_samples={seeded_sample_count};"
+                        f"buffered_span_ms={seeded_span_ms:.1f}"
+                    ),
                 )
                 print(
                     "[AUTO_RELEASE] RELEASE_CANDIDATE -> "
-                    "POST_RELEASE_OBSERVE (field remains off)"
+                    "POST_RELEASE_OBSERVE (field remains off), "
+                    f"replayed={seeded_sample_count} frames"
                 )
 
             def clear_release_observation(reason: str, *, log_event=True):
@@ -1320,7 +1346,16 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         y_mm,
                         z_mm,
                     )
-                    if release_observation_event is not None:
+                    history_added = recent_stereo_history.add(
+                        measurement_time_sec,
+                        x_mm,
+                        y_mm,
+                        z_mm,
+                    )
+                    if (
+                        release_observation_event is not None
+                        and history_added
+                    ):
                         post_release_motion_estimator.update(
                             measurement_time_sec,
                             x_mm,

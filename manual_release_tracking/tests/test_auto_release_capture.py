@@ -15,6 +15,7 @@ from manual_release_tracking.core.auto_release_capture import (
     AutoReleaseTrajectoryLogger,
     MotionEstimate3D,
     PredictedCapture,
+    RecentStereoHistory,
     SETTLE_INTENSITY_DOWNWARD_RESCUE,
     SETTLE_INTENSITY_NORMAL,
     SETTLE_INTENSITY_UPWARD_DAMPING,
@@ -138,6 +139,48 @@ class StereoMotionEstimatorTest(unittest.TestCase):
         estimator = StereoMotionEstimator()
         first = estimator.update(1.0, 10.0, 20.0, 400.0)
         self.assertIs(estimator.update(1.01, None, 20.0, 400.0), first)
+
+
+class RecentStereoHistoryTest(unittest.TestCase):
+    def test_replays_only_samples_at_or_after_release_timestamp(self):
+        history = RecentStereoHistory(retention_sec=0.2)
+        for index in range(6):
+            timestamp = 0.99 + index * 0.01
+            history.add(
+                timestamp,
+                100.0 + 100.0 * (timestamp - 1.0),
+                200.0,
+                400.0,
+            )
+
+        estimator = StereoMotionEstimator(
+            position_current_weight=1.0,
+            velocity_current_weight=1.0,
+            minimum_velocity_samples=5,
+            minimum_velocity_span_sec=0.020,
+        )
+        replayed = history.replay_since(
+            estimator,
+            start_time_sec=1.0,
+        )
+
+        self.assertEqual(replayed, 5)
+        self.assertTrue(estimator.latest.velocity_ready)
+        self.assertAlmostEqual(estimator.latest.x_mm, 104.0)
+        self.assertAlmostEqual(estimator.latest.vx_mm_s, 100.0)
+
+    def test_rejects_duplicate_timestamp_and_prunes_old_samples(self):
+        history = RecentStereoHistory(retention_sec=0.02)
+        self.assertTrue(history.add(1.00, 1.0, 2.0, 3.0))
+        self.assertFalse(history.add(1.00, 9.0, 9.0, 9.0))
+        self.assertTrue(history.add(1.01, 2.0, 2.0, 3.0))
+        self.assertTrue(history.add(1.03, 4.0, 2.0, 3.0))
+
+        samples = history.samples_since(0.0)
+        self.assertEqual(
+            [sample.measurement_time_sec for sample in samples],
+            [1.01, 1.03],
+        )
 
 
 class CapturePredictionTest(unittest.TestCase):

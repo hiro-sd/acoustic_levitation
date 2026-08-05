@@ -31,6 +31,14 @@ class MotionEstimate3D:
 
 
 @dataclass(frozen=True)
+class StereoPositionSample:
+    measurement_time_sec: float
+    x_mm: float
+    y_mm: float
+    z_mm: float
+
+
+@dataclass(frozen=True)
 class PredictedCapture:
     horizon_sec: float
     x_mm: float
@@ -304,6 +312,75 @@ class StereoMotionEstimator:
             velocity_ready=velocity_ready,
         )
         return self._estimate
+
+
+class RecentStereoHistory:
+    """Short timestamped 3D history used to recover async release latency."""
+
+    def __init__(self, *, retention_sec: float = 0.200):
+        self.retention_sec = max(1e-3, float(retention_sec))
+        self._samples: deque[StereoPositionSample] = deque()
+
+    def clear(self):
+        self._samples.clear()
+
+    def add(
+        self,
+        measurement_time_sec: float,
+        x_mm: float,
+        y_mm: float,
+        z_mm: float,
+    ) -> bool:
+        values = np.asarray(
+            [measurement_time_sec, x_mm, y_mm, z_mm],
+            dtype=float,
+        )
+        if not np.all(np.isfinite(values)):
+            return False
+
+        timestamp = float(measurement_time_sec)
+        if self._samples and timestamp <= self._samples[-1].measurement_time_sec:
+            return False
+
+        self._samples.append(
+            StereoPositionSample(
+                measurement_time_sec=timestamp,
+                x_mm=float(x_mm),
+                y_mm=float(y_mm),
+                z_mm=float(z_mm),
+            )
+        )
+        oldest_allowed = timestamp - self.retention_sec
+        while (
+            len(self._samples) > 1
+            and self._samples[0].measurement_time_sec < oldest_allowed
+        ):
+            self._samples.popleft()
+        return True
+
+    def samples_since(self, start_time_sec: float) -> list[StereoPositionSample]:
+        start = float(start_time_sec)
+        return [
+            sample
+            for sample in self._samples
+            if sample.measurement_time_sec >= start
+        ]
+
+    def replay_since(
+        self,
+        estimator: StereoMotionEstimator,
+        *,
+        start_time_sec: float,
+    ) -> int:
+        samples = self.samples_since(start_time_sec)
+        for sample in samples:
+            estimator.update(
+                sample.measurement_time_sec,
+                sample.x_mm,
+                sample.y_mm,
+                sample.z_mm,
+            )
+        return len(samples)
 
 
 def predict_capture_position(

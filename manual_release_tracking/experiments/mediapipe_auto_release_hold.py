@@ -77,6 +77,9 @@ if __name__ == "__main__":
     cfg.auto_release_post_release_min_samples = 5
     cfg.auto_release_post_release_min_span_sec = 0.020
     cfg.auto_release_post_release_timeout_sec = 0.100
+    # Keep recent timestamped stereo measurements so frames captured after the
+    # release image but before the asynchronous MediaPipe result are not lost.
+    cfg.auto_release_stereo_history_sec = 0.200
 
     # Build constant-deceleration Z and XY references after the first field is
     # sent. XY always uses 120 ms, while Z may extend its nominal 120 ms when
