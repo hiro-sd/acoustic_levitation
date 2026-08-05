@@ -166,7 +166,7 @@ class StereoMotionEstimator:
         span_sec = float(times[-1] - times[0])
         ready = (
             sample_count >= self.minimum_velocity_samples
-            and span_sec >= self.minimum_velocity_span_sec
+            and span_sec + 1e-9 >= self.minimum_velocity_span_sec
         )
         if not ready:
             return (

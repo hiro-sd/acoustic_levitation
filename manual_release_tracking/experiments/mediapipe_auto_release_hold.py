@@ -70,12 +70,12 @@ if __name__ == "__main__":
 
     # The initial capture command no longer uses motion while the sphere is
     # held. The first separation resets a dedicated estimator, the field stays
-    # off, and capture starts only after release confirmation plus at least five
-    # post-release stereo frames spanning 20 ms. Z is fitted with known gravity
+    # off, and capture starts only after release confirmation plus at least four
+    # post-release stereo frames spanning 15 ms. Z is fitted with known gravity
     # during this no-field observation window.
     cfg.auto_release_post_release_window_sec = 0.060
-    cfg.auto_release_post_release_min_samples = 5
-    cfg.auto_release_post_release_min_span_sec = 0.020
+    cfg.auto_release_post_release_min_samples = 4
+    cfg.auto_release_post_release_min_span_sec = 0.015
     cfg.auto_release_post_release_timeout_sec = 0.100
     # Keep recent timestamped stereo measurements so frames captured after the
     # release image but before the asynchronous MediaPipe result are not lost.

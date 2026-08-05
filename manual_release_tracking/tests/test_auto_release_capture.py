@@ -37,6 +37,30 @@ from tracking.core.models import Target3D
 
 
 class StereoMotionEstimatorTest(unittest.TestCase):
+    def test_four_frames_spanning_fifteen_ms_are_ready(self):
+        estimator = StereoMotionEstimator(
+            position_current_weight=1.0,
+            velocity_current_weight=1.0,
+            velocity_window_sec=0.060,
+            minimum_velocity_samples=4,
+            minimum_velocity_span_sec=0.015,
+        )
+        latest = None
+        for index in range(4):
+            timestamp = 1.0 + index * 0.005
+            latest = estimator.update(
+                timestamp,
+                100.0 + 80.0 * (timestamp - 1.0),
+                200.0,
+                400.0 - 120.0 * (timestamp - 1.0),
+            )
+
+        self.assertTrue(latest.velocity_ready)
+        self.assertEqual(latest.sample_count, 4)
+        self.assertAlmostEqual(latest.history_span_sec, 0.015)
+        self.assertAlmostEqual(latest.vx_mm_s, 80.0)
+        self.assertAlmostEqual(latest.vz_mm_s, -120.0)
+
     def test_estimates_xyz_velocity_from_multiple_frames_before_control(self):
         estimator = StereoMotionEstimator(
             position_current_weight=1.0,
