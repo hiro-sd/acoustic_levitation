@@ -14,6 +14,7 @@ from manual_release_tracking.core.auto_release_capture import (
     AutoReleaseDelayLogger,
     AutoReleaseTrajectoryLogger,
     MotionEstimate3D,
+    PredictedCapture,
     SETTLE_INTENSITY_DOWNWARD_RESCUE,
     SETTLE_INTENSITY_NORMAL,
     SETTLE_INTENSITY_UPWARD_DAMPING,
@@ -29,6 +30,7 @@ from manual_release_tracking.core.auto_release_capture import (
     update_brake_exit_stability,
     update_capture_stability,
     update_settle_intensity,
+    xy_braking_reference_at,
 )
 from tracking.core.models import Target3D
 
@@ -228,6 +230,41 @@ class CapturePredictionTest(unittest.TestCase):
             capture_align_target_xy(None, current),
             (current.x_mm, current.y_mm),
         )
+
+    def test_xy_braking_reference_reduces_velocity_to_zero_in_120_ms(self):
+        initial = PredictedCapture(
+            horizon_sec=0.013,
+            x_mm=100.0,
+            y_mm=200.0,
+            z_mm=400.0,
+            vx_mm_s=200.0,
+            vy_mm_s=-100.0,
+            vz_mm_s=-50.0,
+        )
+
+        halfway = xy_braking_reference_at(
+            initial,
+            start_time_sec=1.0,
+            now_sec=1.06,
+            duration_sec=0.12,
+        )
+        stopped = xy_braking_reference_at(
+            initial,
+            start_time_sec=1.0,
+            now_sec=1.12,
+            duration_sec=0.12,
+        )
+
+        self.assertAlmostEqual(halfway.x_mm, 109.0)
+        self.assertAlmostEqual(halfway.y_mm, 195.5)
+        self.assertAlmostEqual(halfway.vx_mm_s, 100.0)
+        self.assertAlmostEqual(halfway.vy_mm_s, -50.0)
+        self.assertFalse(halfway.complete)
+        self.assertAlmostEqual(stopped.x_mm, 112.0)
+        self.assertAlmostEqual(stopped.y_mm, 194.0)
+        self.assertEqual(stopped.vx_mm_s, 0.0)
+        self.assertEqual(stopped.vy_mm_s, 0.0)
+        self.assertTrue(stopped.complete)
 
     def test_local_hold_requires_confirmed_stable_velocity_duration(self):
         since, ready = update_capture_stability(

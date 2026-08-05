@@ -64,6 +64,16 @@ class BrakingReference:
     complete: bool
 
 
+@dataclass(frozen=True)
+class XYBrakingReference:
+    elapsed_sec: float
+    x_mm: float
+    y_mm: float
+    vx_mm_s: float
+    vy_mm_s: float
+    complete: bool
+
+
 class StereoMotionEstimator:
     """Lightweight filtered position/velocity estimator that runs before control."""
 
@@ -335,6 +345,48 @@ def braking_reference_at(
         z_mm=float(z_ref),
         vz_mm_s=float(vz_ref),
         acceleration_mm_s2=float(plan.acceleration_mm_s2),
+        complete=bool(complete),
+    )
+
+
+def xy_braking_reference_at(
+    initial: PredictedCapture,
+    *,
+    start_time_sec: float,
+    now_sec: float,
+    duration_sec: float,
+) -> XYBrakingReference:
+    """Reference that linearly reduces the release XY velocity to zero."""
+    duration = max(1e-6, float(duration_sec))
+    elapsed = max(0.0, float(now_sec) - float(start_time_sec))
+    t = min(elapsed, duration)
+    progress = t / duration
+
+    vx_ref = float(initial.vx_mm_s) * (1.0 - progress)
+    vy_ref = float(initial.vy_mm_s) * (1.0 - progress)
+    x_ref = (
+        float(initial.x_mm)
+        + float(initial.vx_mm_s) * t
+        - 0.5 * float(initial.vx_mm_s) * t * t / duration
+    )
+    y_ref = (
+        float(initial.y_mm)
+        + float(initial.vy_mm_s) * t
+        - 0.5 * float(initial.vy_mm_s) * t * t / duration
+    )
+    complete = elapsed >= duration
+    if complete:
+        x_ref = float(initial.x_mm) + 0.5 * float(initial.vx_mm_s) * duration
+        y_ref = float(initial.y_mm) + 0.5 * float(initial.vy_mm_s) * duration
+        vx_ref = 0.0
+        vy_ref = 0.0
+
+    return XYBrakingReference(
+        elapsed_sec=float(elapsed),
+        x_mm=float(x_ref),
+        y_mm=float(y_ref),
+        vx_mm_s=float(vx_ref),
+        vy_mm_s=float(vy_ref),
         complete=bool(complete),
     )
 

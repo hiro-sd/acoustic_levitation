@@ -70,7 +70,6 @@ from manual_release_tracking.core.auto_release_capture import (
     PredictedCapture,
     StereoMotionEstimator,
     braking_reference_at,
-    capture_align_target_xy,
     limit_upward_capture_target_z,
     make_braking_plan,
     predict_capture_position,
@@ -78,6 +77,7 @@ from manual_release_tracking.core.auto_release_capture import (
     trajectory_target_z,
     update_brake_exit_stability,
     update_capture_stability,
+    xy_braking_reference_at,
 )
 
 
@@ -1420,9 +1420,22 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 )
                             )
                         )
-                        if brake_exit_ready:
+                        xy_braking_duration_sec = float(
+                            getattr(
+                                cfg,
+                                "auto_release_xy_stop_time_sec",
+                                0.120,
+                            )
+                        )
+                        xy_braking_complete = (
+                            capture_braking_plan is not None
+                            and now_capture_guard
+                            - capture_braking_plan.start_time_sec
+                            >= xy_braking_duration_sec
+                        )
+                        if brake_exit_ready and xy_braking_complete:
                             enter_capture_settle(
-                                "measured_vz_near_zero",
+                                "measured_vz_near_zero_and_xy_braking_complete",
                                 motion_estimate,
                                 event_time_sec=now_capture_guard,
                             )
@@ -1550,6 +1563,22 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     )
                                 ),
                             )
+                            xy_stop_duration_sec = float(
+                                getattr(
+                                    cfg,
+                                    "auto_release_xy_stop_time_sec",
+                                    0.120,
+                                )
+                            )
+                            xy_stop_reference = xy_braking_reference_at(
+                                capture_onset_prediction,
+                                start_time_sec=sent.sent_time_sec,
+                                now_sec=(
+                                    sent.sent_time_sec
+                                    + xy_stop_duration_sec
+                                ),
+                                duration_sec=xy_stop_duration_sec,
+                            )
                             capture_logger.write(
                                 event="capture_braking_plan_started",
                                 release_timestamp_ms=(
@@ -1568,6 +1597,14 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 reason=(
                                     f"duration_ms="
                                     f"{capture_braking_plan.duration_sec * 1000.0:.1f};"
+                                    f"xy_duration_ms="
+                                    f"{xy_stop_duration_sec * 1000.0:.1f};"
+                                    f"xy_initial_velocity_mm_s="
+                                    f"({capture_onset_prediction.vx_mm_s:.2f},"
+                                    f"{capture_onset_prediction.vy_mm_s:.2f});"
+                                    f"xy_stop_mm="
+                                    f"({xy_stop_reference.x_mm:.2f},"
+                                    f"{xy_stop_reference.y_mm:.2f});"
                                     f"stop_z_mm="
                                     f"{capture_braking_plan.stop_z_mm:.2f};"
                                     f"distance_mm="
@@ -1727,12 +1764,30 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         ):
                             now_capture = time.perf_counter()
                             trajectory_reference = None
+                            xy_trajectory_reference = None
                             trajectory_correction_z = 0.0
                             if capture_braking_plan is not None:
                                 trajectory_reference = braking_reference_at(
                                     capture_braking_plan,
                                     now_sec=now_capture,
                                 )
+                                if capture_onset_prediction is not None:
+                                    xy_trajectory_reference = (
+                                        xy_braking_reference_at(
+                                            capture_onset_prediction,
+                                            start_time_sec=(
+                                                capture_braking_plan.start_time_sec
+                                            ),
+                                            now_sec=now_capture,
+                                            duration_sec=float(
+                                                getattr(
+                                                    cfg,
+                                                    "auto_release_xy_stop_time_sec",
+                                                    0.120,
+                                                )
+                                            ),
+                                        )
+                                    )
                                 desired_target_z, trajectory_correction_z = (
                                     trajectory_target_z(
                                         reference_z_mm=(
@@ -1773,14 +1828,26 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                         trajectory_reference.elapsed_sec
                                     ),
                                     x_mm=float(
-                                        capture_initial_prediction.x_mm
+                                        xy_trajectory_reference.x_mm
+                                        if xy_trajectory_reference is not None
+                                        else capture_initial_prediction.x_mm
                                     ),
                                     y_mm=float(
-                                        capture_initial_prediction.y_mm
+                                        xy_trajectory_reference.y_mm
+                                        if xy_trajectory_reference is not None
+                                        else capture_initial_prediction.y_mm
                                     ),
                                     z_mm=float(trajectory_reference.z_mm),
-                                    vx_mm_s=0.0,
-                                    vy_mm_s=0.0,
+                                    vx_mm_s=float(
+                                        xy_trajectory_reference.vx_mm_s
+                                        if xy_trajectory_reference is not None
+                                        else 0.0
+                                    ),
+                                    vy_mm_s=float(
+                                        xy_trajectory_reference.vy_mm_s
+                                        if xy_trajectory_reference is not None
+                                        else 0.0
+                                    ),
                                     vz_mm_s=float(
                                         trajectory_reference.vz_mm_s
                                     ),
@@ -1807,12 +1874,8 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 last_target.z,
                                 upward_brake_active=upward_brake_now,
                             )
-                            capture_target_x, capture_target_y = (
-                                capture_align_target_xy(
-                                    capture_initial_prediction,
-                                    prediction,
-                                )
-                            )
+                            capture_target_x = float(prediction.x_mm)
+                            capture_target_y = float(prediction.y_mm)
                             target = Target3D(
                                 x=capture_target_x,
                                 y=capture_target_y,

@@ -62,11 +62,12 @@ if __name__ == "__main__":
     cfg.auto_release_max_motion_age_sec = 0.050
     cfg.auto_release_actuation_prediction_sec = 0.013
 
-    # Build a constant-deceleration Z reference after the first field is sent.
-    # Intensity remains the existing velocity-based staged schedule for this
-    # experiment so that trajectory and force-control effects stay separable.
+    # Build constant-deceleration Z and XY references after the first field is
+    # sent. XY always uses 120 ms, while Z may extend its nominal 120 ms when
+    # the force/workspace calculation requires a longer feasible stop.
     cfg.auto_release_nominal_stop_time_sec = 0.120
     cfg.auto_release_min_stop_time_sec = 0.050
+    cfg.auto_release_xy_stop_time_sec = 0.120
     cfg.auto_release_z_workspace_margin_mm = 10.0
     cfg.auto_release_trajectory_kp_z = 0.30
     cfg.auto_release_trajectory_kd_z = 0.01
