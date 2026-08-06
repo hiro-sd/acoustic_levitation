@@ -77,17 +77,23 @@ class BrakingReference:
 
 
 @dataclass(frozen=True)
-class XYBrakingReference:
-    elapsed_sec: float
+class XYTargetLimit:
     x_mm: float
     y_mm: float
-    vx_mm_s: float
-    vy_mm_s: float
-    complete: bool
+    distance_mm: float
+    limited: bool
 
 
 @dataclass(frozen=True)
-class XYTargetLimit:
+class AnchoredXYTarget:
+    anchor_x_mm: float
+    anchor_y_mm: float
+    predicted_ball_x_mm: float
+    predicted_ball_y_mm: float
+    error_x_mm: float
+    error_y_mm: float
+    requested_x_mm: float
+    requested_y_mm: float
     x_mm: float
     y_mm: float
     distance_mm: float
@@ -564,74 +570,6 @@ def braking_reference_at(
     )
 
 
-def xy_braking_reference_at(
-    initial: PredictedCapture,
-    *,
-    start_time_sec: float,
-    now_sec: float,
-    duration_sec: float,
-) -> XYBrakingReference:
-    """Reference that linearly reduces the release XY velocity to zero."""
-    duration = max(1e-6, float(duration_sec))
-    elapsed = max(0.0, float(now_sec) - float(start_time_sec))
-    t = min(elapsed, duration)
-    progress = t / duration
-
-    vx_ref = float(initial.vx_mm_s) * (1.0 - progress)
-    vy_ref = float(initial.vy_mm_s) * (1.0 - progress)
-    x_ref = (
-        float(initial.x_mm)
-        + float(initial.vx_mm_s) * t
-        - 0.5 * float(initial.vx_mm_s) * t * t / duration
-    )
-    y_ref = (
-        float(initial.y_mm)
-        + float(initial.vy_mm_s) * t
-        - 0.5 * float(initial.vy_mm_s) * t * t / duration
-    )
-    complete = elapsed >= duration
-    if complete:
-        x_ref = float(initial.x_mm) + 0.5 * float(initial.vx_mm_s) * duration
-        y_ref = float(initial.y_mm) + 0.5 * float(initial.vy_mm_s) * duration
-        vx_ref = 0.0
-        vy_ref = 0.0
-
-    return XYBrakingReference(
-        elapsed_sec=float(elapsed),
-        x_mm=float(x_ref),
-        y_mm=float(y_ref),
-        vx_mm_s=float(vx_ref),
-        vy_mm_s=float(vy_ref),
-        complete=bool(complete),
-    )
-
-
-def velocity_damping_target_xy(
-    *,
-    ball_x_mm: float,
-    ball_y_mm: float,
-    vx_mm_s: float,
-    vy_mm_s: float,
-    damping_horizon_sec: float,
-    maximum_offset_mm: float,
-) -> tuple[float, float]:
-    """Place the field slightly behind lateral motion to generate restoring force."""
-    vx = float(vx_mm_s)
-    vy = float(vy_mm_s)
-    speed = float(np.hypot(vx, vy))
-    if speed <= 1e-9:
-        return float(ball_x_mm), float(ball_y_mm)
-
-    offset = min(
-        max(0.0, float(maximum_offset_mm)),
-        speed * max(0.0, float(damping_horizon_sec)),
-    )
-    return (
-        float(ball_x_mm) - vx / speed * offset,
-        float(ball_y_mm) - vy / speed * offset,
-    )
-
-
 def clamp_target_xy_to_ball(
     *,
     target_x_mm: float,
@@ -662,30 +600,63 @@ def clamp_target_xy_to_ball(
     )
 
 
-def update_xy_handoff_stability(
+def anchored_pd_target_xy(
     *,
-    now_sec: float,
-    vxy_mm_s: float,
-    xy_distance_mm: float,
-    stable_since_sec: float | None,
-    maximum_vxy_mm_s: float,
-    maximum_xy_distance_mm: float,
-    required_duration_sec: float,
-) -> tuple[float | None, bool]:
-    """Require a short stable interval before handing XY to normal PID."""
-    stable = (
-        abs(float(vxy_mm_s)) <= float(maximum_vxy_mm_s)
-        and abs(float(xy_distance_mm)) <= float(maximum_xy_distance_mm)
+    anchor_x_mm: float,
+    anchor_y_mm: float,
+    ball_x_mm: float,
+    ball_y_mm: float,
+    vx_mm_s: float,
+    vy_mm_s: float,
+    position_gain: float,
+    velocity_gain_sec: float,
+    prediction_horizon_sec: float,
+    maximum_distance_mm: float,
+) -> AnchoredXYTarget:
+    """PD command around a fixed capture point, bounded near the sphere.
+
+    Unlike the previous velocity-only target, the reference point never moves
+    with the sphere. The command itself may move so it can remain inside the
+    measured acoustic influence range while pushing back toward the anchor.
+    """
+    vx = float(vx_mm_s)
+    vy = float(vy_mm_s)
+    horizon = max(0.0, float(prediction_horizon_sec))
+    predicted_x = float(ball_x_mm) + vx * horizon
+    predicted_y = float(ball_y_mm) + vy * horizon
+    error_x = float(anchor_x_mm) - predicted_x
+    error_y = float(anchor_y_mm) - predicted_y
+    requested_x = (
+        float(anchor_x_mm)
+        + float(position_gain) * error_x
+        - float(velocity_gain_sec) * vx
     )
-    if not stable:
-        return None, False
-    if stable_since_sec is None:
-        return float(now_sec), False
-    ready = (
-        float(now_sec) - float(stable_since_sec)
-        >= max(0.0, float(required_duration_sec))
+    requested_y = (
+        float(anchor_y_mm)
+        + float(position_gain) * error_y
+        - float(velocity_gain_sec) * vy
     )
-    return float(stable_since_sec), bool(ready)
+    limited = clamp_target_xy_to_ball(
+        target_x_mm=requested_x,
+        target_y_mm=requested_y,
+        ball_x_mm=ball_x_mm,
+        ball_y_mm=ball_y_mm,
+        maximum_distance_mm=maximum_distance_mm,
+    )
+    return AnchoredXYTarget(
+        anchor_x_mm=float(anchor_x_mm),
+        anchor_y_mm=float(anchor_y_mm),
+        predicted_ball_x_mm=predicted_x,
+        predicted_ball_y_mm=predicted_y,
+        error_x_mm=error_x,
+        error_y_mm=error_y,
+        requested_x_mm=requested_x,
+        requested_y_mm=requested_y,
+        x_mm=limited.x_mm,
+        y_mm=limited.y_mm,
+        distance_mm=limited.distance_mm,
+        limited=limited.limited,
+    )
 
 
 def trajectory_target_z(

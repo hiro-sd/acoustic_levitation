@@ -20,6 +20,7 @@ from manual_release_tracking.core.auto_release_capture import (
     SETTLE_INTENSITY_NORMAL,
     SETTLE_INTENSITY_UPWARD_DAMPING,
     StereoMotionEstimator,
+    anchored_pd_target_xy,
     capture_align_target_xy,
     capture_intensity_for_vz,
     braking_reference_at,
@@ -32,9 +33,6 @@ from manual_release_tracking.core.auto_release_capture import (
     update_brake_exit_stability,
     update_capture_stability,
     update_settle_intensity,
-    update_xy_handoff_stability,
-    velocity_damping_target_xy,
-    xy_braking_reference_at,
 )
 from tracking.core.models import Target3D
 
@@ -388,54 +386,6 @@ class CapturePredictionTest(unittest.TestCase):
             (current.x_mm, current.y_mm),
         )
 
-    def test_xy_braking_reference_reduces_velocity_to_zero_in_120_ms(self):
-        initial = PredictedCapture(
-            horizon_sec=0.013,
-            x_mm=100.0,
-            y_mm=200.0,
-            z_mm=400.0,
-            vx_mm_s=200.0,
-            vy_mm_s=-100.0,
-            vz_mm_s=-50.0,
-        )
-
-        halfway = xy_braking_reference_at(
-            initial,
-            start_time_sec=1.0,
-            now_sec=1.06,
-            duration_sec=0.12,
-        )
-        stopped = xy_braking_reference_at(
-            initial,
-            start_time_sec=1.0,
-            now_sec=1.12,
-            duration_sec=0.12,
-        )
-
-        self.assertAlmostEqual(halfway.x_mm, 109.0)
-        self.assertAlmostEqual(halfway.y_mm, 195.5)
-        self.assertAlmostEqual(halfway.vx_mm_s, 100.0)
-        self.assertAlmostEqual(halfway.vy_mm_s, -50.0)
-        self.assertFalse(halfway.complete)
-        self.assertAlmostEqual(stopped.x_mm, 112.0)
-        self.assertAlmostEqual(stopped.y_mm, 194.0)
-        self.assertEqual(stopped.vx_mm_s, 0.0)
-        self.assertEqual(stopped.vy_mm_s, 0.0)
-        self.assertTrue(stopped.complete)
-
-    def test_velocity_damping_target_is_behind_motion_and_bounded(self):
-        target_x, target_y = velocity_damping_target_xy(
-            ball_x_mm=100.0,
-            ball_y_mm=200.0,
-            vx_mm_s=300.0,
-            vy_mm_s=400.0,
-            damping_horizon_sec=0.050,
-            maximum_offset_mm=12.0,
-        )
-
-        self.assertAlmostEqual(target_x, 92.8)
-        self.assertAlmostEqual(target_y, 190.4)
-
     def test_xy_target_is_clamped_inside_capture_radius(self):
         limited = clamp_target_xy_to_ball(
             target_x_mm=130.0,
@@ -450,41 +400,47 @@ class CapturePredictionTest(unittest.TestCase):
         self.assertAlmostEqual(limited.y_mm, 212.0)
         self.assertAlmostEqual(limited.distance_mm, 15.0)
 
-    def test_xy_handoff_requires_sustained_speed_and_distance(self):
-        since, ready = update_xy_handoff_stability(
-            now_sec=1.0,
-            vxy_mm_s=50.0,
-            xy_distance_mm=8.0,
-            stable_since_sec=None,
-            maximum_vxy_mm_s=60.0,
-            maximum_xy_distance_mm=10.0,
-            required_duration_sec=0.020,
+    def test_anchored_xy_pd_keeps_reference_fixed_and_limits_command(self):
+        command = anchored_pd_target_xy(
+            anchor_x_mm=100.0,
+            anchor_y_mm=200.0,
+            ball_x_mm=110.0,
+            ball_y_mm=200.0,
+            vx_mm_s=100.0,
+            vy_mm_s=0.0,
+            position_gain=0.30,
+            velocity_gain_sec=0.05,
+            prediction_horizon_sec=0.010,
+            maximum_distance_mm=15.0,
         )
-        self.assertEqual(since, 1.0)
-        self.assertFalse(ready)
 
-        since, ready = update_xy_handoff_stability(
-            now_sec=1.021,
-            vxy_mm_s=55.0,
-            xy_distance_mm=9.0,
-            stable_since_sec=since,
-            maximum_vxy_mm_s=60.0,
-            maximum_xy_distance_mm=10.0,
-            required_duration_sec=0.020,
-        )
-        self.assertTrue(ready)
+        self.assertEqual(command.anchor_x_mm, 100.0)
+        self.assertEqual(command.anchor_y_mm, 200.0)
+        self.assertAlmostEqual(command.predicted_ball_x_mm, 111.0)
+        self.assertAlmostEqual(command.error_x_mm, -11.0)
+        self.assertAlmostEqual(command.requested_x_mm, 91.7)
+        self.assertTrue(command.limited)
+        self.assertAlmostEqual(command.x_mm, 95.0)
+        self.assertAlmostEqual(command.y_mm, 200.0)
+        self.assertAlmostEqual(command.distance_mm, 15.0)
 
-        since, ready = update_xy_handoff_stability(
-            now_sec=1.030,
-            vxy_mm_s=61.0,
-            xy_distance_mm=9.0,
-            stable_since_sec=since,
-            maximum_vxy_mm_s=60.0,
-            maximum_xy_distance_mm=10.0,
-            required_duration_sec=0.020,
+    def test_anchored_xy_pd_is_stationary_at_anchor(self):
+        command = anchored_pd_target_xy(
+            anchor_x_mm=100.0,
+            anchor_y_mm=200.0,
+            ball_x_mm=100.0,
+            ball_y_mm=200.0,
+            vx_mm_s=0.0,
+            vy_mm_s=0.0,
+            position_gain=0.30,
+            velocity_gain_sec=0.05,
+            prediction_horizon_sec=0.010,
+            maximum_distance_mm=15.0,
         )
-        self.assertIsNone(since)
-        self.assertFalse(ready)
+
+        self.assertFalse(command.limited)
+        self.assertEqual(command.x_mm, 100.0)
+        self.assertEqual(command.y_mm, 200.0)
 
     def test_local_hold_requires_confirmed_stable_velocity_duration(self):
         since, ready = update_capture_stability(

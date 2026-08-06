@@ -81,22 +81,21 @@ if __name__ == "__main__":
     # release image but before the asynchronous MediaPipe result are not lost.
     cfg.auto_release_stereo_history_sec = 0.200
 
-    # Build constant-deceleration Z and XY references after the first field is
-    # sent. XY always uses 120 ms, while Z may extend its nominal 120 ms when
-    # the force/workspace calculation requires a longer feasible stop.
+    # Build the existing constant-deceleration Z reference after the first
+    # field is sent. Keep at least 120 ms of CAPTURE_ALIGN before SETTLE, while
+    # Z may extend longer when force/workspace constraints require it.
     cfg.auto_release_nominal_stop_time_sec = 0.120
     cfg.auto_release_min_stop_time_sec = 0.050
-    cfg.auto_release_xy_stop_time_sec = 0.120
-    # Do not hand XY to normal PID merely because 120 ms elapsed. After the
-    # planned trajectory, keep the field slightly behind lateral motion until
-    # both speed and sphere-to-field distance remain stable for 20 ms.
-    cfg.auto_release_xy_damping_horizon_sec = 0.050
-    cfg.auto_release_xy_damping_max_offset_mm = 12.0
-    cfg.auto_release_xy_handoff_vxy_max_mm_s = 60.0
-    cfg.auto_release_xy_handoff_distance_max_mm = 10.0
-    cfg.auto_release_xy_handoff_stable_sec = 0.020
-    # The measured acoustic influence range is about 20 mm. Use a conservative
-    # 15 mm command limit during both ALIGN and SETTLE.
+    cfg.auto_release_minimum_alignment_time_sec = 0.120
+
+    # The first multi-frame predicted XY position is a fixed reference. Once
+    # the first field is confirmed sent, use a dedicated PD controller around
+    # that anchor; no integral term is used during ALIGN or SETTLE.
+    cfg.auto_release_capture_xy_kp = 0.30
+    cfg.auto_release_capture_xy_kd = 0.05
+    cfg.auto_release_capture_xy_prediction_sec = 0.010
+    # The measured acoustic influence range is about 20 mm. The final PD
+    # command is conservatively limited to 15 mm from the measured sphere.
     cfg.auto_release_xy_capture_radius_mm = 15.0
     cfg.auto_release_z_workspace_margin_mm = 10.0
     cfg.auto_release_trajectory_kp_z = 0.30
