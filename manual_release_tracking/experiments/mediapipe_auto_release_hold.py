@@ -34,7 +34,7 @@ if __name__ == "__main__":
         log_csv_path="./manual_release_tracking/auto_release_log.csv",
     )
 
-    # MediaPipe Tasks Hand Landmarker settings used by the preview.
+    # MediaPipe Tasks Hand Landmarker settings used by automatic release detection.
     cfg.mediapipe_hand_model_path = (
         "./manual_release_tracking/models/hand_landmarker.task"
     )

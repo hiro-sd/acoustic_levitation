@@ -1,2 +1,2 @@
-# Optional dependency for experiments/mediapipe_release_detection_preview.py
+# Hand-landmark dependency for experiments/mediapipe_auto_release_hold.py
 mediapipe>=0.10.30,<0.11

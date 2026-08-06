@@ -1,8 +1,6 @@
-import os
 import sys
 import threading
 import time
-import json
 from collections import deque
 from dataclasses import dataclass
 
@@ -103,30 +101,6 @@ def load_intrinsic(npz_path: str, role: str):
     
     print(f"[INFO] Loaded intrinsic parameters ({role}) from {npz_path}")
     return mtx, dist
-
-
-def load_affine_matrix(json_path: str):
-    with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    A = np.array(data["A_2x3"], dtype=np.float32)
-    uv_type = data.get("input_uv_type", "unknown")
-    
-    return A, uv_type
-
-
-def load_z_model(json_path: str):
-    if not os.path.exists(json_path):
-        raise FileNotFoundError(f"Z model JSON not found: {json_path}")
-
-    with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    a = float(data["a"])
-    b = float(data["b"])
-
-    print(f"[INFO] Loaded z model from {json_path}: z = {a:.6f} * v + {b:.6f}")
-    return a, b
 
 
 def rotate_frame_if_needed(frame: np.ndarray, do_rotate: bool, rotate_code: int) -> np.ndarray:

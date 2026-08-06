@@ -12,8 +12,6 @@ from tracking.core.vision import (
     load_ximea_api,
     init_ximea_camera,
     load_intrinsic,
-    load_affine_matrix,
-    load_z_model,
     build_undistort_maps,
     undistort_frame,
     rotate_frame_if_needed,
@@ -87,31 +85,10 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
     """
     共通実行本体。
 
-    tracking_fast_feedback.py / tracking_demo.py / tracking_demo_outputmask.py の
-    共通部分をここに集約する。
-
-    実験ごとの差分は cfg で切り替える。
+    手から離した球体をステレオ3D計測で捕捉・保持する共通実行本体。
     """
 
     # 1. Calibration files
-    try:
-        A_affine, affine_uv_type = load_affine_matrix(cfg.affine_xy_json)
-        use_affine = True
-        print(f"[INFO] Loaded affine matrix from {cfg.affine_xy_json}")
-        print(f"[INFO] affine input_uv_type = {affine_uv_type}")
-    except Exception as e:
-        print(f"[WARN] Affine matrix load failed: {e}")
-        A_affine = None
-        use_affine = False
-
-    try:
-        z_a, z_b = load_z_model(cfg.affine_z_json)
-        use_z_model = True
-    except Exception as e:
-        print(f"[ERROR] z model load failed: {e}")
-        print("[ERROR] 先に coordinate_transformation_z.py と fit_affine_from_csv_z.py を実行してください。")
-        return
-
     try:
         mtx_cam_xy, dist_cam_xy = load_intrinsic(cfg.intrinsic_xy_npz, "xy")
         mtx_cam_z, dist_cam_z = load_intrinsic(cfg.intrinsic_z_npz, "z")
@@ -1326,14 +1303,6 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 if detected_xy:
                     u_xy, v_xy = det_xy.center
 
-                    if use_affine:
-                        uv_homo = np.array([[u_xy, v_xy, 1.0]], dtype=np.float32).T
-                        xy_local = (A_affine @ uv_homo).flatten()
-                        # カメラ座標変換は移動する目標位置 home ではなく、
-                        # キャリブレーション時の固定AUTD原点を基準にする。
-                        x_mm = float(display_origin.x + xy_local[0])
-                        y_mm = float(display_origin.y + xy_local[1])
-
                 if do_display:
                     draw_ball_detection(frame_xy_bgr, det_xy, tracking_active)
 
@@ -1346,9 +1315,6 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
 
                 if detected_z:
                     u_z, v_z = det_z.center
-
-                    if use_z_model:
-                        z_mm = float(z_a * v_z + z_b)
 
                 if (
                     stereo_triangulator is not None
