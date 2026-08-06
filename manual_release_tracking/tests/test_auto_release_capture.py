@@ -29,6 +29,7 @@ from manual_release_tracking.core.auto_release_capture import (
     make_braking_plan,
     predict_capture_position,
     should_start_return_home,
+    should_start_settle_timeout_return_home,
     trajectory_target_z,
     update_brake_exit_stability,
     update_capture_stability,
@@ -312,6 +313,64 @@ class CapturePredictionTest(unittest.TestCase):
                 automatic_hold=False,
             )
         )
+
+    def test_long_lived_bounded_settle_can_return_directly(self):
+        self.assertTrue(
+            should_start_settle_timeout_return_home(
+                now_sec=20.0,
+                settle_started_sec=10.0,
+                timeout_sec=10.0,
+                automatic_hold=True,
+                release_confirmed=True,
+                measurement_updated=True,
+                vz_mm_s=120.0,
+                maximum_abs_vz_mm_s=200.0,
+                vxy_mm_s=150.0,
+                maximum_vxy_mm_s=200.0,
+                target_distance_mm=15.0,
+                maximum_target_distance_mm=15.0,
+                z_mm=400.0,
+                z_min_mm=250.0,
+                z_max_mm=550.0,
+                workspace_margin_mm=10.0,
+            )
+        )
+
+    def test_settle_timeout_return_keeps_relaxed_safety_bounds(self):
+        base = dict(
+            now_sec=20.0,
+            settle_started_sec=10.0,
+            timeout_sec=10.0,
+            automatic_hold=True,
+            release_confirmed=True,
+            measurement_updated=True,
+            vz_mm_s=0.0,
+            maximum_abs_vz_mm_s=200.0,
+            vxy_mm_s=0.0,
+            maximum_vxy_mm_s=200.0,
+            target_distance_mm=5.0,
+            maximum_target_distance_mm=15.0,
+            z_mm=400.0,
+            z_min_mm=250.0,
+            z_max_mm=550.0,
+            workspace_margin_mm=10.0,
+        )
+        for override in (
+            {"now_sec": 19.999},
+            {"automatic_hold": False},
+            {"release_confirmed": False},
+            {"measurement_updated": False},
+            {"vz_mm_s": -200.1},
+            {"vxy_mm_s": 200.1},
+            {"target_distance_mm": 15.1},
+            {"z_mm": 259.9},
+            {"z_mm": 540.1},
+        ):
+            arguments = {**base, **override}
+            self.assertFalse(
+                should_start_settle_timeout_return_home(**arguments),
+                msg=f"unexpected return for {override}",
+            )
         self.assertFalse(
             should_start_return_home(
                 now_sec=20.0,

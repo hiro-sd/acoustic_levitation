@@ -135,6 +135,15 @@ if __name__ == "__main__":
     cfg.auto_release_local_hold_xy_distance_max_mm = 15.0
     cfg.auto_release_local_hold_z_error_max_mm = 10.0
     cfg.auto_release_local_hold_stable_sec = 0.025
+    # At an edge of the AUTD workspace the sphere can remain captured while
+    # vibration prevents the strict LOCAL_HOLD conditions from becoming true.
+    # After 10 s of continuous, bounded SETTLE, start the speed-limited return
+    # directly from the current filtered sphere position.
+    cfg.auto_release_settle_return_timeout_sec = 10.0
+    cfg.auto_release_settle_return_max_abs_vz_mm_s = 200.0
+    cfg.auto_release_settle_return_max_vxy_mm_s = 200.0
+    cfg.auto_release_settle_return_max_target_distance_mm = 15.0
+    cfg.auto_release_settle_return_z_workspace_margin_mm = 10.0
     # Hold at the released position first, then move the PID reference back to
     # AUTD center / z=400 using the existing speed-limited return controller.
     cfg.auto_release_local_hold_before_return_sec = 3.0

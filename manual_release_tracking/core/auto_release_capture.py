@@ -825,6 +825,63 @@ def should_start_return_home(
     return elapsed_sec >= max(0.0, float(delay_sec))
 
 
+def should_start_settle_timeout_return_home(
+    *,
+    now_sec: float,
+    settle_started_sec: float | None,
+    timeout_sec: float,
+    automatic_hold: bool,
+    release_confirmed: bool,
+    measurement_updated: bool,
+    vz_mm_s: float,
+    maximum_abs_vz_mm_s: float,
+    vxy_mm_s: float,
+    maximum_vxy_mm_s: float,
+    target_distance_mm: float,
+    maximum_target_distance_mm: float,
+    z_mm: float,
+    z_min_mm: float,
+    z_max_mm: float,
+    workspace_margin_mm: float,
+) -> bool:
+    """Allow a long-lived but oscillatory SETTLE to return toward home.
+
+    The normal LOCAL_HOLD transition remains the preferred path. This fallback
+    only fires for an automatic release with a new, finite stereo estimate,
+    after the configured dwell time, while the sphere is still within relaxed
+    velocity, acoustic-range, and Z-workspace safety bounds.
+    """
+    if (
+        not bool(automatic_hold)
+        or not bool(release_confirmed)
+        or not bool(measurement_updated)
+        or settle_started_sec is None
+    ):
+        return False
+
+    values = np.asarray(
+        [vz_mm_s, vxy_mm_s, target_distance_mm, z_mm],
+        dtype=float,
+    )
+    if not bool(np.all(np.isfinite(values))):
+        return False
+
+    elapsed_sec = max(0.0, float(now_sec) - float(settle_started_sec))
+    if elapsed_sec < max(0.0, float(timeout_sec)):
+        return False
+
+    margin_mm = max(0.0, float(workspace_margin_mm))
+    z_lower_mm = float(z_min_mm) + margin_mm
+    z_upper_mm = float(z_max_mm) - margin_mm
+    return bool(
+        abs(float(vz_mm_s)) <= max(0.0, float(maximum_abs_vz_mm_s))
+        and abs(float(vxy_mm_s)) <= max(0.0, float(maximum_vxy_mm_s))
+        and abs(float(target_distance_mm))
+        <= max(0.0, float(maximum_target_distance_mm))
+        and z_lower_mm <= float(z_mm) <= z_upper_mm
+    )
+
+
 def update_brake_exit_stability(
     *,
     now_sec: float,

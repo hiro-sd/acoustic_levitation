@@ -75,6 +75,7 @@ from manual_release_tracking.core.auto_release_capture import (
     make_braking_plan,
     predict_capture_position,
     should_start_return_home,
+    should_start_settle_timeout_return_home,
     trajectory_target_z,
     update_brake_exit_stability,
     update_capture_stability,
@@ -2409,11 +2410,14 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     ),
                                 )
                             recovery_telemetry.vz_mm_s = vz_now
-                            recovery_telemetry.xy_distance_to_target_mm = float(
+                            sphere_target_distance_now = float(
                                 np.hypot(
                                     motion_estimate.x_mm - target.x,
                                     motion_estimate.y_mm - target.y,
                                 )
+                            )
+                            recovery_telemetry.xy_distance_to_target_mm = (
+                                sphere_target_distance_now
                             )
                             recovery_telemetry.commanded_intensity = (
                                 capture_intensity_ratio
@@ -2542,6 +2546,129 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     f"{return_setpoint.z:.1f}) mm, "
                                     f"vxy={vxy_now:.1f} mm/s, "
                                     f"vz={vz_now:.1f} mm/s"
+                                )
+                            elif should_start_settle_timeout_return_home(
+                                now_sec=now_capture,
+                                settle_started_sec=capture_settle_started_at,
+                                timeout_sec=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_settle_return_timeout_sec",
+                                        10.0,
+                                    )
+                                ),
+                                automatic_hold=auto_hold_active,
+                                release_confirmed=auto_release_confirmed,
+                                measurement_updated=new_settle_measurement,
+                                vz_mm_s=vz_now,
+                                maximum_abs_vz_mm_s=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_settle_return_max_abs_vz_mm_s",
+                                        200.0,
+                                    )
+                                ),
+                                vxy_mm_s=vxy_now,
+                                maximum_vxy_mm_s=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_settle_return_max_vxy_mm_s",
+                                        200.0,
+                                    )
+                                ),
+                                target_distance_mm=(
+                                    sphere_target_distance_now
+                                ),
+                                maximum_target_distance_mm=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_settle_return_max_target_distance_mm",
+                                        15.0,
+                                    )
+                                ),
+                                z_mm=motion_estimate.z_mm,
+                                z_min_mm=cfg.z_min,
+                                z_max_mm=cfg.z_max,
+                                workspace_margin_mm=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_settle_return_z_workspace_margin_mm",
+                                        10.0,
+                                    )
+                                ),
+                            ):
+                                settle_elapsed_sec = max(
+                                    0.0,
+                                    now_capture
+                                    - float(capture_settle_started_at),
+                                )
+                                # Begin the return at the current filtered
+                                # sphere position so the timeout transition
+                                # itself does not introduce a reference jump.
+                                return_setpoint = HomePosition(
+                                    x=float(motion_estimate.x_mm),
+                                    y=float(motion_estimate.y_mm),
+                                    z=float(
+                                        np.clip(
+                                            motion_estimate.z_mm,
+                                            cfg.z_min,
+                                            cfg.z_max,
+                                        )
+                                    ),
+                                )
+                                target = Target3D(
+                                    return_setpoint.x,
+                                    return_setpoint.y,
+                                    return_setpoint.z,
+                                )
+                                control_mode = RETURN_TO_HOME
+                                local_hold_start_time = None
+                                capture_stable_since = None
+                                capture_settle_started_at = None
+                                capture_settle_last_measurement_time = None
+                                capture_settle_intensity_state = (
+                                    SETTLE_INTENSITY_NORMAL
+                                )
+                                mode_transition_reason = (
+                                    "auto_release_settle_timeout_return_home"
+                                )
+                                controller.reset(target)
+                                capture_logger.write(
+                                    event=(
+                                        "capture_settle_timeout_return_home"
+                                    ),
+                                    release_timestamp_ms=(
+                                        auto_release_timestamp_ms
+                                    ),
+                                    event_time_sec=now_capture,
+                                    estimate=motion_estimate,
+                                    target=target,
+                                    intensity=current_intensity_ratio,
+                                    reason=(
+                                        f"settle_elapsed_sec="
+                                        f"{settle_elapsed_sec:.3f};"
+                                        f"vxy_mm_s={vxy_now:.2f};"
+                                        f"vz_mm_s={vz_now:.2f};"
+                                        f"sphere_target_distance_mm="
+                                        f"{sphere_target_distance_now:.2f};"
+                                        f"z_mm={motion_estimate.z_mm:.2f};"
+                                        f"return_start=("
+                                        f"{return_setpoint.x:.2f},"
+                                        f"{return_setpoint.y:.2f},"
+                                        f"{return_setpoint.z:.2f});"
+                                        f"home=({home.x:.2f},{home.y:.2f},"
+                                        f"{home.z:.2f})"
+                                    ),
+                                )
+                                print(
+                                    "[AUTO_RELEASE] CAPTURE_SETTLE -> "
+                                    "RETURN_TO_HOME after "
+                                    f"{settle_elapsed_sec:.1f}s; "
+                                    f"vxy={vxy_now:.1f} mm/s, "
+                                    f"vz={vz_now:.1f} mm/s, "
+                                    f"start=({return_setpoint.x:.1f}, "
+                                    f"{return_setpoint.y:.1f}, "
+                                    f"{return_setpoint.z:.1f}) mm"
                                 )
 
                         elif control_mode == FOLLOW_AND_BRAKE:

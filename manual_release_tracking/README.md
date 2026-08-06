@@ -73,7 +73,10 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
 9. `LOCAL_HOLD`で離した位置を3秒間保持した後、既存の速度制限付き
    `RETURN_TO_HOME`へ移り、基準位置をAUTD中心・Z=400 mmへ徐々に戻します。
    基準位置の移動速度はXY 20 mm/s、Z 15 mm/sです。復帰完了後も
-   通常PIDでhomeを保持します。
+   通常PIDでhomeを保持します。また、端の音場などで振動が残り
+   `LOCAL_HOLD`の厳しい条件を満たさない場合も、`CAPTURE_SETTLE`が10秒間
+   連続し、球体が緩和した速度・音場距離・Zワークスペース条件内にあれば、
+   現在のフィルタ済み球体位置から`RETURN_TO_HOME`へ直接移行します。
 10. 自動開始した捕捉・保持中にXYカメラの `GRASPED` が再成立した場合は、
    再把持または誤releaseと判断し、intensityを0にして音場を停止します。
    また、いずれの自動保持状態でもステレオ3D測定が100 ms以上更新されない
@@ -105,7 +108,8 @@ intensity変化はデッドバンドで無視し、微小な速度ノイズに�
 - 送信時に使用したステレオ位置と速度
 - 予測時間と実測遅延を考慮した予測位置
 - 実際のtarget、intensity、AUTDコマンドsequence
-- release確定、候補取消、`CAPTURE_SETTLE`/`LOCAL_HOLD`遷移、再把持停止の理由
+- release確定、候補取消、`CAPTURE_SETTLE`/`LOCAL_HOLD`/
+  `RETURN_TO_HOME`遷移、再把持停止の理由
 
 実効遅延の測定専用ログは、実行時に自動で
 `manual_release_tracking/auto_release_delay_measurements.csv`へ追記されます。
