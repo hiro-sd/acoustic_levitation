@@ -314,7 +314,7 @@ class TipContactState:
 @dataclass(frozen=True)
 class TipContactStateConfig:
     grasp_confirm_ms: float = 50.0
-    release_confirm_ms: float = 35.0
+    release_confirm_ms: float = 25.0
     released_latch_ms: float = 500.0
 
 

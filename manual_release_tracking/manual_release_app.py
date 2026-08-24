@@ -340,14 +340,14 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     getattr(
                         cfg,
                         "auto_release_post_release_min_samples",
-                        5,
+                        3,
                     )
                 ),
                 minimum_velocity_span_sec=float(
                     getattr(
                         cfg,
                         "auto_release_post_release_min_span_sec",
-                        0.020,
+                        0.010,
                     )
                 ),
                 known_z_acceleration_mm_s2=-float(cfg.gravity_mm_s2),

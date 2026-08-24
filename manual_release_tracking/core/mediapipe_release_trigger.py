@@ -185,7 +185,7 @@ class MediaPipeReleaseTrigger:
                 getattr(cfg, "mediapipe_grasp_confirm_ms", 50.0)
             ),
             release_confirm_ms=float(
-                getattr(cfg, "mediapipe_release_confirm_ms", 35.0)
+                getattr(cfg, "mediapipe_release_confirm_ms", 25.0)
             ),
             released_latch_ms=float(
                 getattr(cfg, "mediapipe_released_latch_ms", 500.0)
@@ -220,7 +220,7 @@ class MediaPipeReleaseTrigger:
             getattr(cfg, "mediapipe_auto_release_max_result_age_ms", 80.0)
         )
         submit_max_fps = float(
-            getattr(cfg, "mediapipe_submit_max_fps", 60.0)
+            getattr(cfg, "mediapipe_submit_max_fps", 90.0)
         )
         self.submit_interval_sec = (
             0.0 if submit_max_fps <= 0.0 else 1.0 / submit_max_fps

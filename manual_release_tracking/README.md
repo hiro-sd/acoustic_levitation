@@ -24,9 +24,9 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
 
 1. 起動後は球検出、ステレオ3D推定、手認識だけを行い、音場は出しません。
 2. 現在の自動保持実験ではXYカメラだけで親指と人差し指を判定し、
-   接触が継続すると `GRASPED` になります。
+   MediaPipeへの投入上限を90 fpsとして、接触が継続すると `GRASPED` になります。
 3. XYカメラで両指先が明確に離れた状態が継続すると
-   `GRASPED -> RELEASED` へ遷移します。手ランドマークの一時的な
+   25 msの確認後に`GRASPED -> RELEASED`へ遷移します。手ランドマークの一時的な
    検出ロストはreleaseとして扱いません。
 4. 最初の明確な離反を `RELEASE_CANDIDATE` とした時点で、捕捉専用の
    3D運動履歴を作ります。ステレオ測定は常に撮影時刻付きで直近200 msを
@@ -34,8 +34,8 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
    以降の測定だけを捕捉用履歴へ再投入します。これによりrelease前の測定を
    混ぜず、MediaPipe処理中に取得済みのrelease後フレームを再利用します。
    この観測中は音場を出しません。接触へ戻った場合は候補と履歴を破棄します。
-5. release確定に加えて、release候補より後の新規ステレオ測定が最低4フレーム、
-   15 ms以上揃ってから初期捕捉を開始します。直近最大60 msのXYZ位置を
+5. release確定に加えて、release候補より後の新規ステレオ測定が最低3フレーム、
+   10 ms以上揃ってから初期捕捉を開始します。直近最大60 msのXYZ位置を
    時間に対して回帰し、最新時刻の位置と速度を求めます。Zは音場がない間の
    自由落下として既知の重力加速度を含むモデルで回帰するため、観測区間中央の
    平均速度ではなく最新時刻の速度を推定します。その後、最新測定値の経過時間と

@@ -42,10 +42,10 @@ if __name__ == "__main__":
     cfg.mediapipe_tip_gap_normalized_max = 0.45
     cfg.mediapipe_min_opposition_angle_deg = 60.0
     cfg.mediapipe_grasp_confirm_ms = 50.0
-    cfg.mediapipe_release_confirm_ms = 35.0
+    cfg.mediapipe_release_confirm_ms = 25.0
     cfg.mediapipe_released_latch_ms = 500.0
     cfg.mediapipe_result_pair_tolerance_ms = 40.0
-    cfg.mediapipe_submit_max_fps = 60.0
+    cfg.mediapipe_submit_max_fps = 90.0
     # Z camera remains part of stereo 3D reconstruction, but its hand landmarks
     # are not reliable enough for the grasp/release decision on the current rig.
     cfg.mediapipe_auto_release_camera = "xy"
@@ -70,12 +70,12 @@ if __name__ == "__main__":
 
     # The initial capture command no longer uses motion while the sphere is
     # held. The first separation resets a dedicated estimator, the field stays
-    # off, and capture starts only after release confirmation plus at least four
-    # post-release stereo frames spanning 15 ms. Z is fitted with known gravity
+    # off, and capture starts only after release confirmation plus at least three
+    # post-release stereo frames spanning 10 ms. Z is fitted with known gravity
     # during this no-field observation window.
     cfg.auto_release_post_release_window_sec = 0.060
-    cfg.auto_release_post_release_min_samples = 4
-    cfg.auto_release_post_release_min_span_sec = 0.015
+    cfg.auto_release_post_release_min_samples = 3
+    cfg.auto_release_post_release_min_span_sec = 0.010
     cfg.auto_release_post_release_timeout_sec = 0.100
     # Keep recent timestamped stereo measurements so frames captured after the
     # release image but before the asynchronous MediaPipe result are not lost.
