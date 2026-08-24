@@ -66,6 +66,9 @@ def make_target(intensity_ratio):
 
 
 class AutdSenderIntensityIntegrationTests(unittest.TestCase):
+    def test_existing_target_defaults_to_unweighted_stm(self):
+        self.assertIsNone(make_target(0.6).focus_dwell_counts)
+
     def test_changed_intensity_is_combined_with_stm(self):
         sender = make_sender(last_intensity=0.6)
         stm = object()

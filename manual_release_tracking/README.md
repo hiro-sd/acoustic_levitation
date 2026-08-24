@@ -73,7 +73,7 @@ python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
    XY速度60 mm/s以下、XY距離15 mm以下、Z誤差10 mm以下です。
 9. `LOCAL_HOLD`で離した位置を3秒間保持した後、既存の速度制限付き
    `RETURN_TO_HOME`へ移り、基準位置をAUTD中心・Z=400 mmへ徐々に戻します。
-   基準位置の移動速度はXY 20 mm/s、Z 15 mm/sです。復帰完了後も
+   基準位置の移動速度はXY 30 mm/s、Z 25 mm/sです。復帰完了後も
    通常PIDでhomeを保持します。また、端の音場などで振動が残り
    `LOCAL_HOLD`の厳しい条件を満たさない場合も、`CAPTURE_SETTLE`が10秒間
    連続し、球体が緩和した速度・音場距離・Zワークスペース条件内にあれば、

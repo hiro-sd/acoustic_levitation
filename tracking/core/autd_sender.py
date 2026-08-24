@@ -10,6 +10,7 @@ from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, Pa
 
 from .config import AppConfig
 from .models import HomePosition
+from .weighted_stm import expand_focus_offsets
 
 
 def make_autd_arrangement():
@@ -139,6 +140,7 @@ class TargetCommand:
     mask_center_y: float | None = None
     radius: float | None = None
     intensity_ratio: float | None = None
+    focus_dwell_counts: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -189,6 +191,7 @@ class AutdSender:
     mask_center_y: float | None = None,
     radius: float | None = None,
     intensity_ratio: float | None = None,
+    focus_dwell_counts: tuple[int, ...] | None = None,
     ):
         """
         メインスレッドから呼ぶ。
@@ -204,6 +207,11 @@ class AutdSender:
                 mask_center_y=None if mask_center_y is None else float(mask_center_y),
                 radius=None if radius is None else float(radius),
                 intensity_ratio=None if intensity_ratio is None else float(intensity_ratio),
+                focus_dwell_counts=(
+                    None
+                    if focus_dwell_counts is None
+                    else tuple(int(value) for value in focus_dwell_counts)
+                ),
             )
             self._seq += 1
             return self._seq
@@ -334,7 +342,11 @@ class AutdSender:
                     self._last_radius = radius
 
                 center_vec = np.array([target.x, target.y, target.z], dtype=np.float32)
-                foci = center_vec[None, :] + self.circle_offsets
+                stm_offsets = expand_focus_offsets(
+                    self.circle_offsets,
+                    target.focus_dwell_counts,
+                )
+                foci = center_vec[None, :] + stm_offsets
 
                 if self.cfg.autd_field_mode == "stm_circle":
                     stm = FociSTM(
@@ -346,6 +358,10 @@ class AutdSender:
                     )
 
                 elif self.cfg.autd_field_mode == "static_multi_focus_circle":
+                    if target.focus_dwell_counts is not None:
+                        raise ValueError(
+                            "focus_dwell_counts is supported only by stm_circle"
+                        )
                     gain = make_static_multi_focus_gain(
                         self.cfg,
                         center_vec,
