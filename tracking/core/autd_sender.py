@@ -275,17 +275,15 @@ class AutdSender:
             self._last_mask_center_x = mask_x
             self._last_mask_center_y = mask_y
 
-    def _send_intensity_if_needed(self, target: TargetCommand):
+    def _combine_stm_with_intensity_if_needed(self, stm, target: TargetCommand):
         """
-        intensity_ratio が変わったときだけ Static を再送する。
-        """ 
-        if self.cfg.autd_field_mode == "static_multi_focus_circle":
-            # 多焦点Staticモードでは Static と GSPAT を同時に送るため、
-            # ここでStaticだけを単独再送しない。
-            return
+        intensity_ratio が変わった場合は、Static と STM を1回の送信にまとめる。
 
+        戻り値の intensity_ratio は送信成功後にだけ記録する。これにより、
+        送信失敗時には次回も同じIntensity更新を再試行できる。
+        """
         if target.intensity_ratio is None:
-            return
+            return stm, None
 
         ratio = float(np.clip(target.intensity_ratio, 0.0, 1.0))
 
@@ -295,15 +293,20 @@ class AutdSender:
         )
 
         if not need_update:
-            return
+            return stm, None
 
-        self.autd.send(
+        return (
             Static(
                 intensity=int(0xFF * ratio)
-            )
-        )
+            ),
+            stm,
+        ), ratio
 
-        self._last_intensity_ratio = ratio
+    def _send_field_datagram(self, datagram, intensity_ratio: float | None):
+        """音場を送信し、成功したIntensityだけを送信済みとして記録する。"""
+        self.autd.send(datagram)
+        if intensity_ratio is not None:
+            self._last_intensity_ratio = float(intensity_ratio)
 
     def _loop(self):
         print("[THREAD] AUTD Control Thread Started.")
@@ -322,6 +325,7 @@ class AutdSender:
 
             try:
                 t0 = time.perf_counter()
+                sent_intensity_ratio = None
 
                 radius = float(self.cfg.radius if target.radius is None else target.radius)
 
@@ -333,10 +337,13 @@ class AutdSender:
                 foci = center_vec[None, :] + self.circle_offsets
 
                 if self.cfg.autd_field_mode == "stm_circle":
-                    datagram = FociSTM(
+                    stm = FociSTM(
                         foci=[foci[i] for i in range(foci.shape[0])],
                         config=self.cfg.stm_freq_hz * Hz,
                     ).into_nearest()
+                    datagram, sent_intensity_ratio = (
+                        self._combine_stm_with_intensity_if_needed(stm, target)
+                    )
 
                 elif self.cfg.autd_field_mode == "static_multi_focus_circle":
                     gain = make_static_multi_focus_gain(
@@ -353,7 +360,7 @@ class AutdSender:
                         Static(intensity=int(0xFF * float(np.clip(intensity_ratio, 0.0, 1.0)))),
                         gain,
                     )
-                    self._last_intensity_ratio = float(np.clip(intensity_ratio, 0.0, 1.0))
+                    sent_intensity_ratio = float(np.clip(intensity_ratio, 0.0, 1.0))
 
                 else:
                     raise ValueError(
@@ -365,9 +372,8 @@ class AutdSender:
                 t1 = time.perf_counter()
 
                 self._send_output_mask_if_needed(target)
-                self._send_intensity_if_needed(target)
                 send_started_time_sec = time.perf_counter()
-                self.autd.send(datagram)
+                self._send_field_datagram(datagram, sent_intensity_ratio)
 
                 t2 = time.perf_counter()
                 with self._lock:
