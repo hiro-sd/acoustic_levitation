@@ -66,7 +66,7 @@ if __name__ == "__main__":
     cfg.auto_release_min_velocity_samples = 5
     cfg.auto_release_min_velocity_span_sec = 0.020
     cfg.auto_release_max_motion_age_sec = 0.050
-    cfg.auto_release_actuation_prediction_sec = 0.013
+    cfg.auto_release_actuation_prediction_sec = 0.0075
 
     # The initial capture command no longer uses motion while the sphere is
     # held. The first separation resets a dedicated estimator, the field stays

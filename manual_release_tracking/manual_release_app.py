@@ -726,7 +726,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         getattr(
                             cfg,
                             "auto_release_actuation_prediction_sec",
-                            0.013,
+                            0.0075,
                         )
                     ),
                     gravity_mm_s2=float(cfg.gravity_mm_s2),
@@ -1753,7 +1753,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     getattr(
                                         cfg,
                                         "auto_release_actuation_prediction_sec",
-                                        0.013,
+                                        0.0075,
                                     )
                                 ),
                             )
