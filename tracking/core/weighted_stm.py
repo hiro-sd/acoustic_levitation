@@ -18,6 +18,34 @@ class WeightedDwellPattern:
         return int(sum(self.slot_counts))
 
 
+def cycle_frequency_preserving_slot_rate(
+    *,
+    base_cycle_frequency_hz: float,
+    base_point_num: int,
+    total_slots: int,
+) -> float:
+    """Keep the AUTD STM slot update rate unchanged after slot expansion.
+
+    ``FociSTM`` interprets its frequency as the frequency of one complete STM
+    cycle.  Therefore, expanding an 8-point, 100 Hz STM to 64 dwell slots
+    without changing the cycle frequency would increase the slot update rate
+    from 800 Hz to 6400 Hz.  The default Silencer cannot complete its phase
+    interpolation in that short sampling period.  Scaling the cycle frequency
+    by ``base_point_num / total_slots`` preserves the original slot period.
+    """
+
+    frequency = float(base_cycle_frequency_hz)
+    point_num = int(base_point_num)
+    slots = int(total_slots)
+    if frequency <= 0.0:
+        raise ValueError("base_cycle_frequency_hz must be positive")
+    if point_num <= 0:
+        raise ValueError("base_point_num must be positive")
+    if slots <= 0:
+        raise ValueError("total_slots must be positive")
+    return frequency * float(point_num) / float(slots)
+
+
 def make_weighted_dwell_pattern(
     *,
     point_num: int,
@@ -80,11 +108,13 @@ def expand_focus_offsets(
     offsets: np.ndarray,
     slot_counts: tuple[int, ...] | list[int] | np.ndarray | None,
 ) -> np.ndarray:
-    """Repeat each circular focus according to its dwell allocation.
+    """Schedule each circular focus according to its slot allocation.
 
     ``None`` returns the original offsets unchanged, which is the normal
-    application path. Consecutive repeats hold one focus for longer while the
-    configured STM cycle frequency remains unchanged.
+    application path. Allocated presentations are spread over several circular
+    passes instead of grouping every repetition consecutively. In particular,
+    equal counts produce the original point order repeated several times, so a
+    zero-bias control pulse retains the normal 8-point STM timing.
     """
 
     values = np.asarray(offsets, dtype=np.float32)
@@ -98,4 +128,23 @@ def expand_focus_offsets(
         raise ValueError("slot_counts must have one entry per focus")
     if np.any(counts < 1):
         raise ValueError("each focus must receive at least one dwell slot")
-    return np.repeat(values, counts, axis=0)
+
+    round_count = int(np.max(counts))
+    scheduled_rounds: list[set[int]] = []
+    for count in counts:
+        # Place each occurrence near the center of an equal subdivision of the
+        # available rounds.  This is a deterministic, evenly spaced schedule.
+        rounds = np.floor(
+            (np.arange(int(count), dtype=float) + 0.5)
+            * float(round_count)
+            / float(count)
+        ).astype(int)
+        scheduled_rounds.append(set(int(value) for value in rounds))
+
+    indices = [
+        focus_index
+        for round_index in range(round_count)
+        for focus_index, rounds in enumerate(scheduled_rounds)
+        if round_index in rounds
+    ]
+    return values[np.asarray(indices, dtype=int)]

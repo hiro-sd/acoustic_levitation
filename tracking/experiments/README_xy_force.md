@@ -27,6 +27,15 @@ at its value immediately before the pulse. Z feedback remains active. After the
 pulse, the original uniform STM and ordinary XYZ PID are restored for a 2 s
 recovery interval.
 
+The normal 8-point STM runs at 100 Hz (800 focus slots/s). During a weighted
+64-slot pulse, its complete-cycle frequency is automatically reduced to
+12.5 Hz so that the focus-slot update rate remains 800 slots/s. This keeps the
+existing Silencer interpolation valid; the ordinary application and normal
+unweighted STM remain at their existing frequency. Repeated presentations are
+distributed across circular passes, so the zero-bias 64-slot control sequence
+is the ordinary 8-point circle repeated eight times rather than eight long
+consecutive holds at each point.
+
 Outputs:
 
 - `tracking/xy_force_frame_log.csv`: synchronized per-frame measurements

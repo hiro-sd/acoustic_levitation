@@ -10,7 +10,10 @@ from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, Pa
 
 from .config import AppConfig
 from .models import HomePosition
-from .weighted_stm import expand_focus_offsets
+from .weighted_stm import (
+    cycle_frequency_preserving_slot_rate,
+    expand_focus_offsets,
+)
 
 
 def make_autd_arrangement():
@@ -349,9 +352,23 @@ class AutdSender:
                 foci = center_vec[None, :] + stm_offsets
 
                 if self.cfg.autd_field_mode == "stm_circle":
+                    stm_cycle_frequency_hz = float(self.cfg.stm_freq_hz)
+                    if target.focus_dwell_counts is not None:
+                        # FociSTM's frequency is the frequency of one complete
+                        # cycle, not the per-focus update rate.  A weighted
+                        # pattern contains more slots than the normal 8-point
+                        # STM, so lower only its cycle frequency to retain the
+                        # existing slot period and the current Silencer setup.
+                        stm_cycle_frequency_hz = (
+                            cycle_frequency_preserving_slot_rate(
+                                base_cycle_frequency_hz=self.cfg.stm_freq_hz,
+                                base_point_num=len(self.circle_offsets),
+                                total_slots=len(stm_offsets),
+                            )
+                        )
                     stm = FociSTM(
                         foci=[foci[i] for i in range(foci.shape[0])],
-                        config=self.cfg.stm_freq_hz * Hz,
+                        config=stm_cycle_frequency_hz * Hz,
                     ).into_nearest()
                     datagram, sent_intensity_ratio = (
                         self._combine_stm_with_intensity_if_needed(stm, target)
