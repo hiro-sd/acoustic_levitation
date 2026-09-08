@@ -6,6 +6,14 @@ import matplotlib.pyplot as plt
 import sys
 import os
 
+plt.rcParams.update(
+    {
+        "font.family": "serif",
+        "font.serif": ["Times New Roman"],
+        "mathtext.fontset": "stix",
+    }
+)
+
 # stability_log.csv を読み込み、
 # FIXED vs PID の安定性を x, y, z の各方向および総合距離で比較する
 
@@ -370,7 +378,7 @@ def print_improvement(results):
 def plot_single_file(df, results, out_dir):
     """Save requested single-file charts as separate PNG images."""
     colors = {"FIXED": "#e07b54", "PID": "#4c9be8"}
-    labels = {"FIXED": "Control off (FIXED)", "PID": "Control on (PID)"}
+    labels = {"FIXED": "Fixed", "PID": "Controlled"}
     label_fs = 20
     tick_fs = 20
     legend_fs = 18
@@ -393,8 +401,8 @@ def plot_single_file(df, results, out_dir):
     ax.set_xlim(center_x - shared_range, center_x + shared_range)
     ax.set_ylim(center_y - shared_range, center_y + shared_range)
     
-    ax.set_xlabel("dx [mm]", fontsize=label_fs)
-    ax.set_ylabel("dy [mm]", fontsize=label_fs)
+    ax.set_xlabel(r"$d_x$ [mm]", fontsize=label_fs)
+    ax.set_ylabel(r"$d_y$ [mm]", fontsize=label_fs)
     ax.axhline(0, color="k", lw=0.5)
     ax.axvline(0, color="k", lw=0.5)
     ax.tick_params(axis="both", which="major", labelsize=tick_fs)
@@ -415,8 +423,8 @@ def plot_single_file(df, results, out_dir):
             continue
         plotted_dz = True
         ax.scatter(sub["dx"], sub["dz"], s=6, alpha=0.35, color=c, label=labels[mode])
-    ax.set_xlabel("dx [mm]", fontsize=label_fs)
-    ax.set_ylabel("dz [mm]", fontsize=label_fs)
+    ax.set_xlabel(r"$d_x$ [mm]", fontsize=label_fs)
+    ax.set_ylabel(r"$d_z$ [mm]", fontsize=label_fs)
     ax.axhline(0, color="k", lw=0.5)
     ax.axvline(0, color="k", lw=0.5)
     ax.tick_params(axis="both", which="major", labelsize=tick_fs)
@@ -439,8 +447,8 @@ def plot_single_file(df, results, out_dir):
             continue
         plotted_dz = True
         ax.scatter(sub["dy"], sub["dz"], s=6, alpha=0.35, color=c, label=labels[mode])
-    ax.set_xlabel("dy [mm]", fontsize=label_fs)
-    ax.set_ylabel("dz [mm]", fontsize=label_fs)
+    ax.set_xlabel(r"$d_y$ [mm]", fontsize=label_fs)
+    ax.set_ylabel(r"$d_z$ [mm]", fontsize=label_fs)
     ax.axhline(0, color="k", lw=0.5)
     ax.axvline(0, color="k", lw=0.5)
     ax.tick_params(axis="both", which="major", labelsize=tick_fs)
@@ -505,7 +513,7 @@ def plot_single_file(df, results, out_dir):
             plotted_label[mode] = True
             plotted_any = True
 
-        ax.set_xlabel("Elapsed Time [s]", fontsize=label_fs)
+        ax.set_xlabel("Elapsed time [s]", fontsize=label_fs)
         ax.set_ylabel(ylabel, fontsize=label_fs)
         ax.axhline(0, color="k", lw=0.8, alpha=0.8)
         ax.set_ylim(shared_y_lim)
@@ -521,16 +529,16 @@ def plot_single_file(df, results, out_dir):
         plt.close(fig)
         out_paths.append(out_path)
 
-    save_axis_timeseries("dx", "dx [mm]", "stability_time_series_dx.png")
-    save_axis_timeseries("dy", "dy [mm]", "stability_time_series_dy.png")
-    save_axis_timeseries("dz", "dz [mm]", "stability_time_series_dz.png")
+    save_axis_timeseries("dx", r"$d_x$ [mm]", "stability_time_series_dx.png")
+    save_axis_timeseries("dy", r"$d_y$ [mm]", "stability_time_series_dy.png")
+    save_axis_timeseries("dz", r"$d_z$ [mm]", "stability_time_series_dz.png")
 
     # 2b) Combined Time Series: dx, dy, dz in one figure
     fig, axes = plt.subplots(3, 1, figsize=(10.5, 10.0), sharex=True)
     axis_specs = [
-        ("dx", "dx [mm]", "データなし"),
-        ("dy", "dy [mm]", "データなし"),
-        ("dz", "dz [mm]", "zデータなし"),
+        ("dx", r"$d_x$ [mm]", "データなし"),
+        ("dy", r"$d_y$ [mm]", "データなし"),
+        ("dz", r"$d_z$ [mm]", "zデータなし"),
     ]
 
     plotted_label = {"FIXED": False, "PID": False}
@@ -572,7 +580,7 @@ def plot_single_file(df, results, out_dir):
     handles, legend_labels = axes[0].get_legend_handles_labels()
     if handles:
         axes[0].legend(handles, legend_labels, fontsize=legend_fs, loc="upper right")
-    axes[-1].set_xlabel("Elapsed Time [s]", fontsize=label_fs)
+    axes[-1].set_xlabel("Elapsed time [s]", fontsize=label_fs)
 
     plt.tight_layout()
     out_combined = os.path.join(out_dir, "stability_time_series.png")
@@ -583,7 +591,12 @@ def plot_single_file(df, results, out_dir):
     # 3) Axis-wise Stability Comparison
     fig, ax = plt.subplots(figsize=(7.5, 5.5))
     metrics = ["sigma_x", "sigma_y", "sigma_z", "sigma_xyz"]
-    metric_labels = ["std_x", "std_y", "std_z", "std_xyz"]
+    metric_labels = [
+        r"$\mathit{std}_x$",
+        r"$\mathit{std}_y$",
+        r"$\mathit{std}_z$",
+        r"$\mathit{std}_{xyz}$",
+    ]
     x = np.arange(len(metrics))
     bar_modes = [m for m in ["FIXED", "PID_NO_DELAY", "PID"] if m in results]
     bar_colors = {
@@ -592,9 +605,9 @@ def plot_single_file(df, results, out_dir):
         "PID": colors["PID"],
     }
     bar_labels = {
-        "FIXED": "FIXED",
-        "PID_NO_DELAY": "PID no delay",
-        "PID": "PID delay",
+        "FIXED": "Fixed",
+        "PID_NO_DELAY": "Controlled (no compensation)",
+        "PID": "Controlled",
     }
     width = min(0.8 / max(1, len(bar_modes)), 0.25)
     offsets = (np.arange(len(bar_modes)) - (len(bar_modes) - 1) / 2.0) * width
@@ -603,7 +616,7 @@ def plot_single_file(df, results, out_dir):
         ax.bar(x + offset, vals, width, label=bar_labels[mode], color=bar_colors[mode])
     ax.set_xticks(x)
     ax.set_xticklabels(metric_labels, fontsize=tick_fs)
-    ax.set_ylabel("Standard Deviation [mm]", fontsize=label_fs)
+    ax.set_ylabel("Standard deviation [mm]", fontsize=label_fs)
     ax.tick_params(axis="y", which="major", labelsize=tick_fs)
     ax.legend(fontsize=legend_fs)
     plt.tight_layout()
