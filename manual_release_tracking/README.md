@@ -20,6 +20,22 @@ cd /Users/yoshidahiroto/Downloads/修士関連/acoustic_levitation
 python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
 ```
 
+SI2026用の中心近傍50試行では、計画release座標を指定せず、各試行の実測
+release XYZを記録します。追加無音時間の既定値は0 msで、従来の捕捉開始
+タイミングを変更しません。
+
+```bash
+venv/bin/python manual_release_tracking/experiments/mediapipe_auto_release_hold.py \
+  --condition-id center_freehand_50 \
+  --extra-delay-ms 0 \
+  --success-hold-sec 10 \
+  --paper-data-dir manual_release_tracking/si2026_data_center50 \
+  --operator YOUR_NAME
+```
+
+実験条件、試行数、成功定義、解析手順は
+[`EXPERIMENT_PROTOCOL_SI2026.md`](./EXPERIMENT_PROTOCOL_SI2026.md)を参照してください。
+
 この実験では次の順序で動作します。
 
 1. 起動後は球検出、ステレオ3D推定、手認識だけを行い、音場は出しません。
@@ -124,3 +140,22 @@ AUTD送信開始・完了までの時間を分解して記録します。
 `manual_release_tracking/auto_release_trajectory_log.csv`へ自動記録されます。
 各新規3D測定に対し、計画停止時間・停止位置・必要力、`z_ref/v_ref`、
 実測`z/vz`、誤差補正、target、intensityを記録します。
+
+SI2026用実験では、上記ログに加えて
+`--paper-data-dir`で指定したディレクトリへ次を自動記録します。
+
+- `trial_timeseries.csv`: release候補から10秒成功判定または失敗までの連続時系列
+- `trial_summary.csv`: 計画・実測release位置、初期状態、最大落下量、成否を1試行1行で集計
+- `session_*.json`: 実験条件、全設定、calibrationハッシュ、Git commit
+
+論文用グラフと条件別集計表は次のコマンドで生成できます。
+
+```bash
+MPLCONFIGDIR=/tmp/si2026-matplotlib \
+venv/bin/python manual_release_tracking/analysis/analyze_si2026_trials.py \
+  --data-dir manual_release_tracking/si2026_data_center50 \
+  --output-dir manual_release_tracking/si2026_figures_center50
+```
+
+誤トリガなどの手動除外は
+`manual_release_tracking/analysis/manage_trial_exclusions.py`でtrial IDと理由を記録します。

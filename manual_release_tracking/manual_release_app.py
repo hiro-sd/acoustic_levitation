@@ -80,6 +80,11 @@ from manual_release_tracking.core.auto_release_capture import (
     update_brake_exit_stability,
     update_capture_stability,
 )
+from manual_release_tracking.core.si2026_experiment_logging import (
+    SI2026Condition,
+    SI2026ExperimentLogger,
+    release_hold_success_reached,
+)
 
 
 def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
@@ -269,8 +274,50 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
             )
         )
     )
+    paper_logger = None
 
     try:
+        paper_logger = SI2026ExperimentLogger(
+            getattr(
+                cfg,
+                "si2026_data_directory",
+                "./manual_release_tracking/si2026_data",
+            ),
+            config=cfg,
+            condition=SI2026Condition(
+                condition_id=str(
+                    getattr(cfg, "si2026_condition_id", "baseline")
+                ),
+                operator=str(getattr(cfg, "si2026_operator", "")),
+                planned_release_x_mm=getattr(
+                    cfg,
+                    "si2026_planned_release_x_mm",
+                    None,
+                ),
+                planned_release_y_mm=getattr(
+                    cfg,
+                    "si2026_planned_release_y_mm",
+                    None,
+                ),
+                planned_release_z_mm=getattr(
+                    cfg,
+                    "si2026_planned_release_z_mm",
+                    None,
+                ),
+                extra_field_delay_ms=(
+                    float(
+                        getattr(
+                            cfg,
+                            "si2026_extra_field_delay_sec",
+                            0.0,
+                        )
+                    )
+                    * 1000.0
+                ),
+                notes=str(getattr(cfg, "si2026_notes", "")),
+            ),
+            enabled=bool(getattr(cfg, "si2026_logging_enabled", False)),
+        )
         with Controller.open(
             autd_arrangement,
             TwinCAT(),
@@ -285,6 +332,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 y=float(base_center[1]),
                 z=float(cfg.default_z),
             )
+            paper_logger.set_reference_center(home.x, home.y, home.z)
 
             display_origin = HomePosition(
                 x=float(home.x),
@@ -387,6 +435,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
             release_observation_event = None
             release_observation_started_at = None
             release_observation_confirmed = False
+            release_motion_ready_at = None
             prev_enter_pressed = False
             prev_demo_toggle_pressed = False
             prev_log_trigger_pressed = False
@@ -604,6 +653,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal release_observation_event
                 nonlocal release_observation_started_at
                 nonlocal release_observation_confirmed
+                nonlocal release_motion_ready_at
 
                 post_release_motion_estimator.reset()
                 release_time_sec = float(event.timestamp_ms) / 1000.0
@@ -620,6 +670,11 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 release_observation_event = event
                 release_observation_started_at = time.perf_counter()
                 release_observation_confirmed = False
+                release_motion_ready_at = None
+                paper_logger.start_trial(
+                    release_timestamp_ms=int(event.timestamp_ms),
+                    release_estimate=seeded_estimate,
+                )
                 capture_logger.write(
                     event="post_release_observation_started",
                     release_timestamp_ms=int(event.timestamp_ms),
@@ -639,10 +694,17 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     f"replayed={seeded_sample_count} frames"
                 )
 
-            def clear_release_observation(reason: str, *, log_event=True):
+            def clear_release_observation(
+                reason: str,
+                *,
+                log_event=True,
+                finish_paper_trial=True,
+                paper_status="invalid",
+            ):
                 nonlocal release_observation_event
                 nonlocal release_observation_started_at
                 nonlocal release_observation_confirmed
+                nonlocal release_motion_ready_at
 
                 estimate = post_release_motion_estimator.latest
                 if log_event and release_observation_event is not None:
@@ -657,9 +719,15 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         reason=reason,
                     )
                 post_release_motion_estimator.reset()
+                if finish_paper_trial:
+                    paper_logger.finish_trial(
+                        status=paper_status,
+                        reason=reason,
+                    )
                 release_observation_event = None
                 release_observation_started_at = None
                 release_observation_confirmed = False
+                release_motion_ready_at = None
 
             def arm_capture_align(event, estimate) -> bool:
                 nonlocal tracking_active
@@ -1002,6 +1070,14 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal capture_xy_pd_saturation_logged
                 nonlocal capture_last_trajectory_log_measurement_time
 
+                paper_status = (
+                    "failure" if paper_logger.field_started else "invalid"
+                )
+                paper_logger.finish_trial(
+                    status=paper_status,
+                    reason=reason,
+                )
+
                 tracking_active = False
                 auto_hold_active = False
                 auto_release_confirmed = False
@@ -1107,6 +1183,16 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 if enter_pressed and not prev_enter_pressed:
                     if tracking_active:
                         print("[INFO] >>> TRACKING PAUSED <<<")
+                        if paper_logger.active:
+                            paper_logger.finish_trial(
+                                status=(
+                                    "failure"
+                                    if paper_logger.field_started
+                                    else "invalid"
+                                ),
+                                reason="tracking_paused_by_operator",
+                                event_time_sec=time.perf_counter(),
+                            )
                         tracking_active = False
                         auto_hold_active = False
                         auto_release_confirmed = False
@@ -1544,11 +1630,17 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     )
                     if (
                         release_observation_started_at is not None
+                        and release_motion_ready_at is None
                         and now_observation - release_observation_started_at
                         > observation_timeout_sec
                     ):
                         clear_release_observation(
-                            "post_release_motion_fit_timeout"
+                            "post_release_motion_fit_timeout",
+                            paper_status=(
+                                "failure"
+                                if release_observation_confirmed
+                                else "invalid"
+                            ),
                         )
                     elif (
                         release_observation_confirmed
@@ -1556,23 +1648,59 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         and observation_estimate.velocity_ready
                     ):
                         observation_event = release_observation_event
-                        capture_logger.write(
-                            event="post_release_motion_ready",
-                            release_timestamp_ms=int(
-                                observation_event.timestamp_ms
-                            ),
-                            event_time_sec=now_observation,
-                            estimate=observation_estimate,
-                            target=None,
-                            intensity=0.0,
-                            reason=(
-                                f"samples={observation_estimate.sample_count};"
-                                f"span_ms="
-                                f"{observation_estimate.history_span_sec * 1000.0:.1f};"
-                                "free_flight_z_model=1"
+                        if release_motion_ready_at is None:
+                            release_motion_ready_at = now_observation
+                            paper_logger.mark_motion_ready(now_observation)
+                            capture_logger.write(
+                                event="post_release_motion_ready",
+                                release_timestamp_ms=int(
+                                    observation_event.timestamp_ms
+                                ),
+                                event_time_sec=now_observation,
+                                estimate=observation_estimate,
+                                target=None,
+                                intensity=0.0,
+                                reason=(
+                                    f"samples={observation_estimate.sample_count};"
+                                    f"span_ms="
+                                    f"{observation_estimate.history_span_sec * 1000.0:.1f};"
+                                    "free_flight_z_model=1;"
+                                    "extra_field_delay_ms="
+                                    f"{float(getattr(cfg, 'si2026_extra_field_delay_sec', 0.0)) * 1000.0:.1f}"
+                                ),
+                            )
+
+                        extra_field_delay_sec = max(
+                            0.0,
+                            float(
+                                getattr(
+                                    cfg,
+                                    "si2026_extra_field_delay_sec",
+                                    0.0,
+                                )
                             ),
                         )
-                        if arm_capture_align(
+                        extra_delay_complete = (
+                            now_observation - release_motion_ready_at
+                            >= extra_field_delay_sec
+                        )
+                        activation_lower_z_mm = float(cfg.z_min) + float(
+                            getattr(
+                                cfg,
+                                "auto_release_z_workspace_margin_mm",
+                                10.0,
+                            )
+                        )
+                        if (
+                            extra_field_delay_sec > 0.0
+                            and observation_estimate.z_mm
+                            <= activation_lower_z_mm
+                        ):
+                            clear_release_observation(
+                                "no_field_workspace_guard_during_observation",
+                                paper_status="failure",
+                            )
+                        elif extra_delay_complete and arm_capture_align(
                             observation_event,
                             observation_estimate,
                         ):
@@ -1580,6 +1708,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                             clear_release_observation(
                                 "post_release_fit_handed_to_capture",
                                 log_event=False,
+                                finish_paper_trial=False,
                             )
                             # Re-arm only after the field starts. A later
                             # confirmed grasp then stops every capture state.
@@ -1594,7 +1723,12 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     )
                 ):
                     clear_release_observation(
-                        "regrasp_detected_during_post_release_observation"
+                        "regrasp_detected_during_post_release_observation",
+                        paper_status=(
+                            "failure"
+                            if release_observation_confirmed
+                            else "invalid"
+                        ),
                     )
 
                 if (
@@ -1856,6 +1990,49 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     f"{int(capture_braking_plan.timeout_limited)}"
                                 ),
                             )
+                            paper_logger.mark_field_sent(
+                                field_time_sec=sent.sent_time_sec,
+                                prediction=capture_onset_prediction,
+                                anchor=capture_xy_anchor,
+                                plan=capture_braking_plan,
+                            )
+
+                paper_hold_elapsed_sec = (
+                    paper_logger.elapsed_from_release_sec()
+                )
+                paper_outside_z_workspace = bool(
+                    motion_estimate is not None
+                    and (
+                        motion_estimate.z_mm < float(cfg.z_min)
+                        or motion_estimate.z_mm > float(cfg.z_max)
+                    )
+                )
+                if (
+                    paper_logger.active
+                    and paper_logger.field_started
+                    and paper_outside_z_workspace
+                ):
+                    paper_logger.finish_trial(
+                        status="failure",
+                        reason="sphere_left_z_workspace_before_10s",
+                        event_time_sec=time.perf_counter(),
+                    )
+                elif (
+                    paper_logger.active
+                    and release_hold_success_reached(
+                        elapsed_from_release_sec=paper_hold_elapsed_sec,
+                        required_hold_sec=float(
+                            getattr(cfg, "si2026_success_hold_sec", 10.0)
+                        ),
+                        field_started=paper_logger.field_started,
+                        automatic_hold_active=auto_hold_active,
+                    )
+                ):
+                    paper_logger.finish_trial(
+                        status="success",
+                        reason="release_hold_duration_reached",
+                        event_time_sec=time.perf_counter(),
+                    )
 
                 # Control
                 if tracking_active:
@@ -2538,6 +2715,9 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                         f"{stable_duration_sec:.3f}s"
                                     ),
                                 )
+                                paper_logger.mark_local_hold_reached(
+                                    now_capture
+                                )
                                 print(
                                     "[AUTO_RELEASE] CAPTURE_SETTLE -> "
                                     "LOCAL_HOLD "
@@ -2659,6 +2839,13 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                         f"home=({home.x:.2f},{home.y:.2f},"
                                         f"{home.z:.2f})"
                                     ),
+                                )
+                                paper_logger.finish_trial(
+                                    status="failure",
+                                    reason=(
+                                        "capture_settle_timeout_return_home"
+                                    ),
+                                    event_time_sec=now_capture,
                                 )
                                 print(
                                     "[AUTO_RELEASE] CAPTURE_SETTLE -> "
@@ -3136,6 +3323,48 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 2,
                             )
 
+                paper_sample_time = time.perf_counter()
+                paper_reference = (
+                    None
+                    if capture_braking_plan is None
+                    else braking_reference_at(
+                        capture_braking_plan,
+                        now_sec=paper_sample_time,
+                    )
+                )
+                paper_logger.record_sample(
+                    sample_time_sec=paper_sample_time,
+                    frame_xy_time_sec=frame_xy_time,
+                    frame_z_time_sec=frame_z_time,
+                    frame_sync_skew_sec=frame_sync_skew,
+                    detected_xy=detected_xy,
+                    detected_z=detected_z,
+                    raw_x_mm=x_mm,
+                    raw_y_mm=y_mm,
+                    raw_z_mm=z_mm,
+                    estimate=motion_estimate,
+                    control_mode=control_mode,
+                    reference=paper_reference,
+                    anchor=capture_xy_anchor,
+                    setpoint=return_setpoint,
+                    target=last_target,
+                    commanded_intensity=(
+                        current_intensity_ratio
+                        if paper_logger.field_started
+                        else 0.0
+                    ),
+                    xy_distance_to_target_mm=(
+                        recovery_telemetry.xy_distance_to_target_mm
+                    ),
+                    required_force_mN=(
+                        recovery_telemetry.required_force_mN
+                    ),
+                    force_saturated=(
+                        recovery_telemetry.capture_force_saturated
+                    ),
+                    plan=capture_braking_plan,
+                )
+
                 logger.write(
                     frame_xy_time=frame_xy_time,
                     frame_z_time=frame_z_time,
@@ -3190,6 +3419,8 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
 
         logger.close()
         trajectory_logger.close()
+        if paper_logger is not None:
+            paper_logger.close()
 
         running_event.clear()
 

@@ -1,3 +1,4 @@
+import argparse
 import sys
 from pathlib import Path
 
@@ -12,7 +13,73 @@ from manual_release_tracking.core.mediapipe_release_trigger import (
 from manual_release_tracking.manual_release_app import run_manual_release_app
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Automatic release capture with optional SI2026 trial logging."
+        )
+    )
+    parser.add_argument(
+        "--condition-id",
+        default="baseline",
+        help="Condition label written to every trial (for example center_freehand_50).",
+    )
+    parser.add_argument(
+        "--release-x-mm",
+        type=float,
+        default=None,
+        help="Planned release X coordinate in the AUTD frame.",
+    )
+    parser.add_argument(
+        "--release-y-mm",
+        type=float,
+        default=None,
+        help="Planned release Y coordinate in the AUTD frame.",
+    )
+    parser.add_argument(
+        "--release-z-mm",
+        "--release-height-mm",
+        dest="release_z_mm",
+        type=float,
+        default=None,
+        help="Planned release Z coordinate (release-height-mm is an alias).",
+    )
+    parser.add_argument(
+        "--extra-delay-ms",
+        type=float,
+        default=0.0,
+        help=(
+            "Additional field-off time after the post-release motion fit is ready. "
+            "Default 0 preserves the existing controller behavior."
+        ),
+    )
+    parser.add_argument("--operator", default="")
+    parser.add_argument("--notes", default="")
+    parser.add_argument(
+        "--success-hold-sec",
+        type=float,
+        default=10.0,
+        help="A trial succeeds when non-contact hold continues this long after release.",
+    )
+    parser.add_argument(
+        "--paper-data-dir",
+        default="./manual_release_tracking/si2026_data",
+    )
+    parser.add_argument(
+        "--no-paper-log",
+        action="store_true",
+        help="Disable the new trial-oriented logger.",
+    )
+    args = parser.parse_args()
+    if args.extra_delay_ms < 0.0:
+        parser.error("--extra-delay-ms must be non-negative")
+    if args.success_hold_sec <= 0.0:
+        parser.error("--success-hold-sec must be positive")
+    return args
+
+
 if __name__ == "__main__":
+    args = parse_args()
     cfg = AppConfig(
         radius=19.0,
         default_z=400.0,
@@ -162,6 +229,20 @@ if __name__ == "__main__":
     cfg.auto_release_trajectory_log_path = (
         "./manual_release_tracking/auto_release_trajectory_log.csv"
     )
+
+    # SI2026 paper data. These options only observe the existing controller.
+    # The optional extra field-off delay is zero by default, so invoking this
+    # script without arguments retains the previous capture timing.
+    cfg.si2026_logging_enabled = not args.no_paper_log
+    cfg.si2026_data_directory = args.paper_data_dir
+    cfg.si2026_condition_id = args.condition_id
+    cfg.si2026_planned_release_x_mm = args.release_x_mm
+    cfg.si2026_planned_release_y_mm = args.release_y_mm
+    cfg.si2026_planned_release_z_mm = args.release_z_mm
+    cfg.si2026_extra_field_delay_sec = args.extra_delay_ms / 1000.0
+    cfg.si2026_success_hold_sec = args.success_hold_sec
+    cfg.si2026_operator = args.operator
+    cfg.si2026_notes = args.notes
 
     # R remains a fallback. Automatic mode starts from the first explicit
     # XY-camera separation after GRASPED; contact return cancels it.
