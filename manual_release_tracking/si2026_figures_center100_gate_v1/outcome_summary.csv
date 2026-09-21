@@ -1,0 +1,3 @@
+scope,condition_id,release_center_x_mm,release_center_y_mm,release_center_z_mm,attempts,eligible_trials,successes,failures,excluded_trials,target_valid_trials,remaining_valid_trials,target_reached,success_rate,success_ci95_low,success_ci95_high
+all,,278.625,218.113,400.0,440,105,37,68,335,100,0,1,0.3523809523809524,0.26769354773870374,0.4474885130689383
+condition,center_freehand_100_gate_v1,278.625,218.113,400.0,440,105,37,68,335,100,0,1,0.3523809523809524,0.26769354773870374,0.4474885130689383

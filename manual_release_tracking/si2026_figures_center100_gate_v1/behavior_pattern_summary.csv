@@ -1,0 +1,6 @@
+behavior_pattern,count,fraction
+Tracking/estimation loss,47,0.44761904761904764
+Held at least 5 s,24,0.22857142857142856
+Left workspace,15,0.14285714285714285
+Held 5 s; observation ended early,13,0.12380952380952381
+Regrasp after release,6,0.05714285714285714

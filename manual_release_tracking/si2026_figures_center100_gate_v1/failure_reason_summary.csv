@@ -1,0 +1,4 @@
+category,reason,count
+Tracking/estimation,capture_stereo_measurement_timeout,47
+Workspace departure,sphere_left_z_workspace_before_success,15
+Regrasp/contact,regrasp_detected_during_auto_hold,6
