@@ -79,6 +79,7 @@ from manual_release_tracking.core.auto_release_capture import (
     trajectory_target_z,
     update_brake_exit_stability,
     update_capture_stability,
+    update_release_motion_gate,
 )
 from manual_release_tracking.core.si2026_experiment_logging import (
     SI2026Condition,
@@ -436,11 +437,17 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
             release_observation_started_at = None
             release_observation_confirmed = False
             release_motion_ready_at = None
+            release_gate_origin_z_mm = None
+            release_gate_consecutive_count = 0
+            release_gate_last_measurement_time = None
+            release_gate_passed = False
+            release_gate_downward_displacement_mm = None
             prev_enter_pressed = False
             prev_demo_toggle_pressed = False
             prev_log_trigger_pressed = False
             prev_delay_toggle_pressed = False
             prev_manual_release_pressed = False
+            prev_false_release_reject_pressed = False
 
             control_mode = NORMAL_HOLD
             demo_active = False
@@ -483,6 +490,9 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
             manual_release_pre_hold_sec = float(
                 getattr(cfg, "manual_release_pre_hold_sec", 0.3)
             )
+            false_release_reject_key = str(
+                getattr(cfg, "false_release_reject_key", "x")
+            ).lower()
 
             def force_command_for_vz(vz_mm_s, current_intensity=None):
                 return capture_force_command_for_velocity(
@@ -654,14 +664,29 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal release_observation_started_at
                 nonlocal release_observation_confirmed
                 nonlocal release_motion_ready_at
+                nonlocal release_gate_origin_z_mm
+                nonlocal release_gate_consecutive_count
+                nonlocal release_gate_last_measurement_time
+                nonlocal release_gate_passed
+                nonlocal release_gate_downward_displacement_mm
 
                 post_release_motion_estimator.reset()
                 release_time_sec = float(event.timestamp_ms) / 1000.0
-                seeded_sample_count = recent_stereo_history.replay_since(
-                    post_release_motion_estimator,
-                    start_time_sec=release_time_sec,
+                release_samples = recent_stereo_history.samples_since(
+                    release_time_sec
                 )
+                for sample in release_samples:
+                    post_release_motion_estimator.update(
+                        sample.measurement_time_sec,
+                        sample.x_mm,
+                        sample.y_mm,
+                        sample.z_mm,
+                    )
+                seeded_sample_count = len(release_samples)
                 seeded_estimate = post_release_motion_estimator.latest
+                release_state_estimate = (
+                    release_samples[0] if release_samples else seeded_estimate
+                )
                 seeded_span_ms = (
                     0.0
                     if seeded_estimate is None
@@ -671,9 +696,20 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 release_observation_started_at = time.perf_counter()
                 release_observation_confirmed = False
                 release_motion_ready_at = None
+                release_gate_origin_z_mm = (
+                    float(release_samples[0].z_mm)
+                    if release_samples
+                    else None
+                    if seeded_estimate is None
+                    else float(seeded_estimate.z_mm)
+                )
+                release_gate_consecutive_count = 0
+                release_gate_last_measurement_time = None
+                release_gate_passed = False
+                release_gate_downward_displacement_mm = None
                 paper_logger.start_trial(
                     release_timestamp_ms=int(event.timestamp_ms),
-                    release_estimate=seeded_estimate,
+                    release_estimate=release_state_estimate,
                 )
                 capture_logger.write(
                     event="post_release_observation_started",
@@ -700,11 +736,17 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 log_event=True,
                 finish_paper_trial=True,
                 paper_status="invalid",
+                reset_gate_state=True,
             ):
                 nonlocal release_observation_event
                 nonlocal release_observation_started_at
                 nonlocal release_observation_confirmed
                 nonlocal release_motion_ready_at
+                nonlocal release_gate_origin_z_mm
+                nonlocal release_gate_consecutive_count
+                nonlocal release_gate_last_measurement_time
+                nonlocal release_gate_passed
+                nonlocal release_gate_downward_displacement_mm
 
                 estimate = post_release_motion_estimator.latest
                 if log_event and release_observation_event is not None:
@@ -728,6 +770,12 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 release_observation_started_at = None
                 release_observation_confirmed = False
                 release_motion_ready_at = None
+                if reset_gate_state:
+                    release_gate_origin_z_mm = None
+                    release_gate_consecutive_count = 0
+                    release_gate_last_measurement_time = None
+                    release_gate_passed = False
+                    release_gate_downward_displacement_mm = None
 
             def arm_capture_align(event, estimate) -> bool:
                 nonlocal tracking_active
@@ -749,6 +797,11 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal capture_xy_anchor
                 nonlocal capture_xy_pd_saturation_logged
                 nonlocal capture_last_trajectory_log_measurement_time
+                nonlocal release_gate_origin_z_mm
+                nonlocal release_gate_consecutive_count
+                nonlocal release_gate_last_measurement_time
+                nonlocal release_gate_passed
+                nonlocal release_gate_downward_displacement_mm
                 nonlocal pending_capture_command_seq
                 nonlocal pending_capture_sent_logged
                 nonlocal capture_upward_brake_active
@@ -931,6 +984,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     if event_time_sec is None
                     else float(event_time_sec)
                 )
+                paper_logger.mark_braking_end(now_sec, estimate, reason)
                 settle_z = float(np.clip(estimate.z_mm, cfg.z_min, cfg.z_max))
                 settle_anchor_x = float(
                     estimate.x_mm
@@ -1043,7 +1097,11 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 )
                 return True
 
-            def stop_automatic_hold(reason: str):
+            def stop_automatic_hold(
+                reason: str,
+                *,
+                paper_status: str | None = None,
+            ):
                 nonlocal tracking_active
                 nonlocal auto_hold_active
                 nonlocal auto_release_confirmed
@@ -1069,13 +1127,39 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 nonlocal capture_xy_anchor
                 nonlocal capture_xy_pd_saturation_logged
                 nonlocal capture_last_trajectory_log_measurement_time
+                nonlocal release_gate_origin_z_mm
+                nonlocal release_gate_consecutive_count
+                nonlocal release_gate_last_measurement_time
+                nonlocal release_gate_passed
+                nonlocal release_gate_downward_displacement_mm
 
-                paper_status = (
-                    "failure" if paper_logger.field_started else "invalid"
-                )
+                stop_time_sec = time.perf_counter()
+                if (
+                    not paper_logger.success_reached
+                    and release_hold_success_reached(
+                        elapsed_from_release_sec=(
+                            paper_logger.elapsed_from_release_sec(stop_time_sec)
+                        ),
+                        required_hold_sec=float(
+                            getattr(cfg, "si2026_success_hold_sec", 5.0)
+                        ),
+                        field_started=paper_logger.field_started,
+                        automatic_hold_active=auto_hold_active,
+                    )
+                ):
+                    paper_logger.mark_success_reached(stop_time_sec)
+                if paper_status is None:
+                    paper_status = (
+                        "success"
+                        if paper_logger.success_reached
+                        else "failure"
+                        if paper_logger.field_started
+                        else "invalid"
+                    )
                 paper_logger.finish_trial(
                     status=paper_status,
                     reason=reason,
+                    event_time_sec=stop_time_sec,
                 )
 
                 tracking_active = False
@@ -1103,6 +1187,11 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 capture_xy_anchor = None
                 capture_xy_pd_saturation_logged = False
                 capture_last_trajectory_log_measurement_time = None
+                release_gate_origin_z_mm = None
+                release_gate_consecutive_count = 0
+                release_gate_last_measurement_time = None
+                release_gate_passed = False
+                release_gate_downward_displacement_mm = None
                 controller.reset(last_target)
 
                 # Keep the sender thread alive for the next release, but make the
@@ -1153,6 +1242,10 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     f"  [{manual_release_key.upper()}] remains available as "
                     "a manual fallback trigger."
                 )
+            print(
+                f"  Press [{false_release_reject_key.upper()}] to reject a "
+                "false release and silence the field."
+            )
             print("  Press [ENTER] only to PAUSE after the trigger.")
             print(
                 f"  Press [{cfg.delay_compensation_toggle_key.upper()}] to "
@@ -1179,6 +1272,75 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     print("[INFO] ESC pressed. Exit.")
                     break
 
+                false_release_reject_pressed = is_key_pressed(
+                    false_release_reject_key
+                )
+                if (
+                    false_release_reject_pressed
+                    and not prev_false_release_reject_pressed
+                ):
+                    if release_observation_event is not None:
+                        clear_release_observation(
+                            "operator_rejected_false_release",
+                            paper_status="invalid",
+                        )
+                        if auto_release_trigger is not None:
+                            auto_release_trigger.reset()
+                        print(
+                            "[AUTO_RELEASE] false release rejected before "
+                            "field activation."
+                        )
+                    elif auto_hold_active:
+                        paper_trial_was_active = paper_logger.active
+                        stop_automatic_hold(
+                            "operator_rejected_false_release",
+                            paper_status="invalid",
+                        )
+                        excluded_trial_id = None
+                        if not paper_trial_was_active:
+                            excluded_trial_id = (
+                                paper_logger.exclude_recent_failed_trial(
+                                    reason=(
+                                        "operator_rejected_false_release_"
+                                        "after_automatic_stop"
+                                    )
+                                )
+                            )
+                        if auto_release_trigger is not None:
+                            auto_release_trigger.reset()
+                        print(
+                            "[AUTO_RELEASE] false release rejected; "
+                            "ultrasound silenced."
+                            + (
+                                f" Excluded {excluded_trial_id}."
+                                if excluded_trial_id is not None
+                                else ""
+                            )
+                        )
+                    else:
+                        excluded_trial_id = (
+                            paper_logger.exclude_recent_failed_trial(
+                                reason=(
+                                    "operator_rejected_false_release_"
+                                    "after_automatic_stop"
+                                )
+                            )
+                        )
+                        if excluded_trial_id is None:
+                            print(
+                                "[AUTO_RELEASE] reject key ignored: no active "
+                                "or recent failed automatic-release trial."
+                            )
+                        else:
+                            print(
+                                "[AUTO_RELEASE] recent false release excluded: "
+                                f"{excluded_trial_id}"
+                            )
+                    time.sleep(0.1)
+                prev_false_release_reject_pressed = (
+                    false_release_reject_pressed
+                )
+
                 enter_pressed = is_key_pressed("enter")
                 if enter_pressed and not prev_enter_pressed:
                     if tracking_active:
@@ -1186,7 +1348,9 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         if paper_logger.active:
                             paper_logger.finish_trial(
                                 status=(
-                                    "failure"
+                                    "success"
+                                    if paper_logger.success_reached
+                                    else "failure"
                                     if paper_logger.field_started
                                     else "invalid"
                                 ),
@@ -1534,7 +1698,6 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     temporary_home=return_setpoint,
                     mode_transition_reason=mode_transition_reason,
                 )
-                mode_transition_reason = ""
 
                 manual_release_pressed = is_key_pressed(manual_release_key)
                 if manual_release_pressed and not prev_manual_release_pressed:
@@ -1625,6 +1788,13 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                             0.100,
                         )
                     )
+                    gate_timeout_sec = float(
+                        getattr(
+                            cfg,
+                            "auto_release_gate_timeout_sec",
+                            0.120,
+                        )
+                    )
                     observation_estimate = (
                         post_release_motion_estimator.latest
                     )
@@ -1636,11 +1806,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     ):
                         clear_release_observation(
                             "post_release_motion_fit_timeout",
-                            paper_status=(
-                                "failure"
-                                if release_observation_confirmed
-                                else "invalid"
-                            ),
+                            paper_status="invalid",
                         )
                     elif (
                         release_observation_confirmed
@@ -1669,6 +1835,100 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     f"{float(getattr(cfg, 'si2026_extra_field_delay_sec', 0.0)) * 1000.0:.1f}"
                                 ),
                             )
+
+                        if (
+                            release_gate_origin_z_mm is None
+                            and observation_estimate is not None
+                        ):
+                            release_gate_origin_z_mm = float(
+                                observation_estimate.z_mm
+                            )
+
+                        if (
+                            release_gate_last_measurement_time
+                            != observation_estimate.measurement_time_sec
+                        ):
+                            gate_result = update_release_motion_gate(
+                                origin_z_mm=release_gate_origin_z_mm,
+                                current_z_mm=observation_estimate.z_mm,
+                                vz_mm_s=observation_estimate.vz_mm_s,
+                                maximum_vz_mm_s=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_gate_max_vz_mm_s",
+                                        -100.0,
+                                    )
+                                ),
+                                minimum_downward_displacement_mm=float(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_gate_min_drop_mm",
+                                        2.5,
+                                    )
+                                ),
+                                required_consecutive_estimates=int(
+                                    getattr(
+                                        cfg,
+                                        "auto_release_gate_consecutive_estimates",
+                                        3,
+                                    )
+                                ),
+                                previous_consecutive_count=(
+                                    release_gate_consecutive_count
+                                ),
+                            )
+                            release_gate_last_measurement_time = (
+                                observation_estimate.measurement_time_sec
+                            )
+                            release_gate_consecutive_count = (
+                                gate_result.consecutive_count
+                            )
+                            release_gate_downward_displacement_mm = (
+                                gate_result.downward_displacement_mm
+                            )
+                            paper_logger.update_release_gate_observation(
+                                origin_z_mm=release_gate_origin_z_mm,
+                                estimate=observation_estimate,
+                                downward_displacement_mm=(
+                                    gate_result.downward_displacement_mm
+                                ),
+                                evidence_seen=(
+                                    gate_result.velocity_condition_met
+                                    and gate_result.displacement_condition_met
+                                ),
+                            )
+                            if gate_result.passed and not release_gate_passed:
+                                release_gate_passed = True
+                                paper_logger.mark_release_gate_passed(
+                                    event_time_sec=now_observation,
+                                    estimate=observation_estimate,
+                                    downward_displacement_mm=(
+                                        gate_result.downward_displacement_mm
+                                    ),
+                                    consecutive_count=(
+                                        gate_result.consecutive_count
+                                    ),
+                                )
+                                capture_logger.write(
+                                    event="release_motion_gate_passed",
+                                    release_timestamp_ms=int(
+                                        observation_event.timestamp_ms
+                                    ),
+                                    event_time_sec=now_observation,
+                                    estimate=observation_estimate,
+                                    target=None,
+                                    intensity=0.0,
+                                    reason=(
+                                        f"vz_threshold_mm_s="
+                                        f"{float(getattr(cfg, 'auto_release_gate_max_vz_mm_s', -100.0)):.1f};"
+                                        f"drop_threshold_mm="
+                                        f"{float(getattr(cfg, 'auto_release_gate_min_drop_mm', 2.5)):.2f};"
+                                        f"drop_mm="
+                                        f"{gate_result.downward_displacement_mm:.2f};"
+                                        f"consecutive="
+                                        f"{gate_result.consecutive_count}"
+                                    ),
+                                )
 
                         extra_field_delay_sec = max(
                             0.0,
@@ -1700,15 +1960,33 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 "no_field_workspace_guard_during_observation",
                                 paper_status="failure",
                             )
-                        elif extra_delay_complete and arm_capture_align(
-                            observation_event,
-                            observation_estimate,
+                        elif (
+                            release_observation_started_at is not None
+                            and not release_gate_passed
+                            and now_observation
+                            - release_observation_started_at
+                            > gate_timeout_sec
+                        ):
+                            clear_release_observation(
+                                "release_motion_gate_timeout",
+                                paper_status="invalid",
+                            )
+                            if auto_release_trigger is not None:
+                                auto_release_trigger.reset()
+                        elif (
+                            release_gate_passed
+                            and extra_delay_complete
+                            and arm_capture_align(
+                                observation_event,
+                                observation_estimate,
+                            )
                         ):
                             auto_release_confirmed = True
                             clear_release_observation(
                                 "post_release_fit_handed_to_capture",
                                 log_event=False,
                                 finish_paper_trial=False,
+                                reset_gate_state=False,
                             )
                             # Re-arm only after the field starts. A later
                             # confirmed grasp then stops every capture state.
@@ -1724,11 +2002,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 ):
                     clear_release_observation(
                         "regrasp_detected_during_post_release_observation",
-                        paper_status=(
-                            "failure"
-                            if release_observation_confirmed
-                            else "invalid"
-                        ),
+                        paper_status="invalid",
                     )
 
                 if (
@@ -2000,6 +2274,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 paper_hold_elapsed_sec = (
                     paper_logger.elapsed_from_release_sec()
                 )
+                paper_now_sec = time.perf_counter()
                 paper_outside_z_workspace = bool(
                     motion_estimate is not None
                     and (
@@ -2009,29 +2284,60 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 )
                 if (
                     paper_logger.active
-                    and paper_logger.field_started
-                    and paper_outside_z_workspace
-                ):
-                    paper_logger.finish_trial(
-                        status="failure",
-                        reason="sphere_left_z_workspace_before_10s",
-                        event_time_sec=time.perf_counter(),
-                    )
-                elif (
-                    paper_logger.active
+                    and not paper_logger.success_reached
                     and release_hold_success_reached(
                         elapsed_from_release_sec=paper_hold_elapsed_sec,
                         required_hold_sec=float(
-                            getattr(cfg, "si2026_success_hold_sec", 10.0)
+                            getattr(cfg, "si2026_success_hold_sec", 5.0)
                         ),
                         field_started=paper_logger.field_started,
                         automatic_hold_active=auto_hold_active,
                     )
                 ):
+                    paper_logger.mark_success_reached(paper_now_sec)
+                    capture_logger.write(
+                        event="success_criterion_reached",
+                        release_timestamp_ms=auto_release_timestamp_ms,
+                        event_time_sec=paper_now_sec,
+                        estimate=motion_estimate,
+                        target=last_target,
+                        intensity=current_intensity_ratio,
+                        reason=(
+                            f"required_hold_sec="
+                            f"{float(getattr(cfg, 'si2026_success_hold_sec', 5.0)):.3f};"
+                            "logging_continues_until_observation_end"
+                        ),
+                    )
+
+                if (
+                    paper_logger.active
+                    and paper_logger.field_started
+                    and paper_outside_z_workspace
+                ):
+                    paper_logger.finish_trial(
+                        status=(
+                            "success"
+                            if paper_logger.success_reached
+                            else "failure"
+                        ),
+                        reason=(
+                            "post_success_sphere_left_z_workspace"
+                            if paper_logger.success_reached
+                            else "sphere_left_z_workspace_before_success"
+                        ),
+                        event_time_sec=paper_now_sec,
+                    )
+                elif (
+                    paper_logger.active
+                    and paper_logger.success_reached
+                    and paper_hold_elapsed_sec is not None
+                    and paper_hold_elapsed_sec
+                    >= float(getattr(cfg, "si2026_observation_sec", 10.0))
+                ):
                     paper_logger.finish_trial(
                         status="success",
-                        reason="release_hold_duration_reached",
-                        event_time_sec=time.perf_counter(),
+                        reason="post_success_observation_completed",
+                        event_time_sec=paper_now_sec,
                     )
 
                 # Control
@@ -2057,8 +2363,27 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 3.0,
                             )
                         )
+                        minimum_return_from_release_sec = float(
+                            getattr(
+                                cfg,
+                                "auto_release_min_return_from_release_sec",
+                                0.0,
+                            )
+                        )
+                        release_elapsed_for_return_sec = (
+                            None
+                            if auto_release_timestamp_ms is None
+                            else max(
+                                0.0,
+                                time.perf_counter()
+                                - float(auto_release_timestamp_ms) / 1000.0,
+                            )
+                        )
                         if (
                             control_mode == LOCAL_HOLD
+                            and release_elapsed_for_return_sec is not None
+                            and release_elapsed_for_return_sec
+                            >= minimum_return_from_release_sec
                             and should_start_return_home(
                                 now_sec=time.time(),
                                 local_hold_started_sec=local_hold_start_time,
@@ -2080,6 +2405,10 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 reason=(
                                     f"local_hold_elapsed_sec="
                                     f"{return_delay_sec:.3f};"
+                                    f"release_elapsed_sec="
+                                    f"{release_elapsed_for_return_sec:.3f};"
+                                    f"minimum_release_elapsed_sec="
+                                    f"{minimum_return_from_release_sec:.3f};"
                                     f"home=({home.x:.2f},{home.y:.2f},"
                                     f"{home.z:.2f})"
                                 ),
@@ -2727,55 +3056,60 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     f"vxy={vxy_now:.1f} mm/s, "
                                     f"vz={vz_now:.1f} mm/s"
                                 )
-                            elif should_start_settle_timeout_return_home(
-                                now_sec=now_capture,
-                                settle_started_sec=capture_settle_started_at,
-                                timeout_sec=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_settle_return_timeout_sec",
-                                        10.0,
-                                    )
-                                ),
-                                automatic_hold=auto_hold_active,
-                                release_confirmed=auto_release_confirmed,
-                                measurement_updated=new_settle_measurement,
-                                vz_mm_s=vz_now,
-                                maximum_abs_vz_mm_s=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_settle_return_max_abs_vz_mm_s",
-                                        200.0,
-                                    )
-                                ),
-                                vxy_mm_s=vxy_now,
-                                maximum_vxy_mm_s=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_settle_return_max_vxy_mm_s",
-                                        200.0,
-                                    )
-                                ),
-                                target_distance_mm=(
-                                    sphere_target_distance_now
-                                ),
-                                maximum_target_distance_mm=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_settle_return_max_target_distance_mm",
-                                        15.0,
-                                    )
-                                ),
-                                z_mm=motion_estimate.z_mm,
-                                z_min_mm=cfg.z_min,
-                                z_max_mm=cfg.z_max,
-                                workspace_margin_mm=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_settle_return_z_workspace_margin_mm",
-                                        10.0,
-                                    )
-                                ),
+                            elif (
+                                release_elapsed_for_return_sec is not None
+                                and release_elapsed_for_return_sec
+                                >= minimum_return_from_release_sec
+                                and should_start_settle_timeout_return_home(
+                                    now_sec=now_capture,
+                                    settle_started_sec=capture_settle_started_at,
+                                    timeout_sec=float(
+                                        getattr(
+                                            cfg,
+                                            "auto_release_settle_return_timeout_sec",
+                                            10.0,
+                                        )
+                                    ),
+                                    automatic_hold=auto_hold_active,
+                                    release_confirmed=auto_release_confirmed,
+                                    measurement_updated=new_settle_measurement,
+                                    vz_mm_s=vz_now,
+                                    maximum_abs_vz_mm_s=float(
+                                        getattr(
+                                            cfg,
+                                            "auto_release_settle_return_max_abs_vz_mm_s",
+                                            200.0,
+                                        )
+                                    ),
+                                    vxy_mm_s=vxy_now,
+                                    maximum_vxy_mm_s=float(
+                                        getattr(
+                                            cfg,
+                                            "auto_release_settle_return_max_vxy_mm_s",
+                                            200.0,
+                                        )
+                                    ),
+                                    target_distance_mm=(
+                                        sphere_target_distance_now
+                                    ),
+                                    maximum_target_distance_mm=float(
+                                        getattr(
+                                            cfg,
+                                            "auto_release_settle_return_max_target_distance_mm",
+                                            15.0,
+                                        )
+                                    ),
+                                    z_mm=motion_estimate.z_mm,
+                                    z_min_mm=cfg.z_min,
+                                    z_max_mm=cfg.z_max,
+                                    workspace_margin_mm=float(
+                                        getattr(
+                                            cfg,
+                                            "auto_release_settle_return_z_workspace_margin_mm",
+                                            10.0,
+                                        )
+                                    ),
+                                )
                             ):
                                 settle_elapsed_sec = max(
                                     0.0,
@@ -2841,9 +3175,15 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     ),
                                 )
                                 paper_logger.finish_trial(
-                                    status="failure",
+                                    status=(
+                                        "success"
+                                        if paper_logger.success_reached
+                                        else "failure"
+                                    ),
                                     reason=(
-                                        "capture_settle_timeout_return_home"
+                                        "post_success_settle_timeout_return_home"
+                                        if paper_logger.success_reached
+                                        else "capture_settle_timeout_return_home"
                                     ),
                                     event_time_sec=now_capture,
                                 )
@@ -3363,6 +3703,15 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         recovery_telemetry.capture_force_saturated
                     ),
                     plan=capture_braking_plan,
+                    release_gate_origin_z_mm=release_gate_origin_z_mm,
+                    release_gate_downward_displacement_mm=(
+                        release_gate_downward_displacement_mm
+                    ),
+                    release_gate_consecutive_count=(
+                        release_gate_consecutive_count
+                    ),
+                    release_gate_passed=release_gate_passed,
+                    mode_transition_reason=mode_transition_reason,
                 )
 
                 logger.write(
@@ -3379,6 +3728,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     control_mode=control_mode,
                     recovery=recovery_telemetry,
                 )
+                mode_transition_reason = ""
                 
                 if do_display:
                     exit_requested = render_tracking_window(

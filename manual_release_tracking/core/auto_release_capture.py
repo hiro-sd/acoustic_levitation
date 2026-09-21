@@ -100,6 +100,17 @@ class AnchoredXYTarget:
     limited: bool
 
 
+@dataclass(frozen=True)
+class ReleaseMotionGateResult:
+    """State of the physical-release gate for one new stereo estimate."""
+
+    downward_displacement_mm: float
+    velocity_condition_met: bool
+    displacement_condition_met: bool
+    consecutive_count: int
+    passed: bool
+
+
 class StereoMotionEstimator:
     """Filtered position and multi-frame velocity estimator run before control.
 
@@ -425,6 +436,57 @@ def predict_capture_position(
         vx_mm_s=float(estimate.vx_mm_s),
         vy_mm_s=float(estimate.vy_mm_s),
         vz_mm_s=float(predicted_vz),
+    )
+
+
+def update_release_motion_gate(
+    *,
+    origin_z_mm: float,
+    current_z_mm: float,
+    vz_mm_s: float,
+    maximum_vz_mm_s: float,
+    minimum_downward_displacement_mm: float,
+    required_consecutive_estimates: int,
+    previous_consecutive_count: int,
+) -> ReleaseMotionGateResult:
+    """Require sustained downward motion before the first acoustic command.
+
+    AUTD Z decreases during free fall on the current rig.  The gate therefore
+    requires both a sufficiently negative velocity and a positive downward
+    displacement from the position measured at the release timestamp.
+    """
+
+    values = np.asarray(
+        [origin_z_mm, current_z_mm, vz_mm_s],
+        dtype=float,
+    )
+    if not bool(np.all(np.isfinite(values))):
+        return ReleaseMotionGateResult(
+            downward_displacement_mm=float("nan"),
+            velocity_condition_met=False,
+            displacement_condition_met=False,
+            consecutive_count=0,
+            passed=False,
+        )
+
+    displacement = float(origin_z_mm) - float(current_z_mm)
+    velocity_condition = float(vz_mm_s) <= float(maximum_vz_mm_s)
+    displacement_condition = displacement >= max(
+        0.0,
+        float(minimum_downward_displacement_mm),
+    )
+    count = (
+        max(0, int(previous_consecutive_count)) + 1
+        if velocity_condition and displacement_condition
+        else 0
+    )
+    required = max(1, int(required_consecutive_estimates))
+    return ReleaseMotionGateResult(
+        downward_displacement_mm=displacement,
+        velocity_condition_met=bool(velocity_condition),
+        displacement_condition_met=bool(displacement_condition),
+        consecutive_count=count,
+        passed=count >= required,
     )
 
 

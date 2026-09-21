@@ -13,10 +13,11 @@ import pandas as pd
 
 
 AUTOMATIC_EXCLUSION_REASON_PARTS = (
-    "regrasp_detected",
     "release_candidate_contact_returned",
     "manual_release_trigger",
     "new_release_candidate_before_previous_trial_finished",
+    "operator_rejected_false_release",
+    "release_motion_gate_timeout",
 )
 
 
@@ -69,6 +70,12 @@ def load_trial_data(data_directory: Path):
             "release_x_mm",
             "release_y_mm",
             "release_z_mm",
+            "schema_version",
+            "release_gate_passed_time_sec",
+            "release_gate_elapsed_ms",
+            "release_gate_pass_vz_mm_s",
+            "release_gate_pass_drop_mm",
+            "release_gate_pass_consecutive_count",
             "release_to_field_ms",
             "field_prediction_x_mm",
             "field_prediction_y_mm",
@@ -84,6 +91,17 @@ def load_trial_data(data_directory: Path):
             "prediction_error_3d_mm",
             "anchor_x_mm",
             "anchor_y_mm",
+            "plan_duration_ms",
+            "plan_stop_z_mm",
+            "plan_stopping_distance_mm",
+            "braking_end_time_sec",
+            "braking_end_from_field_ms",
+            "braking_end_z_mm",
+            "braking_end_vz_mm_s",
+            "actual_stopping_distance_mm",
+            "stopping_distance_error_mm",
+            "plan_stop_z_error_mm",
+            "local_hold_reached_time_sec",
             "capture_time_ms",
             "hold_rms_xy_mm",
             "hold_rms_z_mm",
@@ -91,6 +109,11 @@ def load_trial_data(data_directory: Path):
             "minimum_z_mm",
             "maximum_drop_from_onset_mm",
             "maximum_commanded_intensity",
+            "success_hold_requirement_sec",
+            "success_reached_time_sec",
+            "success_reached_elapsed_ms",
+            "observation_requirement_sec",
+            "post_success_observation_ms",
             "retained_duration_ms",
         ],
     )
@@ -107,14 +130,26 @@ def load_trial_data(data_directory: Path):
             "vx_mm_s",
             "vy_mm_s",
             "vz_mm_s",
+            "release_gate_origin_z_mm",
+            "release_gate_downward_displacement_mm",
+            "release_gate_consecutive_count",
+            "release_gate_passed",
+            "success_criterion_reached",
+            "braking_elapsed_ms",
             "reference_z_mm",
             "reference_vz_mm_s",
+            "reference_acceleration_mm_s2",
+            "z_reference_error_mm",
+            "vz_reference_error_mm_s",
             "anchor_x_mm",
             "anchor_y_mm",
             "target_x_mm",
             "target_y_mm",
             "target_z_mm",
             "commanded_intensity",
+            "plan_duration_ms",
+            "plan_stop_z_mm",
+            "plan_stopping_distance_mm",
         ],
     )
     return summary, timeseries
@@ -152,6 +187,22 @@ def apply_analysis_exclusions(
     automatic = pd.Series(False, index=marked.index)
     for part in AUTOMATIC_EXCLUSION_REASON_PARTS:
         automatic |= reason_text.str.contains(part, regex=False)
+
+    # In schema 1--3 a regrasp could be caused by a false image-only release
+    # decision, so those rows remain excluded for backward compatibility.  In
+    # schema 4+, the physical motion gate has already established real downward
+    # flight; a later regrasp is therefore a genuine failed capture unless the
+    # operator explicitly rejected the trial with the X key.
+    regrasp = reason_text.str.contains("regrasp_detected", regex=False)
+    schema = pd.to_numeric(
+        marked.get("schema_version", pd.Series(np.nan, index=marked.index)),
+        errors="coerce",
+    )
+    gate_passed = marked.get(
+        "release_gate_passed_time_sec",
+        pd.Series(np.nan, index=marked.index),
+    ).notna()
+    automatic |= regrasp & ((schema < 4) | ~gate_passed)
 
     manual_reasons = {}
     if not exclusions.empty:
@@ -290,6 +341,13 @@ def select_representative_trial(
         subset=["capture_state_vz_mm_s"]
     )
     if not successful.empty:
+        if "observation_requirement_sec" in successful:
+            complete = successful[
+                successful["retained_duration_ms"]
+                >= successful["observation_requirement_sec"] * 1000.0 - 50.0
+            ]
+            if not complete.empty:
+                successful = complete
         median_speed = successful["capture_state_vz_mm_s"].abs().median()
         index = (
             successful["capture_state_vz_mm_s"].abs() - median_speed
@@ -375,6 +433,7 @@ def add_centered_release_metrics(
 def make_outcome_summary(
     trials: pd.DataFrame,
     center: tuple[float, float, float],
+    target_valid_trials: int = 100,
 ):
     groups = [("all", "", trials)]
     if "condition_id" in trials:
@@ -400,6 +459,9 @@ def make_outcome_summary(
                 "successes": successes,
                 "failures": total - successes,
                 "excluded_trials": int(len(group) - total),
+                "target_valid_trials": int(target_valid_trials),
+                "remaining_valid_trials": max(0, int(target_valid_trials) - total),
+                "target_reached": int(total >= int(target_valid_trials)),
                 "success_rate": successes / total if total else np.nan,
                 "success_ci95_low": lower,
                 "success_ci95_high": upper,
@@ -469,6 +531,71 @@ def make_release_range_summary(trials: pd.DataFrame):
     return pd.DataFrame(rows)
 
 
+def behavior_pattern(trial: pd.Series):
+    if str(trial.get("status", "")) == "success":
+        observation_sec = trial.get("observation_requirement_sec", 10.0)
+        retained_ms = trial.get("retained_duration_ms")
+        if (
+            pd.notna(observation_sec)
+            and pd.notna(retained_ms)
+            and float(retained_ms) < float(observation_sec) * 1000.0 - 50.0
+        ):
+            return "Held 5 s; observation ended early"
+        return "Held at least 5 s"
+    reason = str(trial.get("reason", "")).lower()
+    if "workspace" in reason or "left_z" in reason:
+        return "Left workspace"
+    if "measurement" in reason or "motion_fit" in reason:
+        return "Tracking/estimation loss"
+    if "regrasp" in reason:
+        return "Regrasp after release"
+    if pd.notna(trial.get("local_hold_reached_time_sec")):
+        return "Lost after LOCAL_HOLD (<5 s)"
+    if pd.notna(trial.get("braking_end_time_sec")):
+        return "Lost during settling"
+    if pd.notna(trial.get("field_time_sec")):
+        return "Lost during braking"
+    return "Other failure"
+
+
+def make_behavior_pattern_summary(trials: pd.DataFrame):
+    selected = eligible_trials(trials).copy()
+    if selected.empty:
+        return pd.DataFrame(columns=["behavior_pattern", "count", "fraction"])
+    selected["behavior_pattern"] = selected.apply(behavior_pattern, axis=1)
+    result = (
+        selected.groupby("behavior_pattern")
+        .size()
+        .rename("count")
+        .reset_index()
+        .sort_values("count", ascending=False)
+    )
+    result["fraction"] = result["count"] / len(selected)
+    return result
+
+
+def make_braking_validation_summary(trials: pd.DataFrame):
+    selected = eligible_trials(trials).copy()
+    columns = [
+        "trial_id",
+        "status",
+        "plan_duration_ms",
+        "plan_stop_z_mm",
+        "plan_stopping_distance_mm",
+        "braking_end_from_field_ms",
+        "braking_end_reason",
+        "braking_end_z_mm",
+        "braking_end_vz_mm_s",
+        "actual_stopping_distance_mm",
+        "stopping_distance_error_mm",
+        "plan_stop_z_error_mm",
+    ]
+    for column in columns:
+        if column not in selected:
+            selected[column] = np.nan
+    return selected[columns]
+
+
 def _placeholder_figure(output_path: Path, message: str):
     figure, axis = plt.subplots(figsize=(6.4, 4.2), constrained_layout=True)
     axis.axis("off")
@@ -484,7 +611,7 @@ def plot_successful_trajectory(
 ):
     output_path = output_directory / "successful_release_trajectory"
     if trial_id is None:
-        _placeholder_figure(output_path, "No successful 10 s hold trial is available")
+        _placeholder_figure(output_path, "No successful 5 s hold trial is available")
         return
     samples = timeseries[timeseries["trial_id"] == trial_id].copy()
     samples = samples.sort_values("sample_time_sec")
@@ -498,6 +625,7 @@ def plot_successful_trajectory(
     trial = summary[summary["trial_id"] == trial_id].iloc[0]
     time_sec = samples["elapsed_from_release_ms"].to_numpy(dtype=float) / 1000.0
     field_time_sec = float(trial["release_to_field_ms"]) / 1000.0
+    success_time_sec = float(trial.get("success_hold_requirement_sec", 5.0))
     figure = plt.figure(figsize=(9.0, 7.0), constrained_layout=True)
     axes = [
         figure.add_subplot(2, 2, 1),
@@ -519,6 +647,13 @@ def plot_successful_trajectory(
             linestyle="--",
             linewidth=1.0,
             label="First command complete",
+        )
+        axis.axvline(
+            success_time_sec,
+            color="#1a9850",
+            linestyle=":",
+            linewidth=1.0,
+            label=f"{success_time_sec:g} s success criterion",
         )
         axis.set_xlabel("Time from release [s]")
         axis.set_ylabel(label)
@@ -546,7 +681,7 @@ def plot_successful_trajectory(
         [samples["filtered_z_mm"].iloc[-1]],
         color="#d73027",
         s=40,
-        label="10 s",
+        label="Observation end",
     )
     axes[3].set_xlabel("X [mm]")
     axes[3].set_ylabel("Y [mm]")
@@ -696,6 +831,218 @@ def plot_outcome_trajectory_comparison(
     _save_figure(figure, output_path)
 
 
+def plot_control_mechanism_validation(
+    summary: pd.DataFrame,
+    timeseries: pd.DataFrame,
+    output_directory: Path,
+    trial_id: str | None,
+):
+    output_path = output_directory / "control_mechanism_validation"
+    if trial_id is None:
+        _placeholder_figure(output_path, "No successful trial is available")
+        return
+    samples = timeseries[timeseries["trial_id"] == trial_id].copy()
+    samples = samples.sort_values("elapsed_from_release_ms")
+    samples = samples[samples["elapsed_from_release_ms"].between(0.0, 10000.0)]
+    if samples.empty:
+        _placeholder_figure(output_path, f"No control samples for {trial_id}")
+        return
+
+    trial = summary[summary["trial_id"] == trial_id].iloc[0]
+    time_sec = samples["elapsed_from_release_ms"] / 1000.0
+    figure, axes = plt.subplots(
+        4,
+        1,
+        figsize=(8.4, 8.7),
+        sharex=True,
+        constrained_layout=True,
+    )
+    axes[0].plot(time_sec, samples["filtered_z_mm"], label="Measured Z", linewidth=1.2)
+    if samples["reference_z_mm"].notna().any():
+        axes[0].plot(
+            time_sec,
+            samples["reference_z_mm"],
+            linestyle="--",
+            label="Braking reference Z",
+        )
+    plan_stop_z = trial.get("plan_stop_z_mm")
+    if pd.notna(plan_stop_z):
+        axes[0].axhline(
+            float(plan_stop_z),
+            color="black",
+            linestyle=":",
+            linewidth=1.0,
+            label="Planned stop Z",
+        )
+    axes[0].set_ylabel("Z [mm]")
+    axes[0].legend(loc="best", fontsize=8)
+
+    axes[1].plot(time_sec, samples["vz_mm_s"], label="Measured $v_z$", linewidth=1.2)
+    if samples["reference_vz_mm_s"].notna().any():
+        axes[1].plot(
+            time_sec,
+            samples["reference_vz_mm_s"],
+            linestyle="--",
+            label="Braking reference $v_z$",
+        )
+    axes[1].axhline(0.0, color="black", linewidth=0.7)
+    axes[1].set_ylabel("$v_z$ [mm/s]")
+    axes[1].legend(loc="best", fontsize=8)
+
+    axes[2].plot(
+        time_sec,
+        samples["commanded_intensity"],
+        color="#762a83",
+        linewidth=1.2,
+    )
+    axes[2].set_ylabel("Intensity ratio")
+
+    mode_order = [
+        "CAPTURE_ALIGN",
+        "CAPTURE_SETTLE",
+        "LOCAL_HOLD",
+        "RETURN_TO_HOME",
+        "NORMAL_HOLD",
+    ]
+    observed_modes = [
+        str(value)
+        for value in samples.get("control_mode", pd.Series(dtype=str)).dropna().unique()
+    ]
+    modes = mode_order + [value for value in observed_modes if value not in mode_order]
+    mode_to_index = {mode: index for index, mode in enumerate(modes)}
+    mode_values = samples["control_mode"].map(mode_to_index)
+    axes[3].step(time_sec, mode_values, where="post", color="#4d4d4d")
+    axes[3].set_yticks(range(len(modes)), modes, fontsize=7)
+    axes[3].set_ylabel("Control mode")
+    axes[3].set_xlabel("Time from release [s]")
+
+    event_lines = [
+        (trial.get("release_to_field_ms"), "Field", "#d73027"),
+        (
+            None
+            if pd.isna(trial.get("braking_end_from_field_ms"))
+            or pd.isna(trial.get("release_to_field_ms"))
+            else float(trial["braking_end_from_field_ms"])
+            + float(trial["release_to_field_ms"]),
+            "Braking end",
+            "#4575b4",
+        ),
+        (
+            float(trial.get("success_hold_requirement_sec", 5.0)) * 1000.0,
+            f"{float(trial.get('success_hold_requirement_sec', 5.0)):g} s success",
+            "#1a9850",
+        ),
+    ]
+    for event_ms, label, color in event_lines:
+        if event_ms is None or pd.isna(event_ms):
+            continue
+        for axis in axes:
+            axis.axvline(
+                float(event_ms) / 1000.0,
+                color=color,
+                linestyle=":",
+                linewidth=0.9,
+            )
+        axes[0].text(
+            float(event_ms) / 1000.0,
+            1.01,
+            label,
+            color=color,
+            fontsize=7,
+            rotation=90,
+            va="bottom",
+            ha="right",
+            transform=axes[0].get_xaxis_transform(),
+        )
+    for axis in axes:
+        axis.grid(True, alpha=0.22)
+    figure.suptitle(f"Control mechanism and measured response: {trial_id}", fontsize=10)
+    _save_figure(figure, output_path)
+
+
+def plot_braking_validation(
+    braking_summary: pd.DataFrame,
+    output_directory: Path,
+):
+    output_path = output_directory / "braking_distance_validation"
+    usable = braking_summary.dropna(
+        subset=["plan_stopping_distance_mm", "actual_stopping_distance_mm"]
+    )
+    if usable.empty:
+        _placeholder_figure(output_path, "No completed braking transitions are available")
+        return
+    figure, axes = plt.subplots(1, 2, figsize=(9.0, 4.0), constrained_layout=True)
+    colors = usable["status"].map({"success": "#1a9850", "failure": "#d73027"})
+    axes[0].scatter(
+        usable["plan_stopping_distance_mm"],
+        usable["actual_stopping_distance_mm"],
+        c=colors,
+        alpha=0.8,
+    )
+    limits = [
+        float(
+            min(
+                usable["plan_stopping_distance_mm"].min(),
+                usable["actual_stopping_distance_mm"].min(),
+            )
+        ),
+        float(
+            max(
+                usable["plan_stopping_distance_mm"].max(),
+                usable["actual_stopping_distance_mm"].max(),
+            )
+        ),
+    ]
+    axes[0].plot(limits, limits, color="black", linestyle="--", linewidth=0.9)
+    axes[0].set_xlabel("Planned stopping distance [mm]")
+    axes[0].set_ylabel("Measured distance at braking end [mm]")
+    axes[0].grid(True, alpha=0.25)
+
+    groups = [
+        usable.loc[usable["status"] == status, "stopping_distance_error_mm"].dropna()
+        for status in ("success", "failure")
+    ]
+    if any(len(group) for group in groups):
+        axes[1].boxplot(groups, tick_labels=["Success", "Failure"], showfliers=False)
+        for position, (values, color) in enumerate(
+            zip(groups, ("#1a9850", "#d73027")), start=1
+        ):
+            axes[1].scatter(
+                np.full(len(values), position),
+                values,
+                color=color,
+                alpha=0.75,
+            )
+    axes[1].axhline(0.0, color="black", linestyle="--", linewidth=0.9)
+    axes[1].set_ylabel("Measured - planned distance [mm]")
+    axes[1].grid(True, axis="y", alpha=0.25)
+    figure.suptitle("Planned braking distance versus measured response", fontsize=10)
+    _save_figure(figure, output_path)
+
+
+def plot_behavior_patterns(
+    pattern_summary: pd.DataFrame,
+    output_directory: Path,
+):
+    output_path = output_directory / "behavior_pattern_counts"
+    if pattern_summary.empty:
+        _placeholder_figure(output_path, "No eligible trials are available")
+        return
+    ordered = pattern_summary.sort_values("count", ascending=True)
+    figure, axis = plt.subplots(figsize=(7.8, 4.8), constrained_layout=True)
+    colors = [
+        "#1a9850" if label == "Held at least 5 s" else "#d73027"
+        for label in ordered["behavior_pattern"]
+    ]
+    axis.barh(ordered["behavior_pattern"], ordered["count"], color=colors)
+    axis.set_xlabel("Number of eligible trials")
+    axis.set_title("Post-release behavior patterns")
+    axis.grid(True, axis="x", alpha=0.25)
+    for index, value in enumerate(ordered["count"]):
+        axis.text(value, index, f" {int(value)}", va="center")
+    _save_figure(figure, output_path)
+
+
 def cliffs_delta(first: np.ndarray, second: np.ndarray):
     if len(first) == 0 or len(second) == 0:
         return np.nan
@@ -716,17 +1063,24 @@ def plot_success_failure_comparison(
         ("capture_state_abs_vz_mm_s", "Estimated onset $|v_z|$ [mm/s]"),
         ("capture_state_vxy_mm_s", "Estimated onset $v_{xy}$ [mm/s]"),
         ("prediction_error_3d_mm", "Onset prediction error [mm]"),
+        ("stopping_distance_error_mm", "Stopping-distance error [mm]"),
+        ("braking_end_vz_mm_s", "Braking-end $v_z$ [mm/s]"),
+        ("maximum_drop_from_onset_mm", "Maximum post-onset drop [mm]"),
     ]
-    figure, axes = plt.subplots(2, 3, figsize=(11.2, 6.4), constrained_layout=True)
+    figure, axes = plt.subplots(3, 3, figsize=(11.2, 9.2), constrained_layout=True)
     rows = []
     random = np.random.default_rng(2026)
     for axis, (column, label) in zip(axes.flat, metrics):
-        success_values = selected.loc[
-            selected["status"] == "success", column
-        ].dropna().to_numpy(dtype=float)
-        failure_values = selected.loc[
-            selected["status"] == "failure", column
-        ].dropna().to_numpy(dtype=float)
+        if column in selected:
+            success_values = selected.loc[
+                selected["status"] == "success", column
+            ].dropna().to_numpy(dtype=float)
+            failure_values = selected.loc[
+                selected["status"] == "failure", column
+            ].dropna().to_numpy(dtype=float)
+        else:
+            success_values = np.array([], dtype=float)
+            failure_values = np.array([], dtype=float)
         groups = [success_values, failure_values]
         if any(len(group) for group in groups):
             axis.boxplot(groups, tick_labels=["Success", "Failure"], showfliers=False)
@@ -797,7 +1151,7 @@ def plot_failure_reasons(
     figure, axis = plt.subplots(figsize=(7.4, 4.6), constrained_layout=True)
     axis.barh(category_counts.index, category_counts.values, color="#d73027")
     axis.set_xlabel("Number of failed trials")
-    axis.set_title("Recorded termination reasons before the 10 s criterion")
+    axis.set_title("Recorded termination reasons before the 5 s criterion")
     axis.grid(True, axis="x", alpha=0.25)
     for index, value in enumerate(category_counts.values):
         axis.text(value, index, f" {int(value)}", va="center")
@@ -819,6 +1173,7 @@ def build_all_outputs(
     center_y_mm: float | None = None,
     center_z_mm: float | None = None,
     exclusions_file: Path | None = None,
+    target_valid_trials: int = 100,
 ):
     output_directory.mkdir(parents=True, exist_ok=True)
     summary, timeseries = load_trial_data(data_directory)
@@ -833,9 +1188,15 @@ def build_all_outputs(
         center_z_mm=center_z_mm,
     )
     enriched = add_centered_release_metrics(enriched, center)
-    outcome_summary = make_outcome_summary(enriched, center)
+    outcome_summary = make_outcome_summary(
+        enriched,
+        center,
+        target_valid_trials=target_valid_trials,
+    )
     failure_summary = make_failure_reason_summary(enriched)
     release_range_summary = make_release_range_summary(enriched)
+    behavior_summary = make_behavior_pattern_summary(enriched)
+    braking_summary = make_braking_validation_summary(enriched)
     exclusion_summary = enriched.loc[
         enriched["analysis_excluded"],
         [
@@ -857,6 +1218,14 @@ def build_all_outputs(
         output_directory / "release_range_summary.csv",
         index=False,
     )
+    behavior_summary.to_csv(
+        output_directory / "behavior_pattern_summary.csv",
+        index=False,
+    )
+    braking_summary.to_csv(
+        output_directory / "braking_validation.csv",
+        index=False,
+    )
     exclusion_summary.to_csv(
         output_directory / "exclusion_summary.csv",
         index=False,
@@ -868,7 +1237,7 @@ def build_all_outputs(
         match = successful[successful["trial_id"] == representative_trial_id]
         if match.empty:
             raise ValueError(
-                "--trial-id must identify a successful 10 s hold trial"
+                "--trial-id must identify a successful 5 s hold trial"
             )
         representative = representative_trial_id
     elif successful.empty:
@@ -884,6 +1253,12 @@ def build_all_outputs(
         output_directory,
         representative,
     )
+    plot_control_mechanism_validation(
+        enriched,
+        timeseries,
+        output_directory,
+        representative,
+    )
     plot_outcome_trajectory_comparison(
         enriched,
         timeseries,
@@ -892,6 +1267,8 @@ def build_all_outputs(
     plot_release_outcomes_3d(enriched, output_directory, center)
     plot_success_failure_comparison(enriched, output_directory)
     plot_failure_reasons(failure_summary, output_directory)
+    plot_braking_validation(braking_summary, output_directory)
+    plot_behavior_patterns(behavior_summary, output_directory)
     return representative, enriched, outcome_summary
 
 
@@ -937,6 +1314,12 @@ def parse_args():
             "<data-dir>/trial_exclusions.csv when present."
         ),
     )
+    parser.add_argument(
+        "--target-valid-trials",
+        type=int,
+        default=100,
+        help="Target number of non-excluded real releases (default: 100).",
+    )
     return parser.parse_args()
 
 
@@ -950,6 +1333,7 @@ if __name__ == "__main__":
         center_y_mm=arguments.center_y_mm,
         center_z_mm=arguments.center_z_mm,
         exclusions_file=arguments.exclusions_file,
+        target_valid_trials=arguments.target_valid_trials,
     )
     print(f"Generated figures in: {arguments.output_dir}")
     print(f"Representative trial: {representative_id}")

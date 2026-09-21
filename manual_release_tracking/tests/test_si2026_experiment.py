@@ -32,27 +32,27 @@ from manual_release_tracking.core.si2026_experiment_logging import (
 
 
 class SI2026ExperimentLoggerTest(unittest.TestCase):
-    def test_success_requires_ten_seconds_field_and_active_hold(self):
+    def test_success_requires_five_seconds_field_and_active_hold(self):
         self.assertFalse(
             release_hold_success_reached(
-                elapsed_from_release_sec=9.999,
-                required_hold_sec=10.0,
+                elapsed_from_release_sec=4.999,
+                required_hold_sec=5.0,
                 field_started=True,
                 automatic_hold_active=True,
             )
         )
         self.assertTrue(
             release_hold_success_reached(
-                elapsed_from_release_sec=10.0,
-                required_hold_sec=10.0,
+                elapsed_from_release_sec=5.0,
+                required_hold_sec=5.0,
                 field_started=True,
                 automatic_hold_active=True,
             )
         )
         self.assertFalse(
             release_hold_success_reached(
-                elapsed_from_release_sec=10.0,
-                required_hold_sec=10.0,
+                elapsed_from_release_sec=5.0,
+                required_hold_sec=5.0,
                 field_started=False,
                 automatic_hold_active=True,
             )
@@ -66,6 +66,11 @@ class SI2026ExperimentLoggerTest(unittest.TestCase):
             intrinsic_z_npz="",
             stereo_npz="",
             stereo_camera_to_autd_npz="",
+            auto_release_gate_max_vz_mm_s=-100.0,
+            auto_release_gate_min_drop_mm=2.5,
+            auto_release_gate_consecutive_estimates=3,
+            si2026_success_hold_sec=5.0,
+            si2026_observation_sec=10.0,
         )
 
     def test_successful_trial_writes_timeseries_summary_and_metadata(self):
@@ -87,6 +92,19 @@ class SI2026ExperimentLoggerTest(unittest.TestCase):
             logger.set_reference_center(0.0, 0.0, 400.0)
             logger.start_trial(release_timestamp_ms=1000)
             logger.mark_motion_ready(1.020)
+            gate_estimate = SimpleNamespace(vz_mm_s=-180.0)
+            logger.update_release_gate_observation(
+                origin_z_mm=400.0,
+                estimate=gate_estimate,
+                downward_displacement_mm=3.0,
+                evidence_seen=True,
+            )
+            logger.mark_release_gate_passed(
+                event_time_sec=1.030,
+                estimate=gate_estimate,
+                downward_displacement_mm=3.0,
+                consecutive_count=3,
+            )
             prediction = SimpleNamespace(
                 x_mm=100.0,
                 y_mm=200.0,
@@ -150,15 +168,37 @@ class SI2026ExperimentLoggerTest(unittest.TestCase):
                     plan=plan,
                 )
             logger.mark_local_hold_reached(1.070)
+            logger.mark_braking_end(
+                1.080,
+                SimpleNamespace(
+                    x_mm=100.0,
+                    y_mm=200.0,
+                    z_mm=373.0,
+                    vx_mm_s=5.0,
+                    vy_mm_s=0.0,
+                    vz_mm_s=-20.0,
+                ),
+                "braking_reference_complete",
+            )
+            logger.mark_success_reached(6.000)
             logger.finish_trial(
                 status="success",
-                reason="release_hold_duration_reached",
+                reason="post_success_observation_completed",
                 event_time_sec=11.000,
             )
 
             logger.close()
 
             self.assertTrue((output / "session_test_session.json").is_file())
+            with (output / "trial_timeseries.csv").open(
+                newline="", encoding="utf-8"
+            ) as file:
+                timeseries_rows = list(csv.DictReader(file))
+            self.assertEqual(len(timeseries_rows), 4)
+            self.assertNotIn(None, timeseries_rows[0])
+            self.assertNotIn(None, timeseries_rows[0].values())
+            self.assertEqual(timeseries_rows[0]["release_gate_passed"], "0")
+            self.assertEqual(timeseries_rows[0]["success_criterion_reached"], "0")
             with (output / "trial_summary.csv").open(
                 newline="", encoding="utf-8"
             ) as file:
@@ -173,6 +213,8 @@ class SI2026ExperimentLoggerTest(unittest.TestCase):
             self.assertAlmostEqual(float(rows[0]["retained_duration_ms"]), 10000.0)
             self.assertAlmostEqual(float(rows[0]["release_x_mm"]), 100.0)
             self.assertAlmostEqual(float(rows[0]["autd_center_z_mm"]), 400.0)
+            self.assertAlmostEqual(float(rows[0]["success_reached_elapsed_ms"]), 5000.0)
+            self.assertAlmostEqual(float(rows[0]["actual_stopping_distance_mm"]), 16.5)
 
     def test_close_marks_active_trial_aborted(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -187,6 +229,37 @@ class SI2026ExperimentLoggerTest(unittest.TestCase):
             logger.close()
             summary = (output / "trial_summary.csv").read_text(encoding="utf-8")
             self.assertIn("aborted", summary)
+
+    def test_reject_key_can_exclude_a_just_finished_false_failure(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory)
+            logger = SI2026ExperimentLogger(
+                output,
+                config=self.make_config(),
+                project_root=PROJECT_ROOT,
+                session_id="reject_session",
+            )
+            logger.start_trial(release_timestamp_ms=1000)
+            logger.mark_field_sent(
+                field_time_sec=1.050,
+                prediction=None,
+                anchor=None,
+                plan=None,
+            )
+            logger.finish_trial(
+                status="failure",
+                reason="regrasp_detected_during_auto_hold",
+                event_time_sec=2.000,
+            )
+            trial_id = logger.exclude_recent_failed_trial(
+                reason="operator_rejected_false_release_after_automatic_stop",
+                now_sec=2.500,
+            )
+            self.assertIsNotNone(trial_id)
+            exclusions = pd.read_csv(output / "trial_exclusions.csv")
+            self.assertEqual(exclusions.iloc[0]["trial_id"], trial_id)
+            self.assertIn("operator_rejected", exclusions.iloc[0]["reason"])
+            logger.close()
 
 
 class SI2026AnalysisTest(unittest.TestCase):
@@ -214,6 +287,8 @@ class SI2026AnalysisTest(unittest.TestCase):
         self.assertEqual(int(outcome.iloc[0]["eligible_trials"]), 2)
         self.assertEqual(int(outcome.iloc[0]["successes"]), 1)
         self.assertAlmostEqual(outcome.iloc[0]["success_rate"], 0.5)
+        self.assertEqual(int(outcome.iloc[0]["target_valid_trials"]), 100)
+        self.assertEqual(int(outcome.iloc[0]["remaining_valid_trials"]), 98)
 
     def test_failure_reason_categories(self):
         self.assertEqual(
@@ -245,10 +320,13 @@ class SI2026AnalysisTest(unittest.TestCase):
     def test_false_triggers_and_manual_exclusions_are_not_eligible(self):
         trials = pd.DataFrame(
             {
-                "trial_id": ["normal", "regrasp", "manual"],
-                "status": ["success", "failure", "failure"],
+                "trial_id": ["normal", "legacy_regrasp", "real_regrasp", "manual"],
+                "schema_version": [4, 3, 4, 4],
+                "release_gate_passed_time_sec": [1.0, float("nan"), 2.0, 3.0],
+                "status": ["success", "failure", "failure", "failure"],
                 "reason": [
-                    "release_hold_duration_reached",
+                    "post_success_observation_completed",
+                    "regrasp_detected_during_auto_hold",
                     "regrasp_detected_during_auto_hold",
                     "capture_stereo_measurement_timeout",
                 ],
@@ -258,9 +336,12 @@ class SI2026AnalysisTest(unittest.TestCase):
             {"trial_id": ["manual"], "reason": ["operator_confirmed_false_trigger"]}
         )
         marked = apply_analysis_exclusions(trials, exclusions)
-        self.assertEqual(marked["analysis_eligible"].tolist(), [True, False, False])
         self.assertEqual(
-            marked.loc[2, "analysis_exclusion_source"],
+            marked["analysis_eligible"].tolist(),
+            [True, False, True, False],
+        )
+        self.assertEqual(
+            marked.loc[3, "analysis_exclusion_source"],
             "manual_file",
         )
 
@@ -288,6 +369,11 @@ class SI2026AnalysisTest(unittest.TestCase):
                 intrinsic_z_npz="",
                 stereo_npz="",
                 stereo_camera_to_autd_npz="",
+                auto_release_gate_max_vz_mm_s=-100.0,
+                auto_release_gate_min_drop_mm=2.5,
+                auto_release_gate_consecutive_estimates=3,
+                si2026_success_hold_sec=5.0,
+                si2026_observation_sec=10.0,
             )
             logger = SI2026ExperimentLogger(
                 data,
@@ -358,9 +444,22 @@ class SI2026AnalysisTest(unittest.TestCase):
                     plan=plan,
                 )
             logger.mark_local_hold_reached(1.100)
+            logger.mark_braking_end(
+                1.100,
+                SimpleNamespace(
+                    x_mm=100.0,
+                    y_mm=200.0,
+                    z_mm=379.0,
+                    vx_mm_s=0.0,
+                    vy_mm_s=0.0,
+                    vz_mm_s=-20.0,
+                ),
+                "braking_reference_complete",
+            )
+            logger.mark_success_reached(6.000)
             logger.finish_trial(
                 status="success",
-                reason="release_hold_duration_reached",
+                reason="post_success_observation_completed",
                 event_time_sec=11.000,
             )
 
@@ -427,9 +526,14 @@ class SI2026AnalysisTest(unittest.TestCase):
                 "release_outcomes_3d.png",
                 "success_failure_comparison.png",
                 "failure_reason_counts.png",
+                "control_mechanism_validation.png",
+                "braking_distance_validation.png",
+                "behavior_pattern_counts.png",
                 "outcome_summary.csv",
                 "failure_reason_summary.csv",
                 "release_range_summary.csv",
+                "behavior_pattern_summary.csv",
+                "braking_validation.csv",
                 "exclusion_summary.csv",
                 "success_failure_comparison.csv",
             ):

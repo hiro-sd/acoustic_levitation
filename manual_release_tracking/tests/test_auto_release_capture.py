@@ -33,6 +33,7 @@ from manual_release_tracking.core.auto_release_capture import (
     trajectory_target_z,
     update_brake_exit_stability,
     update_capture_stability,
+    update_release_motion_gate,
     update_settle_intensity,
 )
 from tracking.core.models import Target3D
@@ -207,6 +208,43 @@ class RecentStereoHistoryTest(unittest.TestCase):
             [sample.measurement_time_sec for sample in samples],
             [1.01, 1.03],
         )
+
+
+class ReleaseMotionGateTest(unittest.TestCase):
+    def test_requires_velocity_drop_and_three_consecutive_estimates(self):
+        count = 0
+        for z_mm, vz_mm_s, expected_count in (
+            (399.0, -150.0, 0),
+            (397.4, -90.0, 0),
+            (397.3, -120.0, 1),
+            (397.0, -130.0, 2),
+            (396.8, -140.0, 3),
+        ):
+            result = update_release_motion_gate(
+                origin_z_mm=400.0,
+                current_z_mm=z_mm,
+                vz_mm_s=vz_mm_s,
+                maximum_vz_mm_s=-100.0,
+                minimum_downward_displacement_mm=2.5,
+                required_consecutive_estimates=3,
+                previous_consecutive_count=count,
+            )
+            count = result.consecutive_count
+            self.assertEqual(count, expected_count)
+        self.assertTrue(result.passed)
+
+    def test_failed_estimate_resets_consecutive_count(self):
+        result = update_release_motion_gate(
+            origin_z_mm=400.0,
+            current_z_mm=397.0,
+            vz_mm_s=-80.0,
+            maximum_vz_mm_s=-100.0,
+            minimum_downward_displacement_mm=2.5,
+            required_consecutive_estimates=3,
+            previous_consecutive_count=2,
+        )
+        self.assertEqual(result.consecutive_count, 0)
+        self.assertFalse(result.passed)
 
 
 class CapturePredictionTest(unittest.TestCase):

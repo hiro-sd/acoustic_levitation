@@ -2,147 +2,141 @@
 
 ## 1. 目的
 
-定位置治具は使用せず、指で把持した球体をAUTD中心付近で結果を見ながら調整せずに
-50回releaseする。自然に生じるrelease位置と速度のばらつきを記録し、次を評価する。
+定位置治具は使用せず、指で把持した球体をAUTD中心付近で100回releaseする。
+自然に生じるrelease位置と速度のばらつきを含め、次を評価する。
 
-1. 捕捉成功時のrelease後の球体軌道
-2. 成功時と失敗時のrelease位置、初期速度、遅延、予測誤差の比較
-3. 失敗時の軌道と、システムが記録した終了理由の集計
+1. 捕捉成功時のrelease後0--10秒の球体軌道
+2. 制動、整定、保持という制御機序と球体応答
+3. 計画停止距離・停止位置と、制動終了時の実測値の対応
+4. 実release 100試行の成功率と失敗挙動パターン
+5. 成功時と失敗時のrelease位置、初期速度、遅延、予測誤差の比較
 
-広いワークスペースの境界や、位置ごとの成功率は今回の目的としない。
+広いワークスペースの境界や、位置ごとの成功率は今回の主目的としない。
 
-## 2. 試行数と判定
+## 2. 試行の定義
 
-目標は「解析対象と50試行」である。ソフトウェアが作成した全trial行を50行と数えない。
+目標は「解析対象となる実release 100試行」であり、全trial行を100行と数えない。
 
-- 成功: release画像の撮影時刻から10秒以上、再接触や制御停止なしで保持できた
-- 失敗: 実際にreleaseしたが、10秒以内に運動推定不成立、計測ロスト、
-  workspace離脱、SETTLE timeout、または制御停止に到達した
-- 除外: 球体をreleaseしていないのにreleaseと判定された、手が再接触した、
-  予備操作であった、または有効なrelease前に中断した
+- 成功: release時刻から5秒以上、自動捕捉が停止せず保持された
+- 失敗: 実際にreleaseしたが、5秒未満で計測ロスト、workspace離脱、再把持、
+  または制御停止に至った
+- 無効: 実releaseではない画像判定、運動ゲート不通過、Xキーによる誤判定取消、
+  予備操作、または音場開始前の中断
 
-成功と失敗の合計が50になるまで実施する。除外trialはログから削除せず、除外理由を
-残す。単に捕捉に失敗したという理由で除外してはならない。
+成功判定後も10秒までは同じ場所で計測を続ける。`RETURN_TO_HOME`はrelease後
+10秒より前には開始しない。成功と失敗の合計が100になるまで実施し、無効trialは
+削除せず理由を残す。捕捉に失敗したこと自体を除外理由にしてはならない。
 
-## 3. 自動除外と手動除外
+## 3. 誤release対策
 
-解析コードは次を自動的に除外する。
+MediaPipeのrelease候補だけでは音場を出さない。候補時のZを基準に、次の全条件が
+成立した新規ステレオ推定が3回連続した場合だけ捕捉を開始する。
 
-- `status` が `invalid` または `aborted`
-- `regrasp_detected...`
-- `release_candidate_contact_returned`
-- 手動releaseフォールバックと競合したtrial
-- 前のtrial完了前に新しいrelease候補が作られたtrial
+- `vz <= -100 mm/s`
+- Zが2.5 mm以上下降
+- 上記2条件が3推定連続
 
-音場が出たが実際にはreleaseしていなかったなど、自動理由だけで判別できない場合は
-手動除外に登録する。
+120 ms以内に通過しなければ`release_motion_gate_timeout`として自動的に無効になる。
+音場開始後に誤判定と気付いた場合は直ちに `X` を押す。音場が消え、そのtrialは
+`operator_rejected_false_release`、`status=invalid`として分母から外れる。
+再把持判定などが先に働いて音場が消えた場合も、自動終了から5秒以内なら`X`で
+直前の失敗trialが`trial_exclusions.csv`へ登録される。
 
-```bash
-venv/bin/python manual_release_tracking/analysis/manage_trial_exclusions.py \
-  --data-dir manual_release_tracking/si2026_data_center50 \
-  add --trial-id SESSION_T0003_123456 \
-  --reason operator_confirmed_false_trigger
-```
-
-登録済みの除外を確認する。
-
-```bash
-venv/bin/python manual_release_tracking/analysis/manage_trial_exclusions.py \
-  --data-dir manual_release_tracking/si2026_data_center50 list
-```
-
-間違って登録した場合:
-
-```bash
-venv/bin/python manual_release_tracking/analysis/manage_trial_exclusions.py \
-  --data-dir manual_release_tracking/si2026_data_center50 \
-  remove --trial-id SESSION_T0003_123456
-```
-
-`trial_exclusions.csv`にtrial IDと理由が保存される。除外基準は実験開始前に固定し、
-50試行を見終わってから都合よく変更しない。
+ゲート通過後の実releaseで球体を再把持した場合は、誤判定ではなく捕捉失敗として
+扱う。成功率を見てから除外基準を変更しない。
 
 ## 4. 実験前に固定する条件
 
-- 同じ球体を使用する
-- AUTD配置、音場半径、intensity設定、制御ゲインを変更しない
+- 同じ球体、AUTD配置、音場半径、intensity設定、制御ゲインを使用する
 - カメラ位置、露光、照明、背景、calibrationを変更しない
 - `--extra-delay-ms 0`
-- `--success-hold-sec 10`
+- `--success-hold-sec 5`
+- `--observation-sec 10`
 - 球体を投げず、意図的な水平速度を与えない
-- データを見てrelease位置を成功しやすい方向へ変更しない
+- 結果を見てrelease位置を成功しやすい方向へ修正しない
 
-日をまぐ場合はセッションを分け、日付、装置状態、calibration、Git commitを記録する。
+日をまたぐ場合はセッションを分け、日付、装置状態、calibration、Git commitを残す。
+今回のCSV schemaは4なので、旧データとは別の新しいデータディレクトリを使う。
 
 ## 5. 実験実行
 
 計画release XYZは指定しない。実測XYZが各trialに自動記録される。
 
-```bash
-venv/bin/python manual_release_tracking/experiments/mediapipe_auto_release_hold.py \
-  --condition-id center_freehand_50 \
-  --extra-delay-ms 0 \
-  --success-hold-sec 10 \
-  --paper-data-dir manual_release_tracking/si2026_data_center50 \
-  --operator YOUR_NAME
+PowerShellでは `\\` ではなくバッククォートで改行し、Windows側のPythonを使う。
+
+```powershell
+.\venv\Scripts\python.exe manual_release_tracking\experiments\mediapipe_auto_release_hold.py `
+  --condition-id center_freehand_100_gate_v1 `
+  --extra-delay-ms 0 `
+  --success-hold-sec 5 `
+  --observation-sec 10 `
+  --target-valid-trials 100 `
+  --paper-data-dir manual_release_tracking\si2026_data_center100_gate_v1 `
+  --operator "Hiroto Yoshida"
 ```
 
-AUTD中心XYZは実行時に装置配置から取得され、`trial_summary.csv`の
-`autd_center_x_mm`, `autd_center_y_mm`, `autd_center_z_mm`に保存される。
+macOS/Linuxの場合:
+
+```bash
+venv/bin/python manual_release_tracking/experiments/mediapipe_auto_release_hold.py \
+  --condition-id center_freehand_100_gate_v1 \
+  --extra-delay-ms 0 \
+  --success-hold-sec 5 \
+  --observation-sec 10 \
+  --target-valid-trials 100 \
+  --paper-data-dir manual_release_tracking/si2026_data_center100_gate_v1 \
+  --operator "Hiroto Yoshida"
+```
 
 ## 6. 1試行ごとの手順
 
-1. 両カメラで球体が検出されていることを確認する。
-2. 球体を指で把持し、目視でAUTD中心付近へ移動する。正確な定位置は行わない。
-3. 手状態が`GRASPED`になったことを確認する。
-4. 球体を押し出さないよう、指を左右へ開いてreleaseする。
-5. release後は球体と音場へ再接触せず、10秒成功判定または自動失敗終了まで待つ。
-6. 明確な誤トリガがあった場合は時刻をメモし、`trial_summary.csv`の直近行から
-   trial IDを確認する。
-7. 次のtrialまで球体と手検出が安定するのを待つ。
+1. 両カメラで球体が安定検出され、手状態が`GRASPED`になることを確認する。
+2. 球体を目視でAUTD中心付近へ移す。厳密な定位置合わせは行わない。
+3. 球体を押し出さないよう、指を左右へ開いてreleaseする。
+4. 音場が出た後に球体がまだ指に保持されていると分かった場合だけ、直ちに`X`を押す。
+5. 実release後は失敗終了またはrelease後10秒まで、球体や音場へ手を入れない。
+6. 10秒を過ぎてから再把持する。次の試行は手状態と球検出が安定してから始める。
+7. 10試行ごとに解析を実行し、`eligible_trials`だけを確認する。
 
-10試行ごにログをバックアップする。明らかに危険な場合を除き、失敗しそうだからという
-理由で途中停止しない。
+危険時を除き、失敗しそうという理由で途中停止しない。`X`は目視で実releaseして
+いないことが明らかな場合だけ使用する。
 
-## 7. 試行数の確認と解析
+## 7. 試行数確認と解析
 
-実験途中でも解析コマンドを実行できる。
+PowerShell:
 
-```bash
-MPLCONFIGDIR=/tmp/si2026-matplotlib \
-venv/bin/python manual_release_tracking/analysis/analyze_si2026_trials.py \
-  --data-dir manual_release_tracking/si2026_data_center50 \
-  --output-dir manual_release_tracking/si2026_figures_center50
+```powershell
+.\venv\Scripts\python.exe manual_release_tracking\analysis\analyze_si2026_trials.py `
+  --data-dir manual_release_tracking\si2026_data_center100_gate_v1 `
+  --output-dir manual_release_tracking\si2026_figures_center100_gate_v1 `
+  --target-valid-trials 100
 ```
 
-`si2026_figures_center50/outcome_summary.csv`の`scope=all`行にある`eligible_trials`が50に達したら終了する。
-`attempts`は除外trialも含むため50より多くなる可能性がある。
+`outcome_summary.csv`の`scope=all`行で、`eligible_trials=100`かつ
+`remaining_valid_trials=0`になった時点で終了する。`attempts`には無効trialも含まれる。
 
-生成される図:
+主な図:
 
-- `successful_release_trajectory.png/.svg`: 代表成功試行のX/Y/Zと3D軌道
-- `outcome_trajectory_comparison.png/.svg`: 成否別のδx/δy/δz軌道
-- `release_outcomes_3d.png/.svg`: 成否別のrelease位置のXY、XZ、3D表示
-- `success_failure_comparison.png/.svg`: release位置、速度、遅延、予測誤差の比較
-- `failure_reason_counts.png/.svg`: 10秒到達前の失敗終了理由
+- `successful_release_trajectory`: 代表成功試行の0--10秒のX/Y/Z・3D軌道
+- `control_mechanism_validation`: Z、制動参照、速度、intensityと状態遷移
+- `braking_distance_validation`: 計画停止距離と制動終了時実測距離
+- `outcome_trajectory_comparison`: 成否別の相対軌道
+- `behavior_pattern_counts`: 成功と失敗局面の件数
+- `release_outcomes_3d`: 成否別release位置
+- `success_failure_comparison`: release位置、速度、遅延、予測誤差
+- `failure_reason_counts`: 5秒到達前の終了理由
 
-生成される表:
+主な表:
 
-- `outcome_summary.csv`: 解析対象数、成功数、失敗数、成功率、95% Wilson信頼区間
-- `release_range_summary.csv`: 成否別のrelease XYZと中心からの距離範囲
-- `success_failure_comparison.csv`: 中央値、四分位範囲、Cliff's delta、各群の`n`
-- `failure_reason_summary.csv`: 個別の失敗理由と分類別件数
-- `exclusion_summary.csv`: 自動および手動除外されたtrialと理由
-- `trial_metrics_enriched.csv`: 除外フラグと追加指標を含む1trial 1行のデータ
+- `outcome_summary.csv`: 分母、成功数、成功率、95% Wilson信頼区間、残試行数
+- `braking_validation.csv`: 計画・実測停止距離、停止位置誤差、制動終了速度
+- `behavior_pattern_summary.csv`: 成功・失敗挙動パターン別件数
+- `success_failure_comparison.csv`: 中央値、四分位範囲、Cliff's delta
+- `exclusion_summary.csv`: 無効・手動除外trialと理由
+- `trial_metrics_enriched.csv`: 1 trial 1行の全解析指標
 
-## 8. 失敗原因の調べ方
+## 8. 解釈
 
-1. `failure_reason_counts` で直接の終了トリガを確認する。
-2. `release_outcomes_3d` で失敗がAUTD中心から離れた位置に偏っていないか確認する。
-3. `success_failure_comparison` で位置、速度、遅延、予測誤差の効果量を確認する。
-4. `outcome_trajectory_comparison` で失敗前の位置変化を確認する。
-5. 必要なtrial IDの元時系列とイベントログを調べる。
-
-終了理由はシステムが最後に検出したトリガであり、物理的な根本原因とは限らない。
-成否間の差も関連を示すが、単独で因果関係を示さない。失敗数が少ない場合は記述的・
-探索的解析として報告する。
+失敗原因は、終了理由、軌道、制動終了の有無、`LOCAL_HOLD`到達の有無を合わせて
+判断する。終了理由は最後に検出された事象であり、必ずしも物理的な根本原因ではない。
+成否差とCliff's deltaも関連を示すもので、単独では因果関係を示さない。

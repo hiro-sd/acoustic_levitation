@@ -58,8 +58,23 @@ def parse_args():
     parser.add_argument(
         "--success-hold-sec",
         type=float,
-        default=10.0,
+        default=5.0,
         help="A trial succeeds when non-contact hold continues this long after release.",
+    )
+    parser.add_argument(
+        "--observation-sec",
+        type=float,
+        default=10.0,
+        help=(
+            "Continue logging a successful trial until this time after release. "
+            "Must be at least --success-hold-sec."
+        ),
+    )
+    parser.add_argument(
+        "--target-valid-trials",
+        type=int,
+        default=100,
+        help="Planned number of non-invalid physical release attempts.",
     )
     parser.add_argument(
         "--paper-data-dir",
@@ -75,6 +90,10 @@ def parse_args():
         parser.error("--extra-delay-ms must be non-negative")
     if args.success_hold_sec <= 0.0:
         parser.error("--success-hold-sec must be positive")
+    if args.observation_sec < args.success_hold_sec:
+        parser.error("--observation-sec must be at least --success-hold-sec")
+    if args.target_valid_trials <= 0:
+        parser.error("--target-valid-trials must be positive")
     return args
 
 
@@ -148,6 +167,14 @@ if __name__ == "__main__":
     # release image but before the asynchronous MediaPipe result are not lost.
     cfg.auto_release_stereo_history_sec = 0.200
 
+    # Physical-release gate.  MediaPipe separation alone is not allowed to
+    # emit ultrasound: three consecutive stereo estimates must show both a
+    # downward velocity and a measurable downward displacement.
+    cfg.auto_release_gate_max_vz_mm_s = -100.0
+    cfg.auto_release_gate_min_drop_mm = 2.5
+    cfg.auto_release_gate_consecutive_estimates = 3
+    cfg.auto_release_gate_timeout_sec = 0.120
+
     # Build the existing constant-deceleration Z reference after the first
     # field is sent. Keep at least 120 ms of CAPTURE_ALIGN before SETTLE, while
     # Z may extend longer when force/workspace constraints require it.
@@ -214,6 +241,10 @@ if __name__ == "__main__":
     # Hold at the released position first, then move the PID reference back to
     # AUTD center / z=400 using the existing speed-limited return controller.
     cfg.auto_release_local_hold_before_return_sec = 3.0
+    # For the SI2026 trajectory experiment, never move the hold reference back
+    # to home before 10 s from the detected release.  This runner-only setting
+    # can be returned to 0/3 s after the experiment without changing the core.
+    cfg.auto_release_min_return_from_release_sec = 10.0
     cfg.return_home_speed_xy_mm_s = 20.0
     cfg.return_home_speed_z_mm_s = 15.0
     # Loss of stereo tracking still silences the field. The 1 s capture limit
@@ -241,6 +272,8 @@ if __name__ == "__main__":
     cfg.si2026_planned_release_z_mm = args.release_z_mm
     cfg.si2026_extra_field_delay_sec = args.extra_delay_ms / 1000.0
     cfg.si2026_success_hold_sec = args.success_hold_sec
+    cfg.si2026_observation_sec = args.observation_sec
+    cfg.si2026_target_valid_trials = args.target_valid_trials
     cfg.si2026_operator = args.operator
     cfg.si2026_notes = args.notes
 
@@ -248,6 +281,7 @@ if __name__ == "__main__":
     # XY-camera separation after GRASPED; contact return cancels it.
     cfg.manual_release_key = "r"
     cfg.manual_release_pre_hold_sec = 0.3
+    cfg.false_release_reject_key = "x"
 
     trigger = None
     try:

@@ -20,17 +20,19 @@ cd /Users/yoshidahiroto/Downloads/修士関連/acoustic_levitation
 python manual_release_tracking/experiments/mediapipe_auto_release_hold.py
 ```
 
-SI2026用の中心近傍50試行では、計画release座標を指定せず、各試行の実測
+SI2026用の中心近傍100試行では、計画release座標を指定せず、各試行の実測
 release XYZを記録します。追加無音時間の既定値は0 msで、従来の捕捉開始
 タイミングを変更しません。
 
-```bash
-venv/bin/python manual_release_tracking/experiments/mediapipe_auto_release_hold.py \
-  --condition-id center_freehand_50 \
-  --extra-delay-ms 0 \
-  --success-hold-sec 10 \
-  --paper-data-dir manual_release_tracking/si2026_data_center50 \
-  --operator YOUR_NAME
+```powershell
+.\venv\Scripts\python.exe manual_release_tracking\experiments\mediapipe_auto_release_hold.py `
+  --condition-id center_freehand_100_gate_v1 `
+  --extra-delay-ms 0 `
+  --success-hold-sec 5 `
+  --observation-sec 10 `
+  --target-valid-trials 100 `
+  --paper-data-dir manual_release_tracking\si2026_data_center100_gate_v1 `
+  --operator "Hiroto Yoshida"
 ```
 
 実験条件、試行数、成功定義、解析手順は
@@ -57,8 +59,9 @@ venv/bin/python manual_release_tracking/experiments/mediapipe_auto_release_hold.
    平均速度ではなく最新時刻の速度を推定します。その後、最新測定値の経過時間と
    StaticとSTMの送信統合後に実測したAUTD送信遅延7.5 msを考慮した
    予測位置へ音場中心を合わせます。
-   100 ms以内に有効な複数フレーム推定を作れない場合は、安全のため音場を
-   出さずにそのrelease試行を終了します。
+   さらに `vz <= -100 mm/s`かつ候補時からZが2.5 mm以上下降した推定が
+   3回連続した場合だけ音場を出します。120 ms以内に物理ゲートを通過しない
+   場合は、把持中の誤release候補として無効終了します。
 6. `CAPTURE_ALIGN` 中は現在のZ速度を120 msで停止させるための必要力を
    `F = m(g + u/T)`で計算し、補正したロードセルモデル
    `(0.5, 0.6, 0.7, 0.8) = (4, 5, 6, 7) mN`を区分線形補間して
@@ -87,9 +90,10 @@ venv/bin/python manual_release_tracking/experiments/mediapipe_auto_release_hold.
    設定範囲内になり、通常intensity 0.6の状態が25 ms続くと
    `LOCAL_HOLD`へ移ります。移行条件は`|vz| <= 60 mm/s`、
    XY速度60 mm/s以下、XY距離15 mm以下、Z誤差10 mm以下です。
-9. `LOCAL_HOLD`で離した位置を3秒間保持した後、既存の速度制限付き
-   `RETURN_TO_HOME`へ移り、基準位置をAUTD中心・Z=400 mmへ徐々に戻します。
-   基準位置の移動速度はXY 30 mm/s、Z 25 mm/sです。復帰完了後も
+9. 成功判定はrelease後5秒です。ただし論文用時系列はrelease後10秒まで継続し、
+   この実験ランナーでは10秒より前に`RETURN_TO_HOME`へ移りません。その後、
+   既存の速度制限付き復帰により基準位置をAUTD中心・Z=400 mmへ戻します。
+   基準位置の移動速度はXY 20 mm/s、Z 15 mm/sです。復帰完了後も
    通常PIDでhomeを保持します。また、端の音場などで振動が残り
    `LOCAL_HOLD`の厳しい条件を満たさない場合も、`CAPTURE_SETTLE`が10秒間
    連続し、球体が緩和した速度・音場距離・Zワークスペース条件内にあれば、
@@ -108,7 +112,10 @@ intensity変化はデッドバンドで無視し、微小な速度ノイズに�
 上向き制動は安全対策として残し、`vz > 60 mm/s`で0.5にして
 `vz < 20 mm/s`まで維持します。`FOLLOW_AND_BRAKE`は無効です。
 また、非同期MediaPipe結果が80 msより古い場合は自動トリガーを拒否します。
-`r` は従来どおり手動フォールバックとして利用でき、`ENTER`で保持を停止できます。
+`X`を押すと、音場開始後に気付いた誤releaseを直ちに無音化し、そのtrialを
+`invalid`として記録します。自動停止が先に起きても5秒以内なら、直前の失敗trialを
+除外リストへ登録します。`r` は従来どおり手動フォールバックとして利用でき、
+`ENTER`で保持を停止できます。
 `r` で手動開始した保持はMediaPipeの再GRASPEDでは停止しません。
 
 ## ログ
@@ -144,8 +151,8 @@ AUTD送信開始・完了までの時間を分解して記録します。
 SI2026用実験では、上記ログに加えて
 `--paper-data-dir`で指定したディレクトリへ次を自動記録します。
 
-- `trial_timeseries.csv`: release候補から10秒成功判定または失敗までの連続時系列
-- `trial_summary.csv`: 計画・実測release位置、初期状態、最大落下量、成否を1試行1行で集計
+- `trial_timeseries.csv`: release候補から10秒観測終了または失敗までの連続時系列
+- `trial_summary.csv`: releaseゲート、計画・実測制動、保持到達、成否を1試行1行で集計
 - `session_*.json`: 実験条件、全設定、calibrationハッシュ、Git commit
 
 論文用グラフと条件別集計表は次のコマンドで生成できます。
@@ -153,8 +160,9 @@ SI2026用実験では、上記ログに加えて
 ```bash
 MPLCONFIGDIR=/tmp/si2026-matplotlib \
 venv/bin/python manual_release_tracking/analysis/analyze_si2026_trials.py \
-  --data-dir manual_release_tracking/si2026_data_center50 \
-  --output-dir manual_release_tracking/si2026_figures_center50
+  --data-dir manual_release_tracking/si2026_data_center100_gate_v1 \
+  --output-dir manual_release_tracking/si2026_figures_center100_gate_v1 \
+  --target-valid-trials 100
 ```
 
 誤トリガなどの手動除外は
