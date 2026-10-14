@@ -21,6 +21,7 @@ from manual_release_tracking.core.auto_release_capture import (
     SETTLE_INTENSITY_UPWARD_DAMPING,
     StereoMotionEstimator,
     anchored_pd_target_xy,
+    capture_activation_ready,
     capture_align_target_xy,
     capture_intensity_for_vz,
     braking_reference_at,
@@ -245,6 +246,22 @@ class ReleaseMotionGateTest(unittest.TestCase):
         )
         self.assertEqual(result.consecutive_count, 0)
         self.assertFalse(result.passed)
+
+    def test_gate_can_finish_while_activation_waits_for_release_confirmation(self):
+        self.assertFalse(
+            capture_activation_ready(
+                release_confirmed=False,
+                motion_gate_passed=True,
+                extra_delay_complete=True,
+            )
+        )
+        self.assertTrue(
+            capture_activation_ready(
+                release_confirmed=True,
+                motion_gate_passed=True,
+                extra_delay_complete=True,
+            )
+        )
 
 
 class CapturePredictionTest(unittest.TestCase):

@@ -28,19 +28,9 @@ from .autd_sender import (
 from .controller import PredictionPIDController
 from .models import HomePosition, Measurement3D, Target3D
 from .control.intensity import compute_z_intensity_boost_ratio
-from .control.recovery import (
-    FOLLOW_AND_BRAKE,
-    LOCAL_HOLD,
+from .control.hold import (
     NORMAL_HOLD,
-    RETURN_TO_HOME,
-    RecoveryTelemetry,
-    apply_capture_intensity_slew,
-    capture_intensity_from_force,
-    fall_detection_reason,
-    is_return_home_done,
-    move_towards,
-    predict_falling_position,
-    required_capture_force_mN,
+    HoldTelemetry,
 )
 from .runtime.display import (
     DisplayControlState,
@@ -260,12 +250,6 @@ def run_tracking_app(cfg: AppConfig):
             demo_active = False
             demo = SquareZDemo(cfg, display_origin)
 
-            descending_frame_count = 0
-            follow_xy_reference = None
-            follow_xy_stabilizing = False
-            follow_xy_initial_jump_done = False
-            local_hold_stable_since = None
-            local_hold_start_time = None
             mode_transition_reason = ""
 
             return_setpoint = HomePosition(
@@ -339,12 +323,6 @@ def run_tracking_app(cfg: AppConfig):
                     else:
                         print("[INFO] >>> TRACKING PAUSED: Return to initial base position <<<")
                         control_mode = NORMAL_HOLD
-                        descending_frame_count = 0
-                        follow_xy_reference = None
-                        follow_xy_stabilizing = False
-                        follow_xy_initial_jump_done = False
-                        local_hold_stable_since = None
-                        local_hold_start_time = None
                         mode_transition_reason = "tracking_paused"
                         demo_active = False
                         demo.reset()
@@ -395,9 +373,6 @@ def run_tracking_app(cfg: AppConfig):
                 if cfg.enable_auto_demo and demo_active and tracking_active:
                     home = demo.update(dt_loop)
                     control_mode = NORMAL_HOLD
-                    follow_xy_reference = None
-                    follow_xy_stabilizing = False
-                    follow_xy_initial_jump_done = False
                     return_setpoint = HomePosition(
                         x=home.x,
                         y=home.y,
@@ -618,7 +593,7 @@ def run_tracking_app(cfg: AppConfig):
                     target_intensity_ratio = float(cfg.static_intensity_ratio)
                 
                 method = "XY+Z" if (detected_xy and detected_z) else "PARTIAL"
-                recovery_telemetry = RecoveryTelemetry(
+                hold_telemetry = HoldTelemetry(
                     z_drop_mm=None if z_mm is None else float(home.z - z_mm),
                     temporary_home=return_setpoint,
                     mode_transition_reason=mode_transition_reason,
@@ -638,398 +613,31 @@ def run_tracking_app(cfg: AppConfig):
                     )
 
                     if meas.detected_xy or meas.detected_z:
-                        # 1. RETURN_TO_HOME中は一時基準位置をゆっくりhomeへ戻す。
-                        #    LOCAL_HOLD中はreturn_setpointを一時基準としてその場保持する。
-                        if control_mode == RETURN_TO_HOME:
-                            return_setpoint = HomePosition(
-                                x=move_towards(
-                                    return_setpoint.x,
-                                    home.x,
-                                    cfg.return_home_speed_xy_mm_s * dt_loop,
-                                ),
-                                y=move_towards(
-                                    return_setpoint.y,
-                                    home.y,
-                                    cfg.return_home_speed_xy_mm_s * dt_loop,
-                                ),
-                                z=move_towards(
-                                    return_setpoint.z,
-                                    home.z,
-                                    cfg.return_home_speed_z_mm_s * dt_loop,
-                                ),
-                            )
-
-                            control_home = return_setpoint
-                        elif control_mode == LOCAL_HOLD:
-                            control_home = return_setpoint
-                        else:
-                            control_home = home
-
-                        # 2. まず通常PIDを計算
-                        #    FOLLOW_AND_BRAKE中は後で予測捕捉targetで上書きする。
-                        target, debug = controller.update(meas, control_home)
+                        target, debug = controller.update(meas, home)
 
                         vx_now = float(debug.vx)
                         vy_now = float(debug.vy)
                         vz_now = float(debug.vz)
 
-                        recovery_telemetry.vz_mm_s = vz_now
+                        hold_telemetry.vz_mm_s = vz_now
 
-                        if vz_now <= cfg.fall_vz_threshold_mm_s:
-                            descending_frame_count += 1
-                        else:
-                            descending_frame_count = 0
+                        hold_telemetry.temporary_home = return_setpoint
+                        hold_telemetry.mode_transition_reason = mode_transition_reason
 
-                        # 3. NORMAL_HOLD / LOCAL_HOLD / RETURN_TO_HOME中に落下検知したら
-                        #    FOLLOW_AND_BRAKEへ入る。
-                        if cfg.enable_fall_recovery and control_mode in [
-                            NORMAL_HOLD,
-                            LOCAL_HOLD,
-                            RETURN_TO_HOME,
-                        ]:
-                            detect_home = return_setpoint if control_mode == LOCAL_HOLD else home
-                            reason = fall_detection_reason(
-                                cfg,
-                                detect_home,
-                                x_mm,
-                                y_mm,
-                                z_mm,
-                                vz_now,
-                                descending_frame_count,
-                            )
-                            if reason is not None:
-                                control_mode = FOLLOW_AND_BRAKE
-                                follow_xy_reference = None
-                                follow_xy_stabilizing = False
-                                follow_xy_initial_jump_done = False
-                                local_hold_stable_since = None
-                                local_hold_start_time = None
-                                mode_transition_reason = reason
-                                print(f"[RECOVERY] -> FOLLOW_AND_BRAKE ({reason})")
-
-                        # 4. FOLLOW_AND_BRAKE中は遅延後のxyz予測位置へ追従し、
-                        #    必要制動力から段階intensityを決める。
-                        capture_intensity_ratio = None
-                        if control_mode == FOLLOW_AND_BRAKE:
-                            pred_x, pred_y, pred_z, pred_vz = predict_falling_position(
-                                cfg,
-                                x_mm,
-                                y_mm,
-                                z_mm,
-                                vx_now,
-                                vy_now,
-                                vz_now,
-                            )
-
-                            recovery_telemetry.predicted_x_mm = pred_x
-                            recovery_telemetry.predicted_y_mm = pred_y
-                            recovery_telemetry.predicted_z_mm = pred_z
-                            recovery_telemetry.predicted_vz_mm_s = pred_vz
-
-                            xy_distance_to_target = None
-                            if x_mm is not None and y_mm is not None:
-                                xy_distance_to_target = float(
-                                    np.hypot(
-                                        float(x_mm) - last_target.x,
-                                        float(y_mm) - last_target.y,
-                                    )
-                                )
-
-                            if xy_distance_to_target is not None:
-                                if follow_xy_stabilizing:
-                                    if (
-                                        xy_distance_to_target
-                                        >= cfg.fall_xy_stabilize_exit_radius_mm
-                                        or abs(vz_now)
-                                        > cfg.fall_xy_stabilize_enter_vz_abs_mm_s
-                                    ):
-                                        follow_xy_stabilizing = False
-                                elif (
-                                    xy_distance_to_target
-                                    <= cfg.fall_xy_stabilize_enter_radius_mm
-                                    and abs(vz_now)
-                                    <= cfg.fall_xy_stabilize_enter_vz_abs_mm_s
-                                ):
-                                    follow_xy_stabilizing = True
-                                    ref_x = x_mm if x_mm is not None else last_target.x
-                                    ref_y = y_mm if y_mm is not None else last_target.y
-                                    follow_xy_reference = (float(ref_x), float(ref_y))
-
-                            if follow_xy_reference is None:
-                                ref_x = pred_x if pred_x is not None else x_mm
-                                ref_y = pred_y if pred_y is not None else y_mm
-                                if ref_x is None:
-                                    ref_x = last_target.x
-                                if ref_y is None:
-                                    ref_y = last_target.y
-                                follow_xy_reference = (float(ref_x), float(ref_y))
-
-                            if (
-                                not follow_xy_initial_jump_done
-                                and pred_x is not None
-                                and pred_y is not None
-                            ):
-                                # FOLLOW開始直後の1回だけ、XYも遅延後予測位置へ即座に置く。
-                                # その後は距離ベースで、離れていれば再捕捉、近ければ逆方向補正。
-                                desired_x = float(pred_x)
-                                desired_y = float(pred_y)
-                                catch_x = desired_x
-                                catch_y = desired_y
-                                follow_xy_initial_jump_done = True
-                            elif not follow_xy_stabilizing:
-                                desired_x = pred_x if pred_x is not None else last_target.x
-                                desired_y = pred_y if pred_y is not None else last_target.y
-                                # 再捕捉フェーズでは、音場有効範囲から外れた球を
-                                # すぐ捕まえ直すためXY step制限をかけず予測位置へ置く。
-                                catch_x = float(desired_x)
-                                catch_y = float(desired_y)
-                            else:
-                                ref_x, ref_y = follow_xy_reference
-
-                                if x_mm is not None:
-                                    if cfg.enable_delay_compensation:
-                                        x_for_feedback = float(
-                                            x_mm + vx_now * cfg.dt_pred_xy
-                                        )
-                                    else:
-                                        x_for_feedback = float(x_mm)
-                                    x_error = float(ref_x - x_for_feedback)
-                                    desired_x = (
-                                        float(ref_x)
-                                        + cfg.fall_xy_stabilize_kp * x_error
-                                        - cfg.fall_xy_stabilize_kd * vx_now
-                                    )
-                                else:
-                                    desired_x = last_target.x
-
-                                if y_mm is not None:
-                                    if cfg.enable_delay_compensation:
-                                        y_for_feedback = float(
-                                            y_mm + vy_now * cfg.dt_pred_xy
-                                        )
-                                    else:
-                                        y_for_feedback = float(y_mm)
-                                    y_error = float(ref_y - y_for_feedback)
-                                    desired_y = (
-                                        float(ref_y)
-                                        + cfg.fall_xy_stabilize_kp * y_error
-                                        - cfg.fall_xy_stabilize_kd * vy_now
-                                    )
-                                else:
-                                    desired_y = last_target.y
-
-                                catch_x = last_target.x + float(
-                                    np.clip(
-                                        desired_x - last_target.x,
-                                        -cfg.fall_recovery_target_xy_step_mm,
-                                        cfg.fall_recovery_target_xy_step_mm,
-                                    )
-                                )
-                                catch_y = last_target.y + float(
-                                    np.clip(
-                                        desired_y - last_target.y,
-                                        -cfg.fall_recovery_target_xy_step_mm,
-                                        cfg.fall_recovery_target_xy_step_mm,
-                                    )
-                                )
-
-                            if not follow_xy_stabilizing:
-                                follow_xy_reference = (float(catch_x), float(catch_y))
-
-                            if pred_z is not None:
-                                if z_mm is not None and vz_now > 0.0:
-                                    # 上向き反転後は球の移動方向へ追従し続けず、
-                                    # z targetを上方向へは動かさない。
-                                    # 少し下の候補位置を作り、現在targetより上ならfreezeする。
-                                    upward_candidate_z = float(
-                                        z_mm + cfg.fall_upward_target_z_offset_mm
-                                    )
-                                    catch_z = min(last_target.z, upward_candidate_z)
-                                else:
-                                    # FOLLOW_AND_BRAKEでは、通常PIDが直前に作った
-                                    # last_target.z が球より大きく上に残ると打ち上げ要因になる。
-                                    # そのため下降中のZはstep制限せず、予測位置へ直接置く。
-                                    catch_z = pred_z
-
-                                catch_z = float(np.clip(catch_z, cfg.z_min, cfg.z_max))
-                            else:
-                                catch_z = last_target.z
-
-                            target = Target3D(
-                                x=float(catch_x),
-                                y=float(catch_y),
-                                z=float(catch_z),
-                            )
-                            if x_mm is not None and y_mm is not None:
-                                recovery_telemetry.xy_distance_to_target_mm = float(
-                                    np.hypot(
-                                        float(x_mm) - target.x,
-                                        float(y_mm) - target.y,
-                                    )
-                                )
-
-                            required_force = required_capture_force_mN(cfg, pred_vz)
-                            force_command = capture_intensity_from_force(cfg, required_force)
-                            capture_intensity_ratio = force_command.commanded_intensity
-
-                            if vz_now > 0.0:
-                                capture_intensity_ratio = float(cfg.fall_upward_intensity_ratio)
-                            elif vz_now >= cfg.fall_near_stop_vz_mm_s:
-                                capture_intensity_ratio = float(cfg.static_intensity_ratio)
-                            elif vz_now >= cfg.fall_slow_down_vz_mm_s:
-                                capture_intensity_ratio = float(cfg.fall_near_stop_intensity_ratio)
-
-                            capture_intensity_ratio = min(
-                                float(capture_intensity_ratio),
-                                float(cfg.fall_capture_max_intensity_ratio),
-                            )
-
-                            recovery_telemetry.required_force_mN = force_command.required_force_mN
-                            recovery_telemetry.commanded_intensity = capture_intensity_ratio
-                            recovery_telemetry.capture_force_saturated = force_command.saturated
-
-                            if force_command.saturated:
-                                print(
-                                    "[RECOVERY] capture force saturated: "
-                                    f"required={force_command.required_force_mN:.2f} mN"
-                                )
-
-                            def enter_local_hold(reason: str):
-                                nonlocal control_mode
-                                nonlocal local_hold_start_time
-                                nonlocal local_hold_stable_since
-                                nonlocal mode_transition_reason
-                                nonlocal return_setpoint
-                                sx = x_mm if x_mm is not None else last_target.x
-                                sy = y_mm if y_mm is not None else last_target.y
-                                sz = (
-                                    controller.prev_particle_z_filt
-                                    if controller.prev_particle_z_filt is not None
-                                    else (z_mm if z_mm is not None else last_target.z)
-                                )
-
-                                return_setpoint = HomePosition(
-                                    x=float(sx),
-                                    y=float(sy),
-                                    z=float(sz),
-                                )
-
-                                control_mode = LOCAL_HOLD
-                                local_hold_start_time = time.time()
-                                local_hold_stable_since = None
-                                mode_transition_reason = reason
-
-                                controller.reset(
-                                    Target3D(
-                                        return_setpoint.x,
-                                        return_setpoint.y,
-                                        return_setpoint.z,
-                                    )
-                                )
-
-                                print(
-                                    f"[RECOVERY] FOLLOW_AND_BRAKE -> LOCAL_HOLD "
-                                    f"reason={reason} "
-                                    f"setpoint=({return_setpoint.x:.1f}, "
-                                    f"{return_setpoint.y:.1f}, {return_setpoint.z:.1f})"
-                                )
-
-                                return Target3D(
-                                    x=return_setpoint.x,
-                                    y=return_setpoint.y,
-                                    z=return_setpoint.z,
-                                )
-
-                            if abs(vz_now) <= cfg.local_hold_enter_vz_abs_mm_s:
-                                if local_hold_stable_since is None:
-                                    local_hold_stable_since = time.time()
-                                elif time.time() - local_hold_stable_since >= cfg.local_hold_enter_stable_time_sec:
-                                    target = enter_local_hold("captured_vz_stable")
-                            else:
-                                local_hold_stable_since = None
-
-                        # 5. LOCAL_HOLD中は一時基準でその場保持する。
-                        #    現段階では捕捉可否の確認を優先し、元のhomeへは自動復帰しない。
-
-                        # 6. RETURN_TO_HOME完了判定
-                        if control_mode == RETURN_TO_HOME:
-                            if is_return_home_done(
-                                cfg,
-                                home,
-                                z_mm,
-                                x_mm,
-                                y_mm,
-                                vx_now,
-                                vy_now,
-                                vz_now,
-                            ):
-                                control_mode = NORMAL_HOLD
-                                follow_xy_reference = None
-                                follow_xy_stabilizing = False
-                                follow_xy_initial_jump_done = False
-                                mode_transition_reason = "return_home_done"
-
-                                return_setpoint = HomePosition(
-                                    x=home.x,
-                                    y=home.y,
-                                    z=home.z,
-                                )
-
-                                controller.reset(
-                                    Target3D(
-                                        home.x,
-                                        home.y,
-                                        home.z,
-                                    )
-                                )
-
-                                print("[RECOVERY] RETURN_TO_HOME -> NORMAL_HOLD")
-
-                        recovery_telemetry.temporary_home = return_setpoint
-                        recovery_telemetry.mode_transition_reason = mode_transition_reason
-
-                        # 7. intensity更新。
-                        #    通常保持時は既存LPFを維持し、捕捉関連状態だけ上昇即時/下降slewを使う。
-                        if control_mode == FOLLOW_AND_BRAKE and capture_intensity_ratio is not None:
-                            if vz_now > 0.0:
-                                # 上向きに反転したら、打ち上げを止めるため下降slewを待たず即座に抜く。
-                                current_intensity_ratio = float(
-                                    np.clip(
-                                        capture_intensity_ratio,
-                                        0.0,
-                                        cfg.intensity_max_ratio,
-                                    )
-                                )
-                            else:
-                                current_intensity_ratio = apply_capture_intensity_slew(
-                                    current_intensity_ratio,
-                                    capture_intensity_ratio,
-                                    cfg,
-                                    dt_loop,
-                                )
-                        elif control_mode in [LOCAL_HOLD, RETURN_TO_HOME]:
-                            current_intensity_ratio = apply_capture_intensity_slew(
+                        current_intensity_ratio = (
+                            cfg.intensity_lpf_alpha * current_intensity_ratio
+                            + (1.0 - cfg.intensity_lpf_alpha)
+                            * target_intensity_ratio
+                        )
+                        current_intensity_ratio = float(
+                            np.clip(
                                 current_intensity_ratio,
                                 cfg.static_intensity_ratio,
-                                cfg,
-                                dt_loop,
+                                cfg.intensity_max_ratio,
                             )
-                            recovery_telemetry.commanded_intensity = current_intensity_ratio
-                        else:
-                            current_intensity_ratio = (
-                                cfg.intensity_lpf_alpha * current_intensity_ratio
-                                + (1.0 - cfg.intensity_lpf_alpha) * target_intensity_ratio
-                            )
+                        )
 
-                            current_intensity_ratio = float(
-                                np.clip(
-                                    current_intensity_ratio,
-                                    cfg.static_intensity_ratio,
-                                    cfg.intensity_max_ratio,
-                                )
-                            )
-
-                        recovery_telemetry.actual_intensity = current_intensity_ratio
+                        hold_telemetry.actual_intensity = current_intensity_ratio
                         last_target = target
 
                         set_tracking_target(
@@ -1086,7 +694,7 @@ def run_tracking_app(cfg: AppConfig):
                     home=home,
                     target=last_target,
                     control_mode=control_mode,
-                    recovery=recovery_telemetry,
+                    hold=hold_telemetry,
                 )
                 
                 if do_display:

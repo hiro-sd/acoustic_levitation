@@ -490,6 +490,20 @@ def update_release_motion_gate(
     )
 
 
+def capture_activation_ready(
+    *,
+    release_confirmed: bool,
+    motion_gate_passed: bool,
+    extra_delay_complete: bool,
+) -> bool:
+    """Keep early motion-gate evaluation separate from acoustic activation."""
+    return bool(
+        release_confirmed
+        and motion_gate_passed
+        and extra_delay_complete
+    )
+
+
 def make_braking_plan(
     *,
     start_time_sec: float,

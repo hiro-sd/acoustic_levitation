@@ -113,7 +113,6 @@ if __name__ == "__main__":
         # keep exactly the successful manual LOCAL_HOLD controller.
         enable_base_move=False,
         enable_radius_change=False,
-        enable_fall_recovery=False,
         enable_auto_demo=False,
         use_gravity_prediction_z=False,
 
@@ -128,7 +127,7 @@ if __name__ == "__main__":
     cfg.mediapipe_tip_gap_normalized_max = 0.45
     cfg.mediapipe_min_opposition_angle_deg = 60.0
     cfg.mediapipe_grasp_confirm_ms = 50.0
-    cfg.mediapipe_release_confirm_ms = 25.0
+    cfg.mediapipe_release_confirm_ms = 15.0
     cfg.mediapipe_released_latch_ms = 500.0
     cfg.mediapipe_result_pair_tolerance_ms = 40.0
     cfg.mediapipe_submit_max_fps = 90.0
@@ -202,11 +201,11 @@ if __name__ == "__main__":
     # 120 ms, then select the smallest load-cell level that can provide it.
     # This experiment shifts the measured model by +1 mN so intensity 0.6
     # corresponds to the approximately 5 mN needed for static levitation.
-    cfg.fall_capture_time_sec = 0.120
-    cfg.fall_capture_force_safety_factor = 1.0
-    cfg.fall_capture_max_intensity_ratio = 0.8
-    cfg.fall_capture_intensity_levels = (0.5, 0.6, 0.7, 0.8)
-    cfg.fall_capture_loadcell_model = (
+    cfg.capture_time_sec = 0.120
+    cfg.capture_force_safety_factor = 1.0
+    cfg.capture_max_intensity_ratio = 0.8
+    cfg.capture_intensity_levels = (0.5, 0.6, 0.7, 0.8)
+    cfg.capture_loadcell_model = (
         (0.5, 4.0),
         (0.6, 5.0),
         (0.7, 6.0),

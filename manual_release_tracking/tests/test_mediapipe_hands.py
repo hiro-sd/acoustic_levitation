@@ -120,6 +120,17 @@ class TipContactStateMachineTest(unittest.TestCase):
         self.machine.update(200.0, False, valid=False)
         self.assertEqual(self.machine.state, TipContactState.GRASPED)
 
+    def test_default_release_confirmation_is_fifteen_ms(self):
+        machine = TipContactStateMachine()
+        machine.update(0.0, True)
+        machine.update(50.0, True)
+        self.assertEqual(machine.state, TipContactState.GRASPED)
+
+        machine.update(60.0, False)
+        self.assertEqual(machine.update(74.0, False), TipContactState.GRASPED)
+        self.assertEqual(machine.update(75.0, False), TipContactState.RELEASED)
+        self.assertTrue(machine.just_released)
+
 
 class BinaryErrorStatsTest(unittest.TestCase):
     def test_false_positive_and_false_negative(self):

@@ -28,7 +28,6 @@ if __name__ == "__main__":
 
         enable_base_move=True,
         enable_radius_change=False,
-        enable_fall_recovery=False,
         enable_auto_demo=True,
 
         # use_output_mask=True,

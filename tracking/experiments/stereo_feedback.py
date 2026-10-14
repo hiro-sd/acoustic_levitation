@@ -21,7 +21,6 @@ if __name__ == "__main__":
 
         enable_base_move=True,
         enable_radius_change=False,
-        enable_fall_recovery=True,
         enable_auto_demo=True,
         use_gravity_prediction_z=False,
 

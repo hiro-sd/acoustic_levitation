@@ -144,55 +144,21 @@ class AppConfig:
     log_duration_sec: float = 30.0
     log_trigger_key: str = "l"
 
-    # Fall recovery / return-to-home settings
-    enable_fall_recovery: bool = False
-
+    # Capture-force model shared by automatic release capture.
     ball_mass_kg: float = 0.0005
     ball_diameter_mm: float = 38.0
-
-    # Fall detection. z軸は上向き正なので、下降速度は vz < 0。
-    fall_vz_threshold_mm_s: float = -80.0
-    fall_descending_frames: int = 5
-    fall_hold_region_xy_mm: float = 12.0
-    fall_hold_region_z_mm: float = 12.0
-
-    # FOLLOW_AND_BRAKE prediction / braking.
-    fall_system_delay_sec: float = 0.010
-    fall_recovery_dt_pred_z: float = 0.02
-    fall_recovery_z_offset_mm: float = 0.0
-    fall_recovery_dt_pred_xy: float = 0
-    fall_recovery_target_xy_step_mm: float = 10.0
-    fall_recovery_target_z_step_mm: float = 10.0
-    # FOLLOW_AND_BRAKE中のXYは、球とtargetが音場有効範囲に近づくまでは追従し、
-    # 十分近づいたら捕捉基準まわりで通常保持に近い逆方向補正へ切り替える。
-    fall_xy_stabilize_enter_radius_mm: float = 20.0
-    fall_xy_stabilize_exit_radius_mm: float = 20.0
-    fall_xy_stabilize_enter_vz_abs_mm_s: float = 150.0
-    fall_xy_stabilize_kp: float = 0.3
-    fall_xy_stabilize_kd: float = 0.05
-    fall_capture_time_sec: float = 0.12
-    fall_capture_force_safety_factor: float = 1.0
-    fall_slow_down_vz_mm_s: float = -80.0
-    fall_near_stop_vz_mm_s: float = -30.0
-    fall_near_stop_intensity_ratio: float = 0.7
-    fall_upward_intensity_ratio: float = 0.6
-    fall_upward_target_z_offset_mm: float = -5.0
-    fall_capture_max_intensity_ratio: float = 0.9
-    fall_capture_intensity_levels: tuple[float, ...] = (0.6, 0.7, 0.8, 0.9)
-    fall_capture_loadcell_model: tuple[tuple[float, float], ...] = (
+    capture_time_sec: float = 0.12
+    capture_force_safety_factor: float = 1.0
+    capture_max_intensity_ratio: float = 0.9
+    capture_intensity_levels: tuple[float, ...] = (0.6, 0.7, 0.8, 0.9)
+    capture_loadcell_model: tuple[tuple[float, float], ...] = (
         (0.6, 4.0),
         (0.7, 5.0),
         (0.8, 6.0),
         (0.9, 7.0),
         (1.0, 8.0),
     )
-    fall_intensity_down_slew_per_sec: float = 0.4
-
-    # LOCAL_HOLD: 捕捉後、その場で一時保持する条件。
-    local_hold_enter_vz_abs_mm_s: float = 30.0
-    local_hold_enter_stable_time_sec: float = 0.08
-    local_hold_min_time_sec: float = 0.3
-    local_hold_intensity_return_done_eps: float = 0.02
+    capture_intensity_down_slew_per_sec: float = 0.4
 
     # RETURN_TO_HOME中、一時目標をhomeへ戻す速度
     return_home_speed_xy_mm_s: float = 8.0

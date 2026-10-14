@@ -185,7 +185,7 @@ class MediaPipeReleaseTrigger:
                 getattr(cfg, "mediapipe_grasp_confirm_ms", 50.0)
             ),
             release_confirm_ms=float(
-                getattr(cfg, "mediapipe_release_confirm_ms", 25.0)
+                getattr(cfg, "mediapipe_release_confirm_ms", 15.0)
             ),
             released_latch_ms=float(
                 getattr(cfg, "mediapipe_released_latch_ms", 500.0)

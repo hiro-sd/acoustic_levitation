@@ -671,7 +671,6 @@ if __name__ == "__main__":
         ),
         enable_base_move=False,
         enable_radius_change=False,
-        enable_fall_recovery=False,
         enable_auto_demo=False,
         use_gravity_prediction_z=False,
         display_every_n_frames=2,

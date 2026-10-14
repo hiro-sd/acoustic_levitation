@@ -6,7 +6,7 @@ import numpy as np
 
 from ..config import AppConfig
 from ..models import HomePosition, Target3D
-from ..control.recovery import RecoveryTelemetry
+from ..control.hold import HoldTelemetry
 
 
 LOG_HEADER = [
@@ -114,7 +114,7 @@ class StabilityLogger:
         home: HomePosition,
         target: Target3D,
         control_mode: str = "",
-        recovery: RecoveryTelemetry | None = None,
+        hold: HoldTelemetry | None = None,
     ):
         if not self.active or self.writer is None:
             return
@@ -123,7 +123,7 @@ class StabilityLogger:
 
         self.last_xy_time = frame_xy_time
         self.last_z_time = frame_z_time
-        temporary_home = recovery.temporary_home if recovery is not None else None
+        temporary_home = hold.temporary_home if hold is not None else None
         self.writer.writerow(
             [
                 f"{time.time():.4f}",
@@ -142,65 +142,65 @@ class StabilityLogger:
                 f"{target.y:.3f}",
                 f"{target.z:.3f}",
                 (
-                    f"{recovery.z_drop_mm:.3f}"
-                    if recovery is not None and recovery.z_drop_mm is not None
+                    f"{hold.z_drop_mm:.3f}"
+                    if hold is not None and hold.z_drop_mm is not None
                     else ""
                 ),
                 (
-                    f"{recovery.vz_mm_s:.3f}"
-                    if recovery is not None and recovery.vz_mm_s is not None
+                    f"{hold.vz_mm_s:.3f}"
+                    if hold is not None and hold.vz_mm_s is not None
                     else ""
                 ),
                 (
-                    f"{recovery.predicted_x_mm:.3f}"
-                    if recovery is not None and recovery.predicted_x_mm is not None
+                    f"{hold.predicted_x_mm:.3f}"
+                    if hold is not None and hold.predicted_x_mm is not None
                     else ""
                 ),
                 (
-                    f"{recovery.predicted_y_mm:.3f}"
-                    if recovery is not None and recovery.predicted_y_mm is not None
+                    f"{hold.predicted_y_mm:.3f}"
+                    if hold is not None and hold.predicted_y_mm is not None
                     else ""
                 ),
                 (
-                    f"{recovery.predicted_z_mm:.3f}"
-                    if recovery is not None and recovery.predicted_z_mm is not None
+                    f"{hold.predicted_z_mm:.3f}"
+                    if hold is not None and hold.predicted_z_mm is not None
                     else ""
                 ),
                 (
-                    f"{recovery.predicted_vz_mm_s:.3f}"
-                    if recovery is not None and recovery.predicted_vz_mm_s is not None
+                    f"{hold.predicted_vz_mm_s:.3f}"
+                    if hold is not None and hold.predicted_vz_mm_s is not None
                     else ""
                 ),
                 (
-                    f"{recovery.xy_distance_to_target_mm:.3f}"
-                    if recovery is not None
-                    and recovery.xy_distance_to_target_mm is not None
+                    f"{hold.xy_distance_to_target_mm:.3f}"
+                    if hold is not None
+                    and hold.xy_distance_to_target_mm is not None
                     else ""
                 ),
                 (
-                    f"{recovery.required_force_mN:.3f}"
-                    if recovery is not None and recovery.required_force_mN is not None
+                    f"{hold.required_force_mN:.3f}"
+                    if hold is not None and hold.required_force_mN is not None
                     else ""
                 ),
                 (
-                    f"{recovery.commanded_intensity:.3f}"
-                    if recovery is not None and recovery.commanded_intensity is not None
+                    f"{hold.commanded_intensity:.3f}"
+                    if hold is not None and hold.commanded_intensity is not None
                     else ""
                 ),
                 (
-                    f"{recovery.actual_intensity:.3f}"
-                    if recovery is not None and recovery.actual_intensity is not None
+                    f"{hold.actual_intensity:.3f}"
+                    if hold is not None and hold.actual_intensity is not None
                     else ""
                 ),
                 (
                     "1"
-                    if recovery is not None and recovery.capture_force_saturated
+                    if hold is not None and hold.capture_force_saturated
                     else "0"
                 ),
                 f"{temporary_home.x:.3f}" if temporary_home is not None else "",
                 f"{temporary_home.y:.3f}" if temporary_home is not None else "",
                 f"{temporary_home.z:.3f}" if temporary_home is not None else "",
-                recovery.mode_transition_reason if recovery is not None else "",
+                hold.mode_transition_reason if hold is not None else "",
             ]
         )
 
