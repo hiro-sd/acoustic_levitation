@@ -691,6 +691,379 @@ def plot_successful_trajectory(
     _save_figure(figure, output_path)
 
 
+def _resample_success_series(
+    samples: pd.DataFrame,
+    time_grid_ms: np.ndarray,
+    column: str,
+    *,
+    initial_value: float | None = None,
+    previous_value: bool = False,
+):
+    usable = samples[["elapsed_from_release_ms", column]].dropna().copy()
+    if initial_value is not None:
+        usable = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "elapsed_from_release_ms": [0.0],
+                        column: [float(initial_value)],
+                    }
+                ),
+                usable,
+            ],
+            ignore_index=True,
+        )
+    usable = (
+        usable.groupby("elapsed_from_release_ms", as_index=False)[column]
+        .mean()
+        .sort_values("elapsed_from_release_ms")
+    )
+    if usable.empty:
+        return np.full_like(time_grid_ms, np.nan, dtype=float)
+
+    time_ms = usable["elapsed_from_release_ms"].to_numpy(dtype=float)
+    values = usable[column].to_numpy(dtype=float)
+    result = np.full_like(time_grid_ms, np.nan, dtype=float)
+    covered = (time_grid_ms >= time_ms[0]) & (time_grid_ms <= time_ms[-1])
+    if previous_value:
+        indices = np.searchsorted(time_ms, time_grid_ms[covered], side="right") - 1
+        result[covered] = values[np.clip(indices, 0, len(values) - 1)]
+    else:
+        result[covered] = np.interp(time_grid_ms[covered], time_ms, values)
+    return result
+
+
+def plot_successful_trials_mean_response(
+    trials: pd.DataFrame,
+    timeseries: pd.DataFrame,
+    output_directory: Path,
+):
+    """Plot all successful trials and their release-aligned aggregate response."""
+    output_path = output_directory / "successful_trials_mean_response"
+    successful = eligible_trials(trials)
+    successful = successful[successful["status"] == "success"].copy()
+    if successful.empty:
+        _placeholder_figure(output_path, "No successful trials are available")
+        return
+
+    time_grid_ms = np.arange(0.0, 5000.0 + 5.0, 5.0)
+    matrices = {
+        "filtered_z_mm": [],
+        "vz_mm_s": [],
+        "commanded_intensity": [],
+    }
+    for _, trial in successful.iterrows():
+        samples = timeseries[timeseries["trial_id"] == trial["trial_id"]].copy()
+        samples = samples.sort_values("elapsed_from_release_ms")
+        samples = samples[samples["elapsed_from_release_ms"] >= 0.0]
+        matrices["filtered_z_mm"].append(
+            _resample_success_series(
+                samples,
+                time_grid_ms,
+                "filtered_z_mm",
+                initial_value=trial.get("release_z_mm"),
+            )
+        )
+        matrices["vz_mm_s"].append(
+            _resample_success_series(
+                samples,
+                time_grid_ms,
+                "vz_mm_s",
+            )
+        )
+        matrices["commanded_intensity"].append(
+            _resample_success_series(
+                samples,
+                time_grid_ms,
+                "commanded_intensity",
+                initial_value=0.0,
+                previous_value=True,
+            )
+        )
+
+    for column in matrices:
+        matrices[column] = np.asarray(matrices[column], dtype=float)
+
+    figure, axes = plt.subplots(
+        3,
+        1,
+        figsize=(8.0, 7.2),
+        sharex=True,
+        constrained_layout=True,
+    )
+    panels = (
+        ("filtered_z_mm", "Measured $z$ [mm]", "#2166ac"),
+        ("vz_mm_s", "Measured $v_z$ [mm/s]", "#d73027"),
+        ("commanded_intensity", "AUTD output", "#762a83"),
+    )
+    aggregate = pd.DataFrame({"time_from_release_s": time_grid_ms / 1000.0})
+    for axis, (column, ylabel, color) in zip(axes, panels):
+        matrix = matrices[column]
+        for values in matrix:
+            axis.plot(
+                time_grid_ms / 1000.0,
+                values,
+                color=color,
+                alpha=0.10,
+                linewidth=0.55,
+            )
+        count = np.sum(np.isfinite(matrix), axis=0)
+        mean = np.full(matrix.shape[1], np.nan, dtype=float)
+        lower = np.full(matrix.shape[1], np.nan, dtype=float)
+        upper = np.full(matrix.shape[1], np.nan, dtype=float)
+        available = count > 0
+        mean[available] = (
+            np.nansum(matrix[:, available], axis=0) / count[available]
+        )
+        for sample_index in np.flatnonzero(available):
+            values = matrix[:, sample_index]
+            values = values[np.isfinite(values)]
+            lower[sample_index], upper[sample_index] = np.percentile(
+                values,
+                [25.0, 75.0],
+            )
+        axis.fill_between(
+            time_grid_ms / 1000.0,
+            lower,
+            upper,
+            color=color,
+            alpha=0.18,
+            linewidth=0.0,
+            label="Interquartile range",
+        )
+        axis.plot(
+            time_grid_ms / 1000.0,
+            mean,
+            color=color,
+            linewidth=2.2,
+            label="Mean",
+        )
+        axis.set_ylabel(ylabel, fontsize=16)
+        axis.set_xlim(0.0, 5.0)
+        axis.tick_params(axis="both", labelsize=14)
+        axis.grid(True, alpha=0.22)
+        aggregate[f"{column}_mean"] = mean
+        aggregate[f"{column}_q1"] = lower
+        aggregate[f"{column}_q3"] = upper
+        aggregate[f"{column}_n"] = count
+
+    axes[1].axhline(0.0, color="black", linewidth=0.7)
+    axes[2].set_ylim(-0.02, 0.84)
+    axes[2].set_xlabel("Time from release [s]", fontsize=16)
+    axes[2].set_xticks(np.arange(0.0, 5.1, 1.0))
+    axes[0].plot([], [], color="#2166ac", alpha=0.25, linewidth=0.8,
+                 label=f"Individual trials ($n={len(successful)}$)")
+    axes[0].legend(loc="best", fontsize=13, ncol=3)
+    _save_figure(figure, output_path)
+    aggregate.to_csv(
+        output_directory / "successful_trials_mean_response.csv",
+        index=False,
+    )
+
+
+def plot_failed_trials_mean_response(
+    trials: pd.DataFrame,
+    timeseries: pd.DataFrame,
+    output_directory: Path,
+):
+    """Plot failure responses while showing the changing contributing count."""
+    output_path = output_directory / "failed_trials_mean_response"
+    failed = eligible_trials(trials)
+    failed = failed[failed["status"] == "failure"].copy()
+    if failed.empty:
+        _placeholder_figure(output_path, "No failed trials are available")
+        return
+
+    time_grid_ms = np.arange(0.0, 5000.0 + 5.0, 5.0)
+    matrices = {
+        "filtered_z_mm": [],
+        "vz_mm_s": [],
+        "commanded_intensity": [],
+    }
+    for _, trial in failed.iterrows():
+        samples = timeseries[timeseries["trial_id"] == trial["trial_id"]].copy()
+        samples = samples.sort_values("elapsed_from_release_ms")
+        samples = samples[samples["elapsed_from_release_ms"] >= 0.0]
+        matrices["filtered_z_mm"].append(
+            _resample_success_series(
+                samples,
+                time_grid_ms,
+                "filtered_z_mm",
+                initial_value=trial.get("release_z_mm"),
+            )
+        )
+        matrices["vz_mm_s"].append(
+            _resample_success_series(
+                samples,
+                time_grid_ms,
+                "vz_mm_s",
+            )
+        )
+        matrices["commanded_intensity"].append(
+            _resample_success_series(
+                samples,
+                time_grid_ms,
+                "commanded_intensity",
+                initial_value=0.0,
+                previous_value=True,
+            )
+        )
+
+    for column in matrices:
+        matrices[column] = np.asarray(matrices[column], dtype=float)
+
+    figure, axes = plt.subplots(
+        4,
+        1,
+        figsize=(8.0, 8.2),
+        sharex=True,
+        constrained_layout=True,
+        gridspec_kw={"height_ratios": [1.0, 1.0, 1.0, 0.45]},
+    )
+    panels = (
+        ("filtered_z_mm", "Measured $z$ [mm]", "#2166ac"),
+        ("vz_mm_s", "Measured $v_z$ [mm/s]", "#d73027"),
+        ("commanded_intensity", "Normalized output intensity", "#762a83"),
+    )
+    aggregate = pd.DataFrame({"time_from_release_s": time_grid_ms / 1000.0})
+    contribution_count = None
+    for axis, (column, ylabel, color) in zip(axes[:3], panels):
+        matrix = matrices[column]
+        for values in matrix:
+            axis.plot(
+                time_grid_ms / 1000.0,
+                values,
+                color=color,
+                alpha=0.08,
+                linewidth=0.55,
+            )
+        count = np.sum(np.isfinite(matrix), axis=0)
+        if column == "filtered_z_mm":
+            contribution_count = count
+        mean = np.full(matrix.shape[1], np.nan, dtype=float)
+        lower = np.full(matrix.shape[1], np.nan, dtype=float)
+        upper = np.full(matrix.shape[1], np.nan, dtype=float)
+        available = count > 0
+        mean[available] = (
+            np.nansum(matrix[:, available], axis=0) / count[available]
+        )
+        for sample_index in np.flatnonzero(available):
+            values = matrix[:, sample_index]
+            values = values[np.isfinite(values)]
+            lower[sample_index], upper[sample_index] = np.percentile(
+                values,
+                [25.0, 75.0],
+            )
+        displayable = count >= 5
+        axis.fill_between(
+            time_grid_ms / 1000.0,
+            np.where(displayable, lower, np.nan),
+            np.where(displayable, upper, np.nan),
+            color=color,
+            alpha=0.18,
+            linewidth=0.0,
+            label="Interquartile range",
+        )
+        axis.plot(
+            time_grid_ms / 1000.0,
+            np.where(displayable, mean, np.nan),
+            color=color,
+            linewidth=2.2,
+            label=r"Mean of available trials ($n\geq5$)",
+        )
+        axis.set_ylabel(ylabel)
+        axis.set_xlim(0.0, 5.0)
+        axis.grid(True, alpha=0.22)
+        aggregate[f"{column}_mean"] = mean
+        aggregate[f"{column}_q1"] = lower
+        aggregate[f"{column}_q3"] = upper
+        aggregate[f"{column}_n"] = count
+
+    axes[1].axhline(0.0, color="black", linewidth=0.7)
+    axes[2].set_ylim(-0.02, 0.84)
+    axes[0].plot([], [], color="#2166ac", alpha=0.25, linewidth=0.8,
+                 label=f"Individual trials ($n={len(failed)}$)")
+    axes[0].legend(loc="best", fontsize=9, ncol=3)
+
+    axes[3].step(
+        time_grid_ms / 1000.0,
+        contribution_count,
+        where="post",
+        color="#4d4d4d",
+        linewidth=1.8,
+    )
+    axes[3].set_ylabel("Trials\nremaining")
+    axes[3].set_ylim(0.0, len(failed) + 3.0)
+    axes[3].set_yticks([0, 20, 40, 60])
+    axes[3].set_xlabel("Time from release [s]")
+    axes[3].set_xticks(np.arange(0.0, 5.1, 1.0))
+    axes[3].grid(True, alpha=0.22)
+    aggregate["trials_remaining"] = contribution_count
+
+    figure.suptitle(
+        f"Measured response of failed capture trials ($n={len(failed)}$)",
+        fontsize=12,
+    )
+    _save_figure(figure, output_path)
+    aggregate.to_csv(
+        output_directory / "failed_trials_mean_response.csv",
+        index=False,
+    )
+
+
+def make_failed_trial_metric_summary(trials: pd.DataFrame):
+    failed = eligible_trials(trials)
+    failed = failed[failed["status"] == "failure"].copy()
+    if failed.empty:
+        return pd.DataFrame()
+
+    reason_labels = {
+        "capture_stereo_measurement_timeout": "Tracking/estimation loss",
+        "sphere_left_z_workspace_before_success": "Workspace departure",
+        "regrasp_detected_during_auto_hold": "Regrasp/contact",
+    }
+    metrics = (
+        "retained_duration_ms",
+        "release_to_field_ms",
+        "capture_state_vz_mm_s",
+        "capture_state_vxy_mm_s",
+        "prediction_error_3d_mm",
+        "plan_duration_ms",
+        "plan_stopping_distance_mm",
+        "actual_stopping_distance_mm",
+        "stopping_distance_error_mm",
+        "braking_end_vz_mm_s",
+        "maximum_drop_from_onset_mm",
+        "maximum_commanded_intensity",
+    )
+    groups = [("All failures", failed)]
+    groups.extend(
+        (
+            reason_labels.get(str(reason), str(reason)),
+            group,
+        )
+        for reason, group in failed.groupby("reason", sort=False)
+    )
+    rows = []
+    for label, group in groups:
+        row = {
+            "failure_category": label,
+            "trials": len(group),
+            "fraction_of_failures": len(group) / len(failed),
+            "braking_end_trials": int(group["braking_end_time_sec"].notna().sum()),
+            "local_hold_trials": int(group["local_hold_reached_time_sec"].notna().sum()),
+        }
+        for metric in metrics:
+            values = pd.to_numeric(group[metric], errors="coerce").dropna()
+            row[f"{metric}_n"] = len(values)
+            row[f"{metric}_mean"] = values.mean() if not values.empty else np.nan
+            row[f"{metric}_std"] = (
+                values.std(ddof=1) if len(values) >= 2 else np.nan
+            )
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def plot_release_outcomes_3d(
     trials: pd.DataFrame,
     output_directory: Path,
@@ -972,13 +1345,19 @@ def plot_braking_validation(
         _placeholder_figure(output_path, "No completed braking transitions are available")
         return
     figure, axes = plt.subplots(1, 2, figsize=(9.0, 4.0), constrained_layout=True)
-    colors = usable["status"].map({"success": "#1a9850", "failure": "#d73027"})
-    axes[0].scatter(
-        usable["plan_stopping_distance_mm"],
-        usable["actual_stopping_distance_mm"],
-        c=colors,
-        alpha=0.8,
+    status_styles = (
+        ("success", "Success", "#1a9850"),
+        ("failure", "Failure", "#d73027"),
     )
+    for status, label, color in status_styles:
+        status_data = usable[usable["status"] == status]
+        axes[0].scatter(
+            status_data["plan_stopping_distance_mm"],
+            status_data["actual_stopping_distance_mm"],
+            color=color,
+            alpha=0.8,
+            label=label,
+        )
     limits = [
         float(
             min(
@@ -993,9 +1372,17 @@ def plot_braking_validation(
             )
         ),
     ]
-    axes[0].plot(limits, limits, color="black", linestyle="--", linewidth=0.9)
-    axes[0].set_xlabel("Planned stopping distance [mm]")
-    axes[0].set_ylabel("Measured distance at braking end [mm]")
+    axes[0].plot(
+        limits,
+        limits,
+        color="black",
+        linestyle="--",
+        linewidth=0.9,
+    )
+    axes[0].set_xlabel("Planned stopping distance [mm]", fontsize=16)
+    axes[0].set_ylabel("Measured stopping\ndistance [mm]", fontsize=16)
+    axes[0].tick_params(axis="both", labelsize=14)
+    axes[0].legend(loc="upper left", fontsize=13)
     axes[0].grid(True, alpha=0.25)
 
     groups = [
@@ -1014,9 +1401,9 @@ def plot_braking_validation(
                 alpha=0.75,
             )
     axes[1].axhline(0.0, color="black", linestyle="--", linewidth=0.9)
-    axes[1].set_ylabel("Measured - planned distance [mm]")
+    axes[1].set_ylabel("Distance error [mm]\n(measured - planned)", fontsize=16)
+    axes[1].tick_params(axis="both", labelsize=14)
     axes[1].grid(True, axis="y", alpha=0.25)
-    figure.suptitle("Planned braking distance versus measured response", fontsize=10)
     _save_figure(figure, output_path)
 
 
@@ -1048,6 +1435,517 @@ def cliffs_delta(first: np.ndarray, second: np.ndarray):
         return np.nan
     differences = np.sign(first[:, np.newaxis] - second[np.newaxis, :])
     return float(differences.mean())
+
+
+def _expit(values: np.ndarray):
+    values = np.asarray(values, dtype=float)
+    result = np.empty_like(values)
+    positive = values >= 0.0
+    result[positive] = 1.0 / (1.0 + np.exp(-values[positive]))
+    exponential = np.exp(values[~positive])
+    result[~positive] = exponential / (1.0 + exponential)
+    return result
+
+
+def _fit_logistic_regression(
+    design: np.ndarray,
+    outcome: np.ndarray,
+    *,
+    maximum_iterations: int = 100,
+    tolerance: float = 1e-10,
+):
+    """Fit an unpenalized logistic model by damped Newton iteration."""
+    design = np.asarray(design, dtype=float)
+    outcome = np.asarray(outcome, dtype=float)
+    parameter_count = design.shape[1]
+    coefficients = np.zeros(parameter_count, dtype=float)
+    outcome_mean = np.clip(outcome.mean(), 1e-6, 1.0 - 1e-6)
+    coefficients[0] = math.log(outcome_mean / (1.0 - outcome_mean))
+
+    def log_likelihood(parameters):
+        linear_predictor = design @ parameters
+        return float(
+            np.sum(
+                outcome * linear_predictor
+                - np.logaddexp(0.0, linear_predictor)
+            )
+        )
+
+    current_log_likelihood = log_likelihood(coefficients)
+    converged = False
+    iteration = 0
+    for iteration in range(1, maximum_iterations + 1):
+        probability = _expit(design @ coefficients)
+        weights = np.clip(probability * (1.0 - probability), 1e-12, None)
+        information = design.T @ (weights[:, None] * design)
+        score = design.T @ (outcome - probability)
+        try:
+            step = np.linalg.solve(information, score)
+        except np.linalg.LinAlgError:
+            break
+
+        damping = 1.0
+        candidate = coefficients + step
+        candidate_log_likelihood = log_likelihood(candidate)
+        while (
+            candidate_log_likelihood < current_log_likelihood
+            and damping > 1e-6
+        ):
+            damping *= 0.5
+            candidate = coefficients + damping * step
+            candidate_log_likelihood = log_likelihood(candidate)
+        coefficients = candidate
+        current_log_likelihood = candidate_log_likelihood
+        if np.max(np.abs(damping * step)) < tolerance:
+            converged = True
+            break
+
+    probability = _expit(design @ coefficients)
+    weights = np.clip(probability * (1.0 - probability), 1e-12, None)
+    information = design.T @ (weights[:, None] * design)
+    try:
+        covariance = np.linalg.inv(information)
+    except np.linalg.LinAlgError:
+        covariance = np.full((parameter_count, parameter_count), np.nan)
+        converged = False
+    return {
+        "coefficients": coefficients,
+        "covariance": covariance,
+        "log_likelihood": current_log_likelihood,
+        "aic": 2.0 * parameter_count - 2.0 * current_log_likelihood,
+        "converged": converged,
+        "iterations": iteration,
+    }
+
+
+def make_vxy_success_bins(trials: pd.DataFrame, bin_count: int = 5):
+    selected = eligible_trials(trials).dropna(
+        subset=["capture_state_vxy_mm_s", "release_xy_offset_mm"]
+    ).copy()
+    columns = [
+        "bin",
+        "vxy_min_mm_s",
+        "vxy_max_mm_s",
+        "vxy_mean_mm_s",
+        "vxy_median_mm_s",
+        "release_xy_offset_mean_mm",
+        "release_xy_offset_median_mm",
+        "trials",
+        "successes",
+        "failures",
+        "success_rate",
+        "success_ci95_low",
+        "success_ci95_high",
+        "interval_method",
+    ]
+    if selected.empty:
+        return pd.DataFrame(columns=columns)
+    usable_bin_count = min(
+        int(bin_count),
+        len(selected),
+        int(selected["capture_state_vxy_mm_s"].nunique()),
+    )
+    if usable_bin_count <= 0:
+        return pd.DataFrame(columns=columns)
+    selected["vxy_bin"] = pd.qcut(
+        selected["capture_state_vxy_mm_s"],
+        q=usable_bin_count,
+        labels=False,
+        duplicates="drop",
+    )
+    rows = []
+    for bin_index, group in selected.groupby("vxy_bin", sort=True):
+        successes = int((group["status"] == "success").sum())
+        total = int(len(group))
+        lower, upper = wilson_interval(successes, total)
+        rows.append(
+            {
+                "bin": int(bin_index) + 1,
+                "vxy_min_mm_s": group["capture_state_vxy_mm_s"].min(),
+                "vxy_max_mm_s": group["capture_state_vxy_mm_s"].max(),
+                "vxy_mean_mm_s": group["capture_state_vxy_mm_s"].mean(),
+                "vxy_median_mm_s": group["capture_state_vxy_mm_s"].median(),
+                "release_xy_offset_mean_mm": group[
+                    "release_xy_offset_mm"
+                ].mean(),
+                "release_xy_offset_median_mm": group[
+                    "release_xy_offset_mm"
+                ].median(),
+                "trials": total,
+                "successes": successes,
+                "failures": total - successes,
+                "success_rate": successes / total,
+                "success_ci95_low": lower,
+                "success_ci95_high": upper,
+                "interval_method": "Wilson score, 95%",
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
+def make_vxy_logistic_analysis(trials: pd.DataFrame):
+    selected = eligible_trials(trials).dropna(
+        subset=["capture_state_vxy_mm_s", "release_xy_offset_mm"]
+    ).copy()
+    outcome = (selected["status"] == "success").to_numpy(dtype=float)
+    vxy = selected["capture_state_vxy_mm_s"].to_numpy(dtype=float)
+    release_offset = selected["release_xy_offset_mm"].to_numpy(dtype=float)
+    model_columns = [
+        "model",
+        "term",
+        "odds_ratio_increment",
+        "coefficient",
+        "standard_error",
+        "odds_ratio",
+        "odds_ratio_ci95_low",
+        "odds_ratio_ci95_high",
+        "wald_p_value",
+        "trials",
+        "successes",
+        "failures",
+        "log_likelihood",
+        "aic",
+        "converged",
+        "iterations",
+    ]
+    prediction_columns = [
+        "vxy_mm_s",
+        "release_xy_offset_reference_mm",
+        "unadjusted_success_probability",
+        "unadjusted_ci95_low",
+        "unadjusted_ci95_high",
+        "adjusted_success_probability",
+        "adjusted_ci95_low",
+        "adjusted_ci95_high",
+        "interval_method",
+    ]
+    if (
+        len(selected) < 10
+        or len(np.unique(outcome)) < 2
+        or min(int(outcome.sum()), int(len(outcome) - outcome.sum())) < 5
+    ):
+        return (
+            pd.DataFrame(columns=model_columns),
+            pd.DataFrame(columns=prediction_columns),
+        )
+
+    model_definitions = (
+        (
+            "unadjusted_vxy",
+            ("intercept", "vxy_per_50_mm_s"),
+            np.column_stack([np.ones(len(selected)), vxy / 50.0]),
+            (np.nan, 50.0),
+        ),
+        (
+            "adjusted_vxy_release_xy_offset",
+            ("intercept", "vxy_per_50_mm_s", "release_xy_offset_per_10_mm"),
+            np.column_stack(
+                [np.ones(len(selected)), vxy / 50.0, release_offset / 10.0]
+            ),
+            (np.nan, 50.0, 10.0),
+        ),
+    )
+    fitted = {}
+    rows = []
+    z_value = 1.959963984540054
+    for model_name, terms, design, increments in model_definitions:
+        result = _fit_logistic_regression(design, outcome)
+        fitted[model_name] = result
+        standard_errors = np.sqrt(np.diag(result["covariance"]))
+        for term, increment, coefficient, standard_error in zip(
+            terms,
+            increments,
+            result["coefficients"],
+            standard_errors,
+        ):
+            wald_z = coefficient / standard_error
+            rows.append(
+                {
+                    "model": model_name,
+                    "term": term,
+                    "odds_ratio_increment": increment,
+                    "coefficient": coefficient,
+                    "standard_error": standard_error,
+                    "odds_ratio": math.exp(coefficient),
+                    "odds_ratio_ci95_low": math.exp(
+                        coefficient - z_value * standard_error
+                    ),
+                    "odds_ratio_ci95_high": math.exp(
+                        coefficient + z_value * standard_error
+                    ),
+                    "wald_p_value": math.erfc(abs(wald_z) / math.sqrt(2.0)),
+                    "trials": len(selected),
+                    "successes": int(outcome.sum()),
+                    "failures": int(len(outcome) - outcome.sum()),
+                    "log_likelihood": result["log_likelihood"],
+                    "aic": result["aic"],
+                    "converged": result["converged"],
+                    "iterations": result["iterations"],
+                }
+            )
+
+    grid = np.linspace(float(vxy.min()), float(vxy.max()), 200)
+    offset_reference = float(np.median(release_offset))
+    predictions = pd.DataFrame(
+        {
+            "vxy_mm_s": grid,
+            "release_xy_offset_reference_mm": offset_reference,
+        }
+    )
+    prediction_specs = (
+        (
+            "unadjusted_vxy",
+            "unadjusted",
+            np.column_stack([np.ones(len(grid)), grid / 50.0]),
+        ),
+        (
+            "adjusted_vxy_release_xy_offset",
+            "adjusted",
+            np.column_stack(
+                [
+                    np.ones(len(grid)),
+                    grid / 50.0,
+                    np.full(len(grid), offset_reference / 10.0),
+                ]
+            ),
+        ),
+    )
+    for model_name, prefix, prediction_design in prediction_specs:
+        result = fitted[model_name]
+        linear_predictor = prediction_design @ result["coefficients"]
+        linear_variance = np.einsum(
+            "ij,jk,ik->i",
+            prediction_design,
+            result["covariance"],
+            prediction_design,
+        )
+        linear_standard_error = np.sqrt(np.maximum(linear_variance, 0.0))
+        predictions[f"{prefix}_success_probability"] = _expit(
+            linear_predictor
+        )
+        predictions[f"{prefix}_ci95_low"] = _expit(
+            linear_predictor - z_value * linear_standard_error
+        )
+        predictions[f"{prefix}_ci95_high"] = _expit(
+            linear_predictor + z_value * linear_standard_error
+        )
+    predictions["interval_method"] = "Wald interval on logit scale, 95%"
+    return (
+        pd.DataFrame(rows, columns=model_columns),
+        predictions[prediction_columns],
+    )
+
+
+def plot_capture_success_vs_vxy(
+    trials: pd.DataFrame,
+    bins: pd.DataFrame,
+    predictions: pd.DataFrame,
+    output_directory: Path,
+):
+    output_path = output_directory / "capture_success_vs_vxy"
+    selected = eligible_trials(trials).dropna(
+        subset=["capture_state_vxy_mm_s", "release_xy_offset_mm"]
+    )
+    if selected.empty or bins.empty:
+        _placeholder_figure(output_path, "No capture-onset horizontal speeds are available")
+        return
+
+    figure, axis = plt.subplots(figsize=(7.8, 5.0), constrained_layout=True)
+    x_values = bins["vxy_median_mm_s"].to_numpy(dtype=float)
+    rates = bins["success_rate"].to_numpy(dtype=float)
+    errors = np.vstack(
+        [
+            rates - bins["success_ci95_low"].to_numpy(dtype=float),
+            bins["success_ci95_high"].to_numpy(dtype=float) - rates,
+        ]
+    )
+    trials_per_bin = sorted(set(int(value) for value in bins["trials"]))
+    if len(trials_per_bin) == 1:
+        bin_size_label = f"n={trials_per_bin[0]}/bin; "
+    else:
+        bin_size_label = ""
+    axis.errorbar(
+        x_values,
+        rates,
+        yerr=errors,
+        fmt="o",
+        markersize=7.5,
+        color="#2166ac",
+        ecolor="#2166ac",
+        elinewidth=1.5,
+        capsize=4,
+        label=f"Equal-count bins ({bin_size_label}Wilson 95% CI)",
+        zorder=4,
+    )
+
+    if not predictions.empty:
+        grid = predictions["vxy_mm_s"].to_numpy(dtype=float)
+        adjusted = predictions["adjusted_success_probability"].to_numpy(
+            dtype=float
+        )
+        adjusted_low = predictions["adjusted_ci95_low"].to_numpy(dtype=float)
+        adjusted_high = predictions["adjusted_ci95_high"].to_numpy(dtype=float)
+        axis.fill_between(
+            grid,
+            adjusted_low,
+            adjusted_high,
+            color="#d73027",
+            alpha=0.16,
+            linewidth=0.0,
+            label="Adjusted model 95% CI",
+        )
+        axis.plot(
+            grid,
+            adjusted,
+            color="#d73027",
+            linewidth=2.1,
+            label=(
+                "Adjusted for release XY offset "
+                f"(at median {predictions['release_xy_offset_reference_mm'].iloc[0]:.1f} mm)"
+            ),
+        )
+        axis.plot(
+            grid,
+            predictions["unadjusted_success_probability"],
+            color="#636363",
+            linewidth=1.5,
+            linestyle="--",
+            label="Unadjusted model",
+        )
+
+    overall_rate = (selected["status"] == "success").mean()
+    axis.axhline(
+        overall_rate,
+        color="#969696",
+        linewidth=0.9,
+        linestyle=":",
+        label=f"Overall success rate ({overall_rate:.1%})",
+    )
+    axis.set_xlabel(r"Horizontal speed at capture onset, $v_{xy}$ [mm/s]", fontsize=13)
+    axis.set_ylabel("Capture success probability", fontsize=13)
+    axis.set_xlim(left=0.0)
+    axis.set_ylim(0.0, 1.0)
+    axis.tick_params(axis="both", labelsize=11)
+    axis.grid(True, alpha=0.22)
+    axis.legend(loc="upper right", fontsize=9)
+    _save_figure(figure, output_path)
+
+
+def make_capture_success_vxy_outputs(
+    trials: pd.DataFrame,
+    output_directory: Path,
+):
+    bins = make_vxy_success_bins(trials)
+    models, predictions = make_vxy_logistic_analysis(trials)
+    selected = eligible_trials(trials).dropna(
+        subset=["capture_state_vxy_mm_s", "release_xy_offset_mm"]
+    )
+    summary = {
+        "analysis_trials": len(selected),
+        "successes": int((selected["status"] == "success").sum()),
+        "failures": int((selected["status"] == "failure").sum()),
+        "overall_success_rate": (
+            float((selected["status"] == "success").mean())
+            if len(selected)
+            else np.nan
+        ),
+        "vxy_min_mm_s": selected["capture_state_vxy_mm_s"].min(),
+        "vxy_median_mm_s": selected["capture_state_vxy_mm_s"].median(),
+        "vxy_max_mm_s": selected["capture_state_vxy_mm_s"].max(),
+        "release_xy_offset_median_mm": selected[
+            "release_xy_offset_mm"
+        ].median(),
+        "vxy_release_xy_offset_pearson_r": selected[
+            ["capture_state_vxy_mm_s", "release_xy_offset_mm"]
+        ].corr().iloc[0, 1],
+        "binning_method": "Five equal-count quantile bins",
+        "bin_interval_method": "Wilson score, 95%",
+        "model_interval_method": "Wald interval on logit scale, 95%",
+        "interpretation": (
+            "Association analysis only; the fitted trend does not establish "
+            "causality or a capture-speed threshold."
+        ),
+    }
+    pd.DataFrame([summary]).to_csv(
+        output_directory / "capture_success_vs_vxy_summary.csv",
+        index=False,
+    )
+    bins.to_csv(
+        output_directory / "capture_success_vs_vxy_bins.csv",
+        index=False,
+    )
+    models.to_csv(
+        output_directory / "capture_success_vs_vxy_logistic.csv",
+        index=False,
+    )
+    predictions.to_csv(
+        output_directory / "capture_success_vs_vxy_predictions.csv",
+        index=False,
+    )
+    plot_capture_success_vs_vxy(
+        trials,
+        bins,
+        predictions,
+        output_directory,
+    )
+
+
+def plot_success_failure_effect_sizes(
+    comparison: pd.DataFrame,
+    output_directory: Path,
+):
+    output_path = output_directory / "success_failure_effect_sizes"
+    if comparison.empty:
+        _placeholder_figure(output_path, "No success/failure comparison is available")
+        return
+
+    labels = {
+        "release_xy_offset_mm": "Release XY offset",
+        "release_dz_mm": "Release Z offset",
+        "release_to_field_ms": "Release-to-field delay",
+        "capture_state_abs_vz_mm_s": "Onset $|v_z|$",
+        "capture_state_vxy_mm_s": "Onset $v_{xy}$",
+        "prediction_error_3d_mm": "3D prediction error",
+        "stopping_distance_error_mm": "Stopping-distance error",
+        "braking_end_vz_mm_s": "Braking-end $v_z$",
+        "maximum_drop_from_onset_mm": "Maximum post-onset drop",
+    }
+    selected = comparison.dropna(
+        subset=["cliffs_delta_success_minus_failure"]
+    ).copy()
+    selected["label"] = selected["metric"].map(labels).fillna(selected["metric"])
+    selected = selected.iloc[::-1].reset_index(drop=True)
+    delta = selected["cliffs_delta_success_minus_failure"].to_numpy(dtype=float)
+    positions = np.arange(len(selected))
+
+    figure, axis = plt.subplots(figsize=(7.6, 5.0), constrained_layout=True)
+    axis.axvspan(-0.147, 0.147, color="#d9d9d9", alpha=0.45)
+    axis.axvline(0.0, color="black", linewidth=0.9)
+    axis.axvline(-0.147, color="#969696", linestyle=":", linewidth=0.9)
+    axis.axvline(0.147, color="#969696", linestyle=":", linewidth=0.9)
+    colors = ["#d73027" if value < 0.0 else "#1a9850" for value in delta]
+    for position, value, color in zip(positions, delta, colors):
+        axis.hlines(position, min(0.0, value), max(0.0, value), color=color, linewidth=2.5)
+        axis.scatter([value], [position], color=color, s=70, zorder=3)
+        offset = 0.016 if value >= 0.0 else -0.016
+        axis.text(
+            value + offset,
+            position,
+            f"{value:+.3f}",
+            ha="left" if value >= 0.0 else "right",
+            va="center",
+            fontsize=12,
+        )
+    axis.set_yticks(positions, selected["label"], fontsize=14)
+    axis.set_xlim(-0.36, 0.36)
+    axis.set_xlabel(
+        "Cliff's delta\n"
+        r"$\leftarrow$ Larger in failures | Larger in successes $\rightarrow$",
+        fontsize=15,
+    )
+    axis.tick_params(axis="x", labelsize=14)
+    axis.grid(True, axis="x", alpha=0.2)
+    _save_figure(figure, output_path)
 
 
 def plot_success_failure_comparison(
@@ -1129,10 +2027,12 @@ def plot_success_failure_comparison(
         fontsize=10,
     )
     _save_figure(figure, output_directory / "success_failure_comparison")
-    pd.DataFrame(rows).to_csv(
+    comparison = pd.DataFrame(rows)
+    comparison.to_csv(
         output_directory / "success_failure_comparison.csv",
         index=False,
     )
+    plot_success_failure_effect_sizes(comparison, output_directory)
 
 
 def plot_failure_reasons(
@@ -1197,6 +2097,7 @@ def build_all_outputs(
     release_range_summary = make_release_range_summary(enriched)
     behavior_summary = make_behavior_pattern_summary(enriched)
     braking_summary = make_braking_validation_summary(enriched)
+    failed_metric_summary = make_failed_trial_metric_summary(enriched)
     exclusion_summary = enriched.loc[
         enriched["analysis_excluded"],
         [
@@ -1226,6 +2127,10 @@ def build_all_outputs(
         output_directory / "braking_validation.csv",
         index=False,
     )
+    failed_metric_summary.to_csv(
+        output_directory / "failed_trial_metric_summary.csv",
+        index=False,
+    )
     exclusion_summary.to_csv(
         output_directory / "exclusion_summary.csv",
         index=False,
@@ -1253,6 +2158,16 @@ def build_all_outputs(
         output_directory,
         representative,
     )
+    plot_successful_trials_mean_response(
+        enriched,
+        timeseries,
+        output_directory,
+    )
+    plot_failed_trials_mean_response(
+        enriched,
+        timeseries,
+        output_directory,
+    )
     plot_control_mechanism_validation(
         enriched,
         timeseries,
@@ -1265,6 +2180,7 @@ def build_all_outputs(
         output_directory,
     )
     plot_release_outcomes_3d(enriched, output_directory, center)
+    make_capture_success_vxy_outputs(enriched, output_directory)
     plot_success_failure_comparison(enriched, output_directory)
     plot_failure_reasons(failure_summary, output_directory)
     plot_braking_validation(braking_summary, output_directory)

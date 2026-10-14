@@ -1,0 +1,2 @@
+analysis_trials,successes,failures,overall_success_rate,vxy_min_mm_s,vxy_median_mm_s,vxy_max_mm_s,release_xy_offset_median_mm,vxy_release_xy_offset_pearson_r,binning_method,bin_interval_method,model_interval_method,interpretation
+105,37,68,0.3523809523809524,0.0,53.83095610487516,366.96280720654147,8.829587079812969,0.34695508868289904,Five equal-count quantile bins,"Wilson score, 95%","Wald interval on logit scale, 95%",Association analysis only; the fitted trend does not establish causality or a capture-speed threshold.

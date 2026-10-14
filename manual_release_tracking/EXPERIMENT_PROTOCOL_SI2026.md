@@ -123,6 +123,7 @@ PowerShell:
 - `outcome_trajectory_comparison`: 成否別の相対軌道
 - `behavior_pattern_counts`: 成功と失敗局面の件数
 - `release_outcomes_3d`: 成否別release位置
+- `capture_success_vs_vxy`: 捕捉開始時の水平速度と成功率（五分位ビンの95% Wilson区間とロジスティック回帰）
 - `success_failure_comparison`: release位置、速度、遅延、予測誤差
 - `failure_reason_counts`: 5秒到達前の終了理由
 
@@ -132,6 +133,8 @@ PowerShell:
 - `braking_validation.csv`: 計画・実測停止距離、停止位置誤差、制動終了速度
 - `behavior_pattern_summary.csv`: 成功・失敗挙動パターン別件数
 - `success_failure_comparison.csv`: 中央値、四分位範囲、Cliff's delta
+- `capture_success_vs_vxy_bins.csv`: vxy五分位ごとの成功率と95% Wilson区間
+- `capture_success_vs_vxy_logistic.csv`: vxyの未調整・release XY offset調整済みロジスティック回帰
 - `exclusion_summary.csv`: 無効・手動除外trialと理由
 - `trial_metrics_enriched.csv`: 1 trial 1行の全解析指標
 
@@ -140,3 +143,5 @@ PowerShell:
 失敗原因は、終了理由、軌道、制動終了の有無、`LOCAL_HOLD`到達の有無を合わせて
 判断する。終了理由は最後に検出された事象であり、必ずしも物理的な根本原因ではない。
 成否差とCliff's deltaも関連を示すもので、単独では因果関係を示さない。
+`capture_success_vs_vxy`も観察的な関連として解釈し、因果関係や捕捉可能速度の
+閾値を示すものとして扱わない。
