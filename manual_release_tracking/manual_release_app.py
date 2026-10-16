@@ -4,10 +4,10 @@ import threading
 import cv2
 import numpy as np
 
-from pyautd3 import Controller, Silencer
-from pyautd3.link.twincat import TwinCAT
+from autd3.commands import SetSilencer
 
 from tracking.core.config import AppConfig
+from tracking.core.autd_client import AutdController
 from tracking.core.vision import (
     load_ximea_api,
     init_ximea_camera,
@@ -317,12 +317,14 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
             ),
             enabled=bool(getattr(cfg, "si2026_logging_enabled", False)),
         )
-        with Controller.open(
+        with AutdController.open(
             autd_arrangement,
-            TwinCAT(),
+            interface_name=cfg.autd_interface_name,
+            open_timeout_sec=cfg.autd_open_timeout_sec,
+            command_timeout_sec=cfg.autd_command_timeout_sec,
         ) as autd:
 
-            autd.send(Silencer())
+            autd.send(SetSilencer())
 
             base_center = autd.center()
 

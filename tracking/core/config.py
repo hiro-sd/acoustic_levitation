@@ -53,6 +53,13 @@ class AppConfig:
     display_every_n_frames: int = 3
 
     # AUTD / stm settings
+    # Empty string selects the AUTD-connected NIC automatically.  Set this to
+    # the exact Get-NetAdapter Name (for example "Ethernet") when the host has
+    # multiple candidate interfaces.
+    autd_interface_name: str = ""
+    autd_open_timeout_sec: float = 45.0
+    autd_command_timeout_sec: float = 10.0
+
     # "stm_circle": 単焦点を円軌道上でSTM走査する従来方式。
     # "static_multi_focus_circle": 円周上の複数焦点をGSPATで同時生成する試験方式。
     autd_field_mode: str = "stm_circle"

@@ -56,6 +56,14 @@ def parse_args():
     parser.add_argument("--operator", default="")
     parser.add_argument("--notes", default="")
     parser.add_argument(
+        "--autd-interface",
+        default="",
+        help=(
+            "AUTD-connected Windows adapter Name from Get-NetAdapter. "
+            "Empty uses SDK automatic discovery."
+        ),
+    )
+    parser.add_argument(
         "--success-hold-sec",
         type=float,
         default=5.0,
@@ -118,6 +126,7 @@ if __name__ == "__main__":
 
         log_csv_path="./manual_release_tracking/auto_release_log.csv",
     )
+    cfg.autd_interface_name = str(args.autd_interface).strip()
 
     # MediaPipe Tasks Hand Landmarker settings used by automatic release detection.
     cfg.mediapipe_hand_model_path = (

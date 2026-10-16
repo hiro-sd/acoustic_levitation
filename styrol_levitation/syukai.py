@@ -1,25 +1,20 @@
-import os
-import numpy as np, os, keyboard
-from pyautd3 import (
-    AUTD3, Controller, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Silencer, Static,
-)
-# from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
-from pyautd3.link.twincat import TwinCAT # TwinCATを使用するために追加した
-from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
-from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
+import sys
+from pathlib import Path
+
+import keyboard
+import numpy as np
+from autd3.commands import SetSilencer
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from tracking.core.autd_client import AutdController
+from tracking.core.autd_patterns import make_single_focus_stm
+from tracking.core.autd_sender import make_autd_arrangement, make_constant_modulation
 
 # AUTDの配置
-autd_arrangement = [
-    AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]), 
-    AUTD3(pos=[0.0, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[0.0, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    ]
+autd_arrangement = make_autd_arrangement()
 
 # SOEMのエラーハンドラ
 # def err_handler(slave: int, status: Status) -> None:
@@ -28,22 +23,17 @@ autd_arrangement = [
 #         os._exit(-1)
 
 if __name__ == "__main__":
-    with Controller.open(
-        autd_arrangement,
-        # Simulator("127.0.0.1:8080"), # シミュレータを使用する時
-        # SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する時
-        TwinCAT(), # TwinCATを使用する時
-    ) as autd:
-        firmware_version = autd.firmware_version()
+    with AutdController.open(autd_arrangement) as autd:
+        firmware_version = autd.read_firmware_version()
         print(
             "\n".join(
                 [f"[{i}]: {firm}" for i, firm in enumerate(firmware_version)],
             ),
         )
 
-        autd.send(Silencer())
+        autd.send(SetSilencer())
 
-        m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する (小球は* 0.65)
+        m = make_constant_modulation(1.0)
 
         point_num = 8 # 円周上の点の数
         radius = 23.0 # 円軌道の半径 (小球は19 mm)
@@ -84,13 +74,14 @@ if __name__ == "__main__":
                 center = autd.center() + np.array([x, y, z]) # 円軌道の中心座標を更新
 
                 # 円軌道上に焦点を配置するための時空間変調 (鉛直方向への移動)
-                stm = FociSTM(
-                    foci = (
-                        center + radius * np.array([np.cos(theta), np.sin(theta), 0])
-                        for theta in (np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num))
-                        ),
-                    config = 100 * Hz, # 往復方式と条件を合わせるために70Hzで更新
-                ).into_nearest() # point_num = 40kHz/Nを満たすNが存在しない場合、エラーになる
+                points = [
+                    center + radius * np.array([np.cos(theta), np.sin(theta), 0])
+                    for theta in (
+                        np.pi / 8 + 2.0 * np.pi * i / point_num
+                        for i in range(point_num)
+                    )
+                ]
+                stm = make_single_focus_stm(points, 100.0)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")

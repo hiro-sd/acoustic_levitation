@@ -1,31 +1,25 @@
-import os
-import time
-import numpy as np, os, keyboard
-from pyautd3 import (
-    AUTD3, Controller, FociSTM, Hz, Silencer, Static,
-)
-# from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
-from pyautd3.link.twincat import TwinCAT # TwinCATを使用するために追加した
-from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
-from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
+import sys
+from pathlib import Path
+
+import keyboard
+import numpy as np
+from autd3.commands import SetSilencer
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from tracking.core.autd_client import AutdController
+from tracking.core.autd_patterns import make_single_focus_stm
+from tracking.core.autd_sender import make_autd_arrangement, make_constant_modulation
 
 # 色々検証してみるためのファイル
 
 # AUTDの配置
-autd_arrangement = [
-    AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]), 
-    AUTD3(pos=[0.0, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[0.0, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    ]
+autd_arrangement = make_autd_arrangement()
 
 # FociSTMで円軌道を交互に回す関数
-def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
+def stm_alternately(center: np.ndarray, radius: float, point_num: int):
     # 正方向角リスト
     angles_fwd = [2.0 * np.pi * i / point_num for i in range(point_num)]
     # 逆方向角リスト
@@ -38,7 +32,7 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=100 * Hz).into_nearest()
+    return make_single_focus_stm(foci, 100.0)
 
 # SOEMのエラーハンドラ
 # def err_handler(slave: int, status: Status) -> None:
@@ -47,22 +41,17 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int) -> FociST
 #         os._exit(-1)
 
 if __name__ == "__main__":
-    with Controller.open(
-        autd_arrangement,
-        # Simulator("127.0.0.1:8080"), # シミュレータを使用する
-        # SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する
-        TwinCAT(), # TwinCATを使用する
-    ) as autd:
-        firmware_version = autd.firmware_version()
+    with AutdController.open(autd_arrangement) as autd:
+        firmware_version = autd.read_firmware_version()
         print(
             "\n".join(
                 [f"[{i}]: {firm}" for i, firm in enumerate(firmware_version)],
             ),
         )
 
-        autd.send(Silencer())
+        autd.send(SetSilencer())
 
-        m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する
+        m = make_constant_modulation(1.0)
 
         point_num = 8 # 円周上の点の数
         radius = 24.0 # 円の半径
@@ -127,14 +116,13 @@ if __name__ == "__main__":
                     [0, np.sin(current_tilt), np.cos(current_tilt)]
                 ])
 
-                stm = FociSTM(
-                    foci = (
-                        # 水平な円を回転行列で変換し、現在の傾きに応じた円にする (@は行列の積を表す)
-                        center + rotation_matrix @ (radius * np.array([np.cos(theta), np.sin(theta), 0]))
-                        for theta in angles_fwd # angles
-                        ),
-                    config = 100 * Hz,
-                ).into_nearest()
+                points = (
+                    center
+                    + rotation_matrix
+                    @ (radius * np.array([np.cos(theta), np.sin(theta), 0]))
+                    for theta in angles_fwd
+                )
+                stm = make_single_focus_stm(points, 100.0)
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm, 傾斜: {np.degrees(current_tilt):.1f}度")

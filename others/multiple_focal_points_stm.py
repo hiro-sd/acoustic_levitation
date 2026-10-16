@@ -1,24 +1,19 @@
-import numpy as np, os, keyboard
-from pyautd3 import (
-    AUTD3, Controller, ControlPoint, ControlPoints, Intensity, FociSTM, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Phase, Silencer, Static,
-)
-from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, Pa
-# from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
-from pyautd3.link.twincat import TwinCAT # TwinCATを使用するために追加した
-# from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
-# from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
+import sys
+from pathlib import Path
 
-autd_arrangement = [
-    AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]), 
-    AUTD3(pos=[0.0, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[0.0, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    ]
+import keyboard
+import numpy as np
+from autd3.commands import SetSilencer
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from tracking.core.autd_client import AutdController
+from tracking.core.autd_patterns import make_gspat_pattern_stm, make_multi_focus_stm
+from tracking.core.autd_sender import make_autd_arrangement, make_constant_modulation
+
+autd_arrangement = make_autd_arrangement()
 
 # SOEMのエラーハンドラ
 # def err_handler(slave: int, status: Status) -> None:
@@ -27,54 +22,41 @@ autd_arrangement = [
 #         os._exit(-1)
 
 # FociSTMでn焦点を作成する関数
-def multiple_foci_stm(n):
-    FociSTM(
-        foci=(
-            ControlPoints(
-                points=[
-                    ControlPoint(
-                        point=center + radius * np.array([np.cos(theta + 2.0 * np.pi * k / n), np.sin(theta + 2.0 * np.pi * k / n), 0.0]), 
-                        phase_offset=Phase.ZERO,
-                        )
-                             for k in range(n) 
-                        ],
-                
-                        intensity=Intensity.MAX, 
-                        )
-                        for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
-                    ),
-                    config=100 * Hz,
-                    ).into_nearest()
+def multiple_foci_stm(center, radius, point_num, n):
+    frames = [
+        [
+            center
+            + radius
+            * np.array(
+                [
+                    np.cos(theta + 2.0 * np.pi * k / n),
+                    np.sin(theta + 2.0 * np.pi * k / n),
+                    0.0,
+                ]
+            )
+            for k in range(n)
+        ]
+        for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
+    ]
+    return make_multi_focus_stm(frames, 100.0)
 
 # GSPATアルゴリズムで2つの焦点を生成する関数 (対角線上に2焦点を生成する)
-def make_gspat_gain(center, theta, radius):
+def make_gspat_frame(center, theta, radius):
     p1 = center + radius * np.array([np.cos(theta), np.sin(theta), 0.0])
     p2 = center + radius * np.array([np.cos(theta + np.pi), np.sin(theta + np.pi), 0.0])
-    return GSPAT(
-        foci=
-            [(p1, 5e5 * Pa), (p2, 5e5 * Pa)],
-            option = GSPATOption(
-                repeat = 100,
-                constraint = EmissionConstraint.Clamp(Intensity.MIN, Intensity.MAX),
-            ),
-        )
+    return [p1, p2]
 
 if __name__ == "__main__":
-    with Controller.open(
-        autd_arrangement,
-        # Simulator("127.0.0.1:8080"), # シミュレータを使用するために追加した
-        # SOEM(err_handler=err_handler, option=SOEMOption()),
-        TwinCAT(),
-    ) as autd:
-        firmware_version = autd.firmware_version()
+    with AutdController.open(autd_arrangement) as autd:
+        firmware_version = autd.read_firmware_version()
         print(
             "\n".join(
                 [f"[{i}]: {firm}" for i, firm in enumerate(firmware_version)],
             ),
         )
 
-        autd.send(Silencer())
-        m = Static(intensity=int(0xFF*0.6)) # 振幅変調を行わず、常に同じ振幅を出力する
+        autd.send(SetSilencer())
+        m = make_constant_modulation(0.6)
 
         point_num = 8 # 円周上の点の数
         radius = 19.0 # 円の半径
@@ -118,18 +100,18 @@ if __name__ == "__main__":
                 # stm = multiple_foci_stm(2)
 
                 # GSPATで多焦点を作成する場合
-                gains = [
-                    make_gspat_gain(center, np.pi/8 + 2.0 * np.pi * i / point_num, radius)
+                frames = [
+                    make_gspat_frame(center, np.pi/8 + 2.0 * np.pi * i / point_num, radius)
                     for i in range(point_num)
                 ]
 
-                stm = GainSTM(
-                    gains,
-                    config = 120 * Hz,
-                    option = GainSTMOption(
-                        mode = GainSTMMode.PhaseIntensityFull,
-                    ),
-                ).into_nearest()
+                stm = make_gspat_pattern_stm(
+                    autd.geometry,
+                    frames,
+                    120.0,
+                    pressure_pa=5e5,
+                    repeat=100,
+                )
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: {z:.2f}mm")

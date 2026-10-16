@@ -1,25 +1,21 @@
-import os
-import numpy as np, os, keyboard
-from pyautd3 import (
-    AUTD3, Controller, Focus, FocusOption, GainSTM, GainSTMMode, GainSTMOption, Group, Hz, Null, Silencer, Static,
-)
-# from pyautd3_link_soem import SOEM, SOEMOption, Status
-from pyautd3.link.twincat import TwinCAT
+import sys
+from pathlib import Path
+
+import keyboard
+import numpy as np
+from autd3.commands import SetSilencer
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from tracking.core.autd_client import AutdController
+from tracking.core.autd_patterns import make_masked_focus_pattern_stm
+from tracking.core.autd_sender import make_autd_arrangement, make_constant_modulation
 
 # 半球型の紙風船を水平方向に移動させるプログラム
 
 # AUTDの配置
-autd_arrangement = [
-    AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]), 
-    AUTD3(pos=[0.0, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[0.0, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    ]
+autd_arrangement = make_autd_arrangement()
 
 # SOEMのエラーハンドラ
 # def err_handler(slave: int, status: Status) -> None:
@@ -28,22 +24,18 @@ autd_arrangement = [
 #         os._exit(-1)
 
 if __name__ == "__main__":
-    with Controller.open(
-        autd_arrangement,
-        # SOEM(err_handler=err_handler, option=SOEMOption()),
-        TwinCAT(),
-    ) as autd:
-        firmware_version = autd.firmware_version()
+    with AutdController.open(autd_arrangement) as autd:
+        firmware_version = autd.read_firmware_version()
         print(
             "\n".join(
                 [f"[{i}]: {firm}" for i, firm in enumerate(firmware_version)],
             ),
         )
 
-        autd.send(Silencer())
+        autd.send(SetSilencer())
 
         # 物体の質量に応じてintensityを調整する
-        m = Static(intensity=0xFF) # 振幅変調を行わず、常に同じ振幅で出力する
+        m = make_constant_modulation(1.0)
 
         point_num = 8 # 円周上の点の数
         radius = 45.0 # 円軌道の半径
@@ -77,28 +69,17 @@ if __name__ == "__main__":
                 center = autd.center() + np.array([x, y, 400.0]) # 円軌道の中心座標を更新
 
                 # 円軌道上に焦点を配置するための時空間変調 (水平方向への移動)
-                gains = [] # gainsにGroupのリストを格納する
-                for theta in (2.0 * np.pi * i / point_num for i in range(point_num)):
-                    focus = Focus( # 単焦点を形成するGain
-                        pos = center + radius * np.array([np.cos(theta), np.sin(theta), 0]),
-                        option = FocusOption(),
-                    )
-
-                    gain = Group(
-                        # 円軌道中心から150mm以内のトランスデューサにのみSTMを適用する
-                        key_map = lambda _: lambda tr: "in" if np.linalg.norm(tr.position()[:2] - center[:2]) <= 150.0 else "out",
-                        gain_map={"in": focus, "out": Null()},
-                    )
-
-                    gains.append(gain)
-
-                    stm = GainSTM(
-                        gains,
-                        config = 100 * Hz, # 100Hzで更新
-                        option = GainSTMOption(
-                            mode = GainSTMMode.PhaseIntensityFull,
-                        ),
-                    ).into_nearest()
+                points = [
+                    center + radius * np.array([np.cos(theta), np.sin(theta), 0])
+                    for theta in (2.0 * np.pi * i / point_num for i in range(point_num))
+                ]
+                stm = make_masked_focus_pattern_stm(
+                    autd.geometry,
+                    points,
+                    100,
+                    mask_center_xy=center[:2],
+                    mask_radius_mm=150.0,
+                )
 
                 autd.send((m, stm))
                 print(f"x: {x:.2f}mm, y: {y:.2f}mm, z: 400.0 mm")

@@ -5,8 +5,19 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from pyautd3 import AUTD3, FociSTM, Hz, Intensity, OutputMask, Static
-from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, Pa
+from autd3.commands import FociStm, Modulation, Pattern, SetOutputMask
+from autd3.geometry import Autd3, Geometry
+from autd3.units import Hz, m, s
+from autd3.value import ControlPoint, ControlPoints, Intensity, Nearest, SamplingConfig
+from autd3_modulation import constant, modulation_buffer
+from autd3_pattern import wavelength
+from autd3_pattern_holo import (
+    AmplitudeTarget,
+    GspatOption,
+    IntensityConstraint,
+    Pa,
+    gspat,
+)
 
 from .config import AppConfig
 from .models import HomePosition
@@ -16,21 +27,23 @@ from .weighted_stm import (
 )
 
 
-def make_autd_arrangement():
+def make_autd_arrangement() -> Geometry:
     # 3行×3列のAUTD配置
-    return [
-        AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]),
-        AUTD3(pos=[0.0, AUTD3.DEVICE_HEIGHT, 0.0], rot=[1, 0, 0, 0]),
-        AUTD3(pos=[0.0, 2 * AUTD3.DEVICE_HEIGHT, 0.0], rot=[1, 0, 0, 0]),
+    return Geometry(
+        [
+            Autd3([0.0, 0.0, 0.0]),
+            Autd3([0.0, Autd3.DEVICE_HEIGHT, 0.0]),
+            Autd3([0.0, 2 * Autd3.DEVICE_HEIGHT, 0.0]),
 
-        AUTD3(pos=[AUTD3.DEVICE_WIDTH, 2 * AUTD3.DEVICE_HEIGHT, 0.0], rot=[1, 0, 0, 0]),
-        AUTD3(pos=[AUTD3.DEVICE_WIDTH, AUTD3.DEVICE_HEIGHT, 0.0], rot=[1, 0, 0, 0]),
-        AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
+            Autd3([Autd3.DEVICE_WIDTH, 2 * Autd3.DEVICE_HEIGHT, 0.0]),
+            Autd3([Autd3.DEVICE_WIDTH, Autd3.DEVICE_HEIGHT, 0.0]),
+            Autd3([Autd3.DEVICE_WIDTH, 0.0, 0.0]),
 
-        AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
-        AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, AUTD3.DEVICE_HEIGHT, 0.0], rot=[1, 0, 0, 0]),
-        AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 2 * AUTD3.DEVICE_HEIGHT, 0.0], rot=[1, 0, 0, 0]),
-    ]
+            Autd3([2 * Autd3.DEVICE_WIDTH, 0.0, 0.0]),
+            Autd3([2 * Autd3.DEVICE_WIDTH, Autd3.DEVICE_HEIGHT, 0.0]),
+            Autd3([2 * Autd3.DEVICE_WIDTH, 2 * Autd3.DEVICE_HEIGHT, 0.0]),
+        ]
+    )
 
 
 def make_circle_offsets(cfg: AppConfig, radius: float | None = None):
@@ -53,65 +66,48 @@ def make_circle_offsets(cfg: AppConfig, radius: float | None = None):
     )
 
 
-def make_static_multi_focus_gain(
+def make_static_multi_focus_pattern(
     cfg: AppConfig,
+    geometry: Geometry,
     center: np.ndarray,
     offsets: np.ndarray,
 ):
     """
     円周上に複数焦点を同時生成する静的な多焦点ゲインを作る。
 
-    従来のFociSTMは「単焦点を時間的に8点周回」させるのに対し、
+    FociStmは「単焦点を時間的に8点周回」させるのに対し、
     このモードではGSPATで「8点を同時に存在」させる。
     """
     foci = [
-        (
+        AmplitudeTarget(
             center + offsets[i],
             float(cfg.multi_focus_pressure_pa) * Pa,
         )
         for i in range(offsets.shape[0])
     ]
 
-    return GSPAT(
-        foci=foci,
-        option=GSPATOption(
+    phases = geometry.phase_buffer()
+    intensities = geometry.intensity_buffer()
+    gspat(
+        geometry,
+        foci,
+        wavelength(340.0 * m / s),
+        GspatOption(
             repeat=int(cfg.multi_focus_gspat_repeat),
-            constraint=EmissionConstraint.Clamp(Intensity.MIN, Intensity.MAX),
+            constraint=IntensityConstraint.Clamp(Intensity.MIN, Intensity.MAX),
         ),
+        phases,
+        intensities,
     )
+    return Pattern(phases, intensities)
 
 
-def _get_vec_coord(v, idx: int, name: str) -> float:
-    if hasattr(v, name):
-        return float(getattr(v, name))
-    return float(v[idx])
-
-
-def get_transducer_xy(dev, tr):
-    """
-    OutputMask用に振動子のXY座標を取得する。
-    """
-    if hasattr(tr, "position"):
-        p_attr = tr.position
-        p = p_attr() if callable(p_attr) else p_attr
-        x = _get_vec_coord(p, 0, "x")
-        y = _get_vec_coord(p, 1, "y")
-        return x, y
-
-    if hasattr(tr, "pos"):
-        p_attr = tr.pos
-        p = p_attr() if callable(p_attr) else p_attr
-        x = _get_vec_coord(p, 0, "x")
-        y = _get_vec_coord(p, 1, "y")
-        return x, y
-
-    raise AttributeError(
-        "Transducer position API not found. "
-        "Please check dir(tr) inside OutputMask."
-    )
-
-
-def make_circular_output_mask(center_x: float, center_y: float, radius_mm: float):
+def make_circular_output_mask(
+    geometry: Geometry,
+    center_x: float,
+    center_y: float,
+    radius_mm: float,
+) -> SetOutputMask:
     """
     center_x, center_y を中心とした半径 radius_mm 以内の振動子だけONにする。
     """
@@ -119,18 +115,20 @@ def make_circular_output_mask(center_x: float, center_y: float, radius_mm: float
     cy = float(center_y)
     r2 = float(radius_mm) ** 2
 
-    def device_mask(dev):
-        def transducer_mask(tr):
-            try:
-                tx, ty = get_transducer_xy(dev, tr)
-                d2 = (tx - cx) ** 2 + (ty - cy) ** 2
-                return d2 <= r2
-            except Exception:
-                return False
+    masks = []
+    for device in geometry:
+        positions = device.positions()
+        d2 = (positions[:, 0] - cx) ** 2 + (positions[:, 1] - cy) ** 2
+        masks.append((d2 <= r2).tolist())
 
-        return transducer_mask
+    return SetOutputMask(masks)
 
-    return OutputMask(device_mask)
+
+def make_constant_modulation(intensity_ratio: float) -> Modulation:
+    ratio = float(np.clip(intensity_ratio, 0.0, 1.0))
+    buffer = modulation_buffer()
+    constant(int(0xFF * ratio), buffer)
+    return Modulation(SamplingConfig.FREQ_4K, buffer)
 
 
 @dataclass
@@ -163,6 +161,7 @@ class AutdSender:
 
     def __init__(self, autd, cfg: AppConfig):
         self.autd = autd
+        self.geometry = autd.geometry
         self.cfg = cfg
         self._last_radius = float(cfg.radius)
         self.circle_offsets = make_circle_offsets(cfg, self._last_radius)
@@ -257,7 +256,9 @@ class AutdSender:
         """
         if not self.cfg.use_output_mask:
             if self._last_mask_center_x is not None:
-                self.autd.send(OutputMask(lambda _dev: lambda _tr: True))
+                self.autd.send(
+                    SetOutputMask(self.geometry.output_mask_buffer())
+                )
                 self._last_mask_center_x = None
                 self._last_mask_center_y = None
             return
@@ -278,6 +279,7 @@ class AutdSender:
         if need_update_mask:
             self.autd.send(
                 make_circular_output_mask(
+                    self.geometry,
                     mask_x,
                     mask_y,
                     self.cfg.output_mask_radius_mm,
@@ -288,7 +290,7 @@ class AutdSender:
 
     def _combine_stm_with_intensity_if_needed(self, stm, target: TargetCommand):
         """
-        intensity_ratio が変わった場合は、Static と STM を1回の送信にまとめる。
+        intensity_ratio が変わった場合は、定振幅変調と音場を1回の送信にまとめる。
 
         戻り値の intensity_ratio は送信成功後にだけ記録する。これにより、
         送信失敗時には次回も同じIntensity更新を再試行できる。
@@ -307,9 +309,7 @@ class AutdSender:
             return stm, None
 
         return (
-            Static(
-                intensity=int(0xFF * ratio)
-            ),
+            make_constant_modulation(ratio),
             stm,
         ), ratio
 
@@ -354,7 +354,7 @@ class AutdSender:
                 if self.cfg.autd_field_mode == "stm_circle":
                     stm_cycle_frequency_hz = float(self.cfg.stm_freq_hz)
                     if target.focus_dwell_counts is not None:
-                        # FociSTM's frequency is the frequency of one complete
+                        # FociStm's frequency is the frequency of one complete
                         # cycle, not the per-focus update rate.  A weighted
                         # pattern contains more slots than the normal 8-point
                         # STM, so lower only its cycle frequency to retain the
@@ -366,10 +366,13 @@ class AutdSender:
                                 total_slots=len(stm_offsets),
                             )
                         )
-                    stm = FociSTM(
-                        foci=[foci[i] for i in range(foci.shape[0])],
-                        config=stm_cycle_frequency_hz * Hz,
-                    ).into_nearest()
+                    stm = FociStm(
+                        Nearest(stm_cycle_frequency_hz * Hz),
+                        [
+                            ControlPoints([ControlPoint(foci[i])])
+                            for i in range(foci.shape[0])
+                        ],
+                    )
                     datagram, sent_intensity_ratio = (
                         self._combine_stm_with_intensity_if_needed(stm, target)
                     )
@@ -379,8 +382,9 @@ class AutdSender:
                         raise ValueError(
                             "focus_dwell_counts is supported only by stm_circle"
                         )
-                    gain = make_static_multi_focus_gain(
+                    pattern = make_static_multi_focus_pattern(
                         self.cfg,
+                        self.geometry,
                         center_vec,
                         self.circle_offsets,
                     )
@@ -389,11 +393,18 @@ class AutdSender:
                         if target.intensity_ratio is None
                         else target.intensity_ratio
                     )
-                    datagram = (
-                        Static(intensity=int(0xFF * float(np.clip(intensity_ratio, 0.0, 1.0)))),
-                        gain,
+                    datagram, sent_intensity_ratio = (
+                        self._combine_stm_with_intensity_if_needed(
+                            pattern,
+                            TargetCommand(
+                                x=target.x,
+                                y=target.y,
+                                z=target.z,
+                                enqueued_time_sec=target.enqueued_time_sec,
+                                intensity_ratio=intensity_ratio,
+                            ),
+                        )
                     )
-                    sent_intensity_ratio = float(np.clip(intensity_ratio, 0.0, 1.0))
 
                 else:
                     raise ValueError(

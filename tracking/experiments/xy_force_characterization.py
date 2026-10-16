@@ -10,9 +10,9 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from pyautd3 import Controller, Silencer
-from pyautd3.link.twincat import TwinCAT
+from autd3.commands import SetSilencer
 
+from tracking.core.autd_client import AutdController
 from tracking.core.autd_sender import AutdSender, make_autd_arrangement
 from tracking.core.config import AppConfig
 from tracking.core.controller import PredictionPIDController
@@ -86,8 +86,13 @@ def run_xy_force_characterization(cfg: AppConfig):
 
     sender = None
     try:
-        with Controller.open(make_autd_arrangement(), TwinCAT()) as autd:
-            autd.send(Silencer())
+        with AutdController.open(
+            make_autd_arrangement(),
+            interface_name=cfg.autd_interface_name,
+            open_timeout_sec=cfg.autd_open_timeout_sec,
+            command_timeout_sec=cfg.autd_command_timeout_sec,
+        ) as autd:
+            autd.send(SetSilencer())
             center = autd.center()
             home = HomePosition(
                 x=float(center[0]),

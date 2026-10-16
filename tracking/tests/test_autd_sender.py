@@ -1,39 +1,9 @@
 import unittest
-import sys
-from types import ModuleType
 from types import SimpleNamespace
 
+from autd3.commands import Modulation
 
-class FakeStatic:
-    def __init__(self, intensity):
-        self.intensity = intensity
-
-
-def install_autd_api_stub():
-    """実機PCと異なるpyautd3版でも送信ロジックだけを検証する。"""
-    pyautd3 = ModuleType("pyautd3")
-    pyautd3.AUTD3 = type("AUTD3", (), {"DEVICE_WIDTH": 192.0, "DEVICE_HEIGHT": 151.4})
-    pyautd3.FociSTM = type("FociSTM", (), {})
-    pyautd3.Hz = 1.0
-    pyautd3.Intensity = type("Intensity", (), {"MIN": 0, "MAX": 255})
-    pyautd3.OutputMask = type("OutputMask", (), {})
-    pyautd3.Static = FakeStatic
-
-    gain = ModuleType("pyautd3.gain")
-    holo = ModuleType("pyautd3.gain.holo")
-    holo.GSPAT = type("GSPAT", (), {})
-    holo.EmissionConstraint = type("EmissionConstraint", (), {})
-    holo.GSPATOption = type("GSPATOption", (), {})
-    holo.Pa = 1.0
-
-    sys.modules["pyautd3"] = pyautd3
-    sys.modules["pyautd3.gain"] = gain
-    sys.modules["pyautd3.gain.holo"] = holo
-
-
-install_autd_api_stub()
-sys.modules.pop("core.autd_sender", None)
-from core.autd_sender import AutdSender, Static, TargetCommand
+from core.autd_sender import AutdSender, TargetCommand
 
 
 class FakeAutd:
@@ -80,7 +50,7 @@ class AutdSenderIntensityIntegrationTests(unittest.TestCase):
 
         self.assertIsInstance(datagram, tuple)
         self.assertEqual(len(datagram), 2)
-        self.assertIsInstance(datagram[0], Static)
+        self.assertIsInstance(datagram[0], Modulation)
         self.assertIs(datagram[1], stm)
         self.assertEqual(pending_ratio, 0.8)
         self.assertEqual(sender._last_intensity_ratio, 0.6)

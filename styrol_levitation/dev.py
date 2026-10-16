@@ -1,31 +1,29 @@
-import os
-import numpy as np, os, keyboard
-from pyautd3 import (
-    AUTD3, Controller, FociSTM, Hz, Silencer, Static, GainSTM, GainSTMMode, GainSTMOption, EmitIntensity
+import sys
+from pathlib import Path
+
+import keyboard
+import numpy as np
+from autd3.commands import SetSilencer
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from tracking.core.autd_client import AutdController
+from tracking.core.autd_patterns import (
+    make_gspat_pattern,
+    make_gspat_pattern_stm,
+    make_single_focus_stm,
 )
-from pyautd3.gain.holo import GSPAT, EmissionConstraint, GSPATOption, NalgebraBackend, Pa
-# from pyautd3_link_soem import SOEM, SOEMOption, Status # SOEMを使用するために追加した
-from pyautd3.link.twincat import TwinCAT # TwinCATを使用するために追加した
-from pyautd3.link.simulator import Simulator # シミュレータを使用するために追加した
-from pyautd3_emulator import Emulator # エミュレータを使用するために追加した
+from tracking.core.autd_sender import make_autd_arrangement, make_constant_modulation
 
 # いろいろ試すためのファイル
 
 # AUTDの配置
-autd_arrangement = [
-    AUTD3(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]), 
-    AUTD3(pos=[0.0, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[0.0, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 0.0, 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    AUTD3(pos=[2 * AUTD3.DEVICE_WIDTH, 2 * (AUTD3.DEVICE_HEIGHT), 0.0], rot=[1, 0, 0, 0]),
-    ]
+autd_arrangement = make_autd_arrangement()
 
 # FociSTMで往復軌道を形成するための関数
-def stm_dev(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
+def stm_dev(center: np.ndarray, radius: float, point_num: int):
     # 正方向角リスト
     angles_fwd = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)] # 穴の位置をずらすためにπ/8を加える
     angles_basic = angles_fwd + angles_fwd[1:-1]
@@ -47,28 +45,21 @@ def stm_dev(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=4 * Hz).into_nearest()
+    return make_single_focus_stm(foci, 4.0)
 
 # 静的8焦点を生成する関数
-def multi_focal_points(center, radius, point_num) -> GSPAT:
+def multi_focal_points(geometry, center, radius, point_num):
     angles = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)]
-    foci = []
-    for angle in angles:
-        p = center + radius * np.array([np.cos(angle), np.sin(angle), 0.0])
-        foci.append((p, 5e4 * Pa))
-    return GSPAT(
-        foci=foci,
-        option=GSPATOption(
-                repeat=100,
-                constraint=EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
-            ),
-            backend=NalgebraBackend(),
-        )
+    points = [
+        center + radius * np.array([np.cos(angle), np.sin(angle), 0.0])
+        for angle in angles
+    ]
+    return make_gspat_pattern(geometry, points, pressure_pa=5e4, repeat=100)
 
 # ２つの半周往復軌道を作成する関数
 # GSPATで点1と点5に焦点を配置し、それらをGainSTMで半周ずつ回す
-def stm_dev2(center: np.ndarray, radius: float, point_num: int) -> GainSTM: # 0.75が最適
-    gains = []
+def stm_dev2(geometry, center: np.ndarray, radius: float, point_num: int):
+    frames = []
     
     # 基本の角度リストを生成
     base_angles = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)]
@@ -87,18 +78,7 @@ def stm_dev2(center: np.ndarray, radius: float, point_num: int) -> GainSTM: # 0.
             p1 = center + radius * np.array([np.cos(angles[idx1]), np.sin(angles[idx1]), 0.0])
             p2 = center + radius * np.array([np.cos(angles[idx2]), np.sin(angles[idx2]), 0.0])
             
-            focal_points = GSPAT(
-                foci=[
-                    (p1, 5e4 * Pa),
-                    (p2, 5e4 * Pa),
-                ],
-                option=GSPATOption(
-                    repeat=100,
-                    constraint=EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
-                ),
-                backend=NalgebraBackend(),
-            )
-            gains.append(focal_points)
+            frames.append([p1, p2])
         
         # 逆方向の半周分の点を生成
         for step in range(point_num // 2 - 2, 0, -1):
@@ -108,28 +88,17 @@ def stm_dev2(center: np.ndarray, radius: float, point_num: int) -> GainSTM: # 0.
             p1 = center + radius * np.array([np.cos(angles[idx1]), np.sin(angles[idx1]), 0.0])
             p2 = center + radius * np.array([np.cos(angles[idx2]), np.sin(angles[idx2]), 0.0])
             
-            focal_points = GSPAT(
-                foci=[
-                    (p1, 5e4 * Pa),
-                    (p2, 5e4 * Pa),
-                ],
-                option=GSPATOption(
-                    repeat=100,
-                    constraint=EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
-                ),
-                backend=NalgebraBackend(),
-            )
-            gains.append(focal_points)
-    return GainSTM(
-        gains,
-        config=21 * Hz,
-        option = GainSTMOption(
-                        mode = GainSTMMode.PhaseIntensityFull,
-                    ),
-    ).into_nearest()
+            frames.append([p1, p2])
+    return make_gspat_pattern_stm(
+        geometry,
+        frames,
+        21.0,
+        pressure_pa=5e4,
+        repeat=100,
+    )
 
 # 円周上のランダムな100点を周期的に切り替えるSTM
-def stm_random(center: np.ndarray, radius: float) -> FociSTM:
+def stm_random(center: np.ndarray, radius: float):
     num_points = 100
     # 0～2πの範囲でランダムな角度を100個生成
     angles = np.random.uniform(0, 2 * np.pi, num_points)
@@ -138,10 +107,10 @@ def stm_random(center: np.ndarray, radius: float) -> FociSTM:
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=9 * Hz).into_nearest()
+    return make_single_focus_stm(foci, 9.0)
 
 # 逆向きの往復軌道を交互に繰り返すSTM
-def stm_repeat(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
+def stm_repeat(center: np.ndarray, radius: float, point_num: int):
     # 正方向角リスト
     angles_fwd = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)] # 穴の位置をずらすためにπ/8を加える
     angles_basic = angles_fwd + angles_fwd[1:-1]
@@ -155,9 +124,9 @@ def stm_repeat(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles
     )
-    return FociSTM(foci=foci, config=1 * Hz).into_nearest()
+    return make_single_focus_stm(foci, 1.0)
 
-def stm_double(center: np.ndarray, radius: float, point_num: int) -> GainSTM:
+def stm_double(geometry, center: np.ndarray, radius: float, point_num: int):
     # 円周上に等間隔8点
     angles = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)]
     # 各点の座標
@@ -170,31 +139,17 @@ def stm_double(center: np.ndarray, radius: float, point_num: int) -> GainSTM:
         (6, 2), (5, 1), (4, 0), (3, 7), (2, 6), (1, 5)
     ]
 
-    gains = []
-    for idx1, idx2 in pair_indices:
-        focal_points = GSPAT(
-            foci=[
-                (points[idx1], 5e4 * Pa),
-                (points[idx2], 5e4 * Pa),
-            ],
-            option=GSPATOption(
-                repeat=100,
-                constraint=EmissionConstraint.Clamp(EmitIntensity.MIN, EmitIntensity.MAX),
-            ),
-            backend=NalgebraBackend(),
-        )
-        gains.append(focal_points)
-
-    return GainSTM(
-        gains,
-        config=70 * Hz,
-        option=GainSTMOption(
-            mode=GainSTMMode.PhaseIntensityFull,
-        ),
-    ).into_nearest()
+    frames = [[points[idx1], points[idx2]] for idx1, idx2 in pair_indices]
+    return make_gspat_pattern_stm(
+        geometry,
+        frames,
+        70.0,
+        pressure_pa=5e4,
+        repeat=100,
+    )
 
 # 対向する位置に交互に焦点を作るSTM
-def stm_opposite(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
+def stm_opposite(center: np.ndarray, radius: float, point_num: int):
     # 正方向角リスト
     angles = [np.pi/8 + 2.0 * np.pi * i / point_num for i in range(point_num)] # 穴の位置をずらすためにπ/8を加える
     angles_new= [val for pair in zip(angles[:point_num//2], angles[point_num//2:]) for val in pair] # 対向する位置に交互に焦点を作るように順番を入れ替え
@@ -204,7 +159,7 @@ def stm_opposite(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
         center + radius * np.array([np.cos(a), np.sin(a), 0.0])
         for a in angles_new
     )
-    return FociSTM(foci=foci, config=100 * Hz).into_nearest()
+    return make_single_focus_stm(foci, 100.0)
 
 # SOEMのエラーハンドラ
 # def err_handler(slave: int, status: Status) -> None:
@@ -213,22 +168,17 @@ def stm_opposite(center: np.ndarray, radius: float, point_num: int) -> FociSTM:
 #         os._exit(-1)
 
 if __name__ == "__main__":
-    with Controller.open(
-        autd_arrangement,
-        # Simulator("127.0.0.1:8080"), # シミュレータを使用する
-        # SOEM(err_handler=err_handler, option=SOEMOption()), # SOEMを使用する
-        TwinCAT(), # TwinCATを使用する
-    ) as autd:
-        firmware_version = autd.firmware_version()
+    with AutdController.open(autd_arrangement) as autd:
+        firmware_version = autd.read_firmware_version()
         print(
             "\n".join(
                 [f"[{i}]: {firm}" for i, firm in enumerate(firmware_version)],
             ),
         )
 
-        autd.send(Silencer())
+        autd.send(SetSilencer())
 
-        m = Static(intensity=int(0xFF)) # 振幅変調を行わず、常に同じ振幅を出力する (小球は* 0.65)
+        m = make_constant_modulation(1.0)
 
         point_num = 8 # 円周上の点の数
         radius = 23.0 # 円の半径 (小球は19 mm)

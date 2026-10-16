@@ -4,10 +4,10 @@ import threading
 import cv2
 import numpy as np
 
-from pyautd3 import Controller, Silencer, Static
-from pyautd3.link.twincat import TwinCAT
+from autd3.commands import SetSilencer
 
 from .config import AppConfig
+from .autd_client import AutdController
 from .vision import (
     load_ximea_api,
     init_ximea_camera,
@@ -207,13 +207,14 @@ def run_tracking_app(cfg: AppConfig):
     logger = StabilityLogger(cfg)
 
     try:
-        with Controller.open(
+        with AutdController.open(
             autd_arrangement,
-            TwinCAT(),
+            interface_name=cfg.autd_interface_name,
+            open_timeout_sec=cfg.autd_open_timeout_sec,
+            command_timeout_sec=cfg.autd_command_timeout_sec,
         ) as autd:
 
-            autd.send(Silencer())
-            autd.send(Static(intensity=int(0xFF * cfg.static_intensity_ratio)))
+            autd.send(SetSilencer())
 
             base_center = autd.center()
 
