@@ -108,6 +108,19 @@ python tracking/experiments/xy_force_characterization.py
 
 実験手順と出力CSVの詳細は [`tracking/experiments/README_xy_force.md`](tracking/experiments/README_xy_force.md) を参照してください。
 
+### 円軌道音場の鉛直力測定
+
+通常PIDで安定保持した球体に短時間の強度ステップを与え、ステレオ3D軌道
+から円軌道STM音場の実効音響力を推定します。
+
+```bash
+python tracking/experiments/acoustic_force_step_response.py
+```
+
+カメラ分解能の評価方法、安全な予備測定、0.9・1.0の測定、解析コマンドは
+[`tracking/experiments/README_acoustic_force_step_response.md`](tracking/experiments/README_acoustic_force_step_response.md)
+を参照してください。
+
 ### 手放し検出と自動捕捉
 
 ```bash
