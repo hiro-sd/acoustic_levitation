@@ -170,17 +170,21 @@ def _sample_log_row(
 
 
 def _make_schedule(args) -> list[StepCondition]:
-    conditions = [
+    base_conditions = [
         StepCondition(intensity, dx, dy, dz)
-        for _ in range(int(args.repeats))
         for intensity in args.intensities
         for dx in args.x_offsets_mm
         for dy in args.y_offsets_mm
         for dz in args.z_offsets_mm
     ]
-    if not args.no_randomize:
-        random.Random(args.seed).shuffle(conditions)
-    return conditions
+    randomizer = random.Random(args.seed)
+    schedule = []
+    for _ in range(int(args.repeats)):
+        block = list(base_conditions)
+        if not args.no_randomize:
+            randomizer.shuffle(block)
+        schedule.extend(block)
+    return schedule
 
 
 def _summary_row(
@@ -407,6 +411,16 @@ def run_experiment(cfg: AppConfig, args) -> Path | None:
                     "minimum_fit_span_ms": args.minimum_fit_span_ms,
                     "random_seed": args.seed,
                     "randomized": not args.no_randomize,
+                    "randomization_method": (
+                        "none" if args.no_randomize else "within_repeat_blocks"
+                    ),
+                    "repeat_blocks": args.repeats,
+                    "conditions_per_block": (
+                        len(args.intensities)
+                        * len(args.x_offsets_mm)
+                        * len(args.y_offsets_mm)
+                        * len(args.z_offsets_mm)
+                    ),
                     "conditions": [condition.__dict__ for condition in schedule],
                 },
                 "calibration": {
@@ -503,22 +517,36 @@ def run_experiment(cfg: AppConfig, args) -> Path | None:
                 if enter_pressed and not previous_enter:
                     tracking_active = not tracking_active
                     stable_since = None
+                    baseline_buffer.clear()
+                    motion_estimator.reset()
+                    last_motion = None
                     if tracking_active:
                         controller.reset(last_hold_target)
                         print("[FORCE] PID hold started")
                     else:
                         sequence_running = False
-                        print("[FORCE] PID hold paused")
-                        if phase in {"ARMING", "PULSE"}:
+                        recovery_until = None
+                        last_hold_target = Target3D(home.x, home.y, home.z)
+                        controller.reset(last_hold_target)
+                        reset_sequence = sender.set_target(
+                            home.x,
+                            home.y,
+                            home.z,
+                            radius=cfg.radius,
+                            intensity_ratio=args.baseline_intensity,
+                        )
+                        print(
+                            "[FORCE] PID hold paused; fixed field reset to "
+                            f"home=({home.x:.1f}, {home.y:.1f}, {home.z:.1f}) mm, "
+                            f"A={args.baseline_intensity:.2f}"
+                        )
+                        if phase in {"ARMING", "PULSE", "STOPPING"}:
                             stop_reason = "operator_paused"
-                            stop_sequence = sender.set_target(
-                                last_hold_target.x,
-                                last_hold_target.y,
-                                last_hold_target.z,
-                                radius=cfg.radius,
-                                intensity_ratio=args.baseline_intensity,
-                            )
+                            stop_sequence = reset_sequence
                             phase = "STOPPING"
+                        else:
+                            phase = "HOLD"
+                            last_event = "initial_fixed_field_restored"
                 previous_enter = enter_pressed
 
                 s_pressed = is_key_pressed("s")
