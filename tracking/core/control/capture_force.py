@@ -1,8 +1,30 @@
 from dataclasses import dataclass
+import math
 
 import numpy as np
 
 from ..config import AppConfig
+
+
+# Weighted zero-offset fit from camera step-response session
+# 20261020_123846_25876 (300 attempts, 239 valid acceleration fits).
+#
+# The session was initially analyzed with a nominal mass of 0.50 g, giving
+#   F_0.50(A) = 9.381487 A - 0.986042 mN.
+# The sphere used in that same session was subsequently measured as 0.53 g.
+# With the recorded buoyancy F_b=0.339232 mN, every fitted force is corrected
+# without refitting the trajectories by
+#   F_0.53 = (0.53 / 0.50) * (F_0.50 + F_b) - F_b.
+# Therefore the mass-corrected model used by the capture controller is
+#   F_acoustic(A) = 9.94437622 A - 1.02485060 mN.
+SI2026_CAPTURE_FORCE_MODEL: tuple[tuple[float, float], ...] = (
+    (0.5, 3.947338),
+    (0.6, 4.941775),
+    (0.7, 5.936213),
+    (0.8, 6.930650),
+    (0.9, 7.925088),
+    (1.0, 8.919526),
+)
 
 
 @dataclass(frozen=True)
@@ -10,6 +32,17 @@ class CaptureForceCommand:
     required_force_mN: float
     commanded_intensity: float
     saturated: bool
+
+
+def capture_buoyancy_mN(cfg: AppConfig) -> float:
+    diameter_m = float(cfg.ball_diameter_mm) * 1e-3
+    volume_m3 = math.pi * diameter_m**3 / 6.0
+    return (
+        float(cfg.air_density_kg_m3)
+        * volume_m3
+        * 9.80665
+        * 1000.0
+    )
 
 
 def required_capture_force_mN(
@@ -20,7 +53,11 @@ def required_capture_force_mN(
     u_m_s = max(0.0, -float(predicted_vz_mm_s) / 1000.0)
     t_capture = max(1e-6, float(cfg.capture_time_sec))
     force_n = float(cfg.ball_mass_kg) * (9.80665 + u_m_s / t_capture)
-    return 1000.0 * force_n * float(cfg.capture_force_safety_factor)
+    acoustic_force_mn = 1000.0 * force_n - capture_buoyancy_mN(cfg)
+    return max(
+        0.0,
+        acoustic_force_mn * float(cfg.capture_force_safety_factor),
+    )
 
 
 def measured_force_for_intensity_mN(cfg: AppConfig, intensity: float) -> float:
@@ -67,7 +104,7 @@ def capture_intensity_interpolated_from_force(
     cfg: AppConfig,
     required_force_mN: float,
 ) -> CaptureForceCommand:
-    """Invert the load-cell model with piecewise-linear interpolation."""
+    """Invert the calibrated force model with piecewise-linear interpolation."""
     maximum_intensity = float(cfg.capture_max_intensity_ratio)
     model = sorted(
         (

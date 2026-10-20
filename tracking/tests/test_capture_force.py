@@ -7,7 +7,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from tracking.core.config import AppConfig
 from tracking.core.control.capture_force import (
+    SI2026_CAPTURE_FORCE_MODEL,
     apply_capture_intensity_slew,
+    capture_buoyancy_mN,
     capture_force_command_for_velocity,
     capture_intensity_interpolated_from_force,
     capture_intensity_from_force,
@@ -30,7 +32,10 @@ class CaptureForceTests(unittest.TestCase):
         # predicted_vz=-200 mm/s -> u=0.2 m/s
         force_mN = required_capture_force_mN(cfg, predicted_vz_mm_s=-200.0)
 
-        expected_mN = 1000.0 * 0.0005 * (9.80665 + 0.2 / 0.1)
+        expected_mN = (
+            1000.0 * 0.0005 * (9.80665 + 0.2 / 0.1)
+            - capture_buoyancy_mN(cfg)
+        )
         self.assertAlmostEqual(force_mN, expected_mN, places=6)
 
     def test_upward_or_stationary_speed_needs_weight_only_before_safety(self):
@@ -42,7 +47,42 @@ class CaptureForceTests(unittest.TestCase):
 
         force_mN = required_capture_force_mN(cfg, predicted_vz_mm_s=100.0)
 
-        self.assertAlmostEqual(force_mN, 1000.0 * 0.0005 * 9.80665, places=6)
+        self.assertAlmostEqual(
+            force_mN,
+            1000.0 * 0.0005 * 9.80665 - capture_buoyancy_mN(cfg),
+            places=6,
+        )
+
+    def test_si2026_camera_step_response_model_is_monotone(self):
+        intensities = [point[0] for point in SI2026_CAPTURE_FORCE_MODEL]
+        forces = [point[1] for point in SI2026_CAPTURE_FORCE_MODEL]
+
+        self.assertEqual(intensities, [0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+        self.assertTrue(all(b > a for a, b in zip(forces, forces[1:])))
+        self.assertAlmostEqual(forces[0], 3.947338)
+        self.assertAlmostEqual(forces[-1], 8.919526)
+
+    def test_si2026_model_uses_full_intensity_range_for_fast_fall(self):
+        cfg = AppConfig(
+            static_intensity_ratio=0.6,
+            ball_mass_kg=0.00053,
+            ball_diameter_mm=38.0,
+            capture_time_sec=0.12,
+            capture_max_intensity_ratio=1.0,
+            capture_loadcell_model=SI2026_CAPTURE_FORCE_MODEL,
+        )
+
+        command = capture_force_command_for_velocity(
+            cfg,
+            -800.0,
+            interpolate_intensity=True,
+            minimum_intensity=cfg.static_intensity_ratio,
+        )
+
+        # Correcting both the inferred force and the controller mass for the
+        # same sphere preserves the acceleration-to-intensity command.
+        self.assertAlmostEqual(command.commanded_intensity, 0.946915, places=5)
+        self.assertFalse(command.saturated)
 
     def test_loadcell_model_interpolates_force(self):
         self.assertAlmostEqual(measured_force_for_intensity_mN(self.cfg, 0.85), 6.5)
@@ -88,10 +128,13 @@ class CaptureForceTests(unittest.TestCase):
         fast_drop = capture_force_command_for_velocity(cfg, -300.0)
         saturated_drop = capture_force_command_for_velocity(cfg, -600.0)
 
-        self.assertAlmostEqual(hold.required_force_mN, 4.903325)
+        self.assertAlmostEqual(
+            hold.required_force_mN,
+            4.903325 - capture_buoyancy_mN(cfg),
+        )
         self.assertEqual(hold.commanded_intensity, 0.6)
         self.assertEqual(medium_drop.commanded_intensity, 0.7)
-        self.assertEqual(fast_drop.commanded_intensity, 0.8)
+        self.assertEqual(fast_drop.commanded_intensity, 0.7)
         self.assertEqual(saturated_drop.commanded_intensity, 0.8)
         self.assertTrue(saturated_drop.saturated)
 
@@ -112,7 +155,7 @@ class CaptureForceTests(unittest.TestCase):
 
         near_boundary = capture_force_command_for_velocity(
             cfg,
-            -15.0,
+            -95.0,
             current_intensity=0.7,
             downward_hysteresis_mN=0.05,
         )
@@ -170,7 +213,10 @@ class CaptureForceTests(unittest.TestCase):
         )
 
         self.assertEqual(hold.commanded_intensity, 0.6)
-        self.assertAlmostEqual(falling.commanded_intensity, 0.6528325)
+        expected = 0.6 + (
+            falling.required_force_mN - 5.0
+        ) / (6.0 - 5.0) * 0.1
+        self.assertAlmostEqual(falling.commanded_intensity, expected)
 
     def test_interpolated_command_saturates_at_configured_maximum(self):
         cfg = AppConfig(
@@ -213,13 +259,13 @@ class CaptureForceTests(unittest.TestCase):
         command = capture_force_command_for_velocity(
             cfg,
             -150.0,
-            current_intensity=0.65,
+            current_intensity=0.62,
             interpolate_intensity=True,
             minimum_intensity=0.6,
             intensity_deadband=0.005,
         )
 
-        self.assertEqual(command.commanded_intensity, 0.65)
+        self.assertEqual(command.commanded_intensity, 0.62)
 
     def test_intensity_slew_rises_immediately_and_falls_slowly(self):
         cfg = AppConfig(capture_intensity_down_slew_per_sec=0.4)

@@ -7,6 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tracking.core.config import AppConfig
+from tracking.core.control.capture_force import SI2026_CAPTURE_FORCE_MODEL
 from manual_release_tracking.core.mediapipe_release_trigger import (
     MediaPipeReleaseTrigger,
 )
@@ -111,6 +112,9 @@ if __name__ == "__main__":
         radius=19.0,
         default_z=400.0,
         static_intensity_ratio=0.6,
+        # Actual mass of the sphere used both for the 300-trial force
+        # calibration and for the free-fall capture experiment.
+        ball_mass_kg=0.00053,
 
         # Use calibrated stereo 3D position as the feedback measurement.
         enable_stereo_triangulation=True,
@@ -160,6 +164,9 @@ if __name__ == "__main__":
     cfg.auto_release_min_velocity_samples = 5
     cfg.auto_release_min_velocity_span_sec = 0.020
     cfg.auto_release_max_motion_age_sec = 0.050
+    # Used only until this process has measured its first AUTD command latency.
+    # Subsequent prediction horizons use measurement age plus the runtime
+    # enqueue-to-send-completion latency estimate.
     cfg.auto_release_actuation_prediction_sec = 0.0075
 
     # The initial capture command no longer uses motion while the sphere is
@@ -192,10 +199,11 @@ if __name__ == "__main__":
 
     # The first multi-frame predicted XY position is a fixed reference. Once
     # the first field is confirmed sent, use a dedicated PD controller around
-    # that anchor; no integral term is used during ALIGN or SETTLE.
+    # that anchor; no integral term is used during ALIGN or SETTLE.  Prediction
+    # time is computed from each stereo measurement timestamp and the measured
+    # AUTD command latency, instead of using a fixed 10 ms value.
     cfg.auto_release_capture_xy_kp = 0.30
     cfg.auto_release_capture_xy_kd = 0.05
-    cfg.auto_release_capture_xy_prediction_sec = 0.010
     # The measured acoustic influence range is about 20 mm. The final PD
     # command is conservatively limited to 15 mm from the measured sphere.
     cfg.auto_release_xy_capture_radius_mm = 15.0
@@ -207,24 +215,22 @@ if __name__ == "__main__":
     cfg.auto_release_brake_exit_stable_sec = 0.015
 
     # Convert the measured/predicted Z velocity to the force needed to stop in
-    # 120 ms, then select the smallest load-cell level that can provide it.
-    # This experiment shifts the measured model by +1 mN so intensity 0.6
-    # corresponds to the approximately 5 mN needed for static levitation.
+    # 120 ms, then invert the 300-trial camera step-response calibration.
+    # A weighted model with intensity and categorical z offset, corrected from
+    # the nominal 0.50 g analysis to the measured 0.53 g mass, gives at the
+    # intended zero offset F[A] = 9.94437622 A - 1.02485060 mN (239 valid fits
+    # in session 20261020_123846_25876). The table samples that line at the
+    # available commands and the controller interpolates between the points.
     cfg.capture_time_sec = 0.120
     cfg.capture_force_safety_factor = 1.0
-    cfg.capture_max_intensity_ratio = 0.8
-    cfg.capture_intensity_levels = (0.5, 0.6, 0.7, 0.8)
-    cfg.capture_loadcell_model = (
-        (0.5, 4.0),
-        (0.6, 5.0),
-        (0.7, 6.0),
-        (0.8, 7.0),
-    )
+    cfg.capture_max_intensity_ratio = 1.0
+    cfg.capture_intensity_levels = (0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
+    cfg.capture_loadcell_model = SI2026_CAPTURE_FORCE_MODEL
     cfg.auto_release_interpolate_intensity = True
     cfg.auto_release_intensity_deadband_ratio = 0.005
     cfg.auto_release_upward_vz_mm_s = 20.0
     cfg.auto_release_upward_intensity_ratio = 0.5
-    cfg.auto_release_max_intensity_ratio = 0.8
+    cfg.auto_release_max_intensity_ratio = 1.0
     # CAPTURE_SETTLE uses the same force command. The upward safety latch is
     # retained so an upward-moving sphere immediately receives intensity 0.5.
     cfg.auto_release_settle_normal_intensity_ratio = 0.6

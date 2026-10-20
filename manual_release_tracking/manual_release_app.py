@@ -27,9 +27,11 @@ from tracking.core.autd_sender import (
 )
 from tracking.core.controller import PredictionPIDController
 from tracking.core.models import HomePosition, Measurement3D, Target3D
+from tracking.core.prediction_timing import prediction_timing_from_timestamps
 from tracking.core.control.intensity import compute_z_intensity_boost_ratio
 from tracking.core.control.capture_force import (
     apply_capture_intensity_slew,
+    capture_buoyancy_mN,
     capture_force_command_for_velocity,
     measured_force_for_intensity_mN,
 )
@@ -346,6 +348,27 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
             current_intensity_ratio = float(cfg.static_intensity_ratio)
             target_intensity_ratio = float(cfg.static_intensity_ratio)
             sender.start()
+
+            def estimated_actuation_delay_sec() -> float:
+                return sender.estimated_command_latency_sec(
+                    float(
+                        getattr(
+                            cfg,
+                            "auto_release_actuation_prediction_sec",
+                            0.0075,
+                        )
+                    )
+                )
+
+            def timestamp_prediction_horizon_sec(
+                measurement_time_sec: float,
+                now_sec: float,
+            ) -> float:
+                return prediction_timing_from_timestamps(
+                    measurement_time_sec=measurement_time_sec,
+                    now_sec=now_sec,
+                    actuation_delay_sec=estimated_actuation_delay_sec(),
+                ).horizon_sec
 
             controller = PredictionPIDController(cfg)
             controller.reset(Target3D(home.x, home.y, home.z))
@@ -828,13 +851,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 prediction = predict_capture_position(
                     estimate,
                     now_sec=now_sec,
-                    actuation_delay_sec=float(
-                        getattr(
-                            cfg,
-                            "auto_release_actuation_prediction_sec",
-                            0.0075,
-                        )
-                    ),
+                    actuation_delay_sec=estimated_actuation_delay_sec(),
                     gravity_mm_s2=float(cfg.gravity_mm_s2),
                     apply_gravity=True,
                 )
@@ -994,12 +1011,9 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     velocity_gain_sec=float(
                         getattr(cfg, "auto_release_capture_xy_kd", cfg.kd_xy)
                     ),
-                    prediction_horizon_sec=float(
-                        getattr(
-                            cfg,
-                            "auto_release_capture_xy_prediction_sec",
-                            cfg.dt_pred_xy,
-                        )
+                    prediction_horizon_sec=timestamp_prediction_horizon_sec(
+                        estimate.measurement_time_sec,
+                        now_sec,
                     ),
                     maximum_distance_mm=float(
                         getattr(
@@ -2132,12 +2146,14 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                 candidate_command_seq=(
                                     pending_capture_command_seq
                                 ),
-                                configured_prediction_delay_sec=float(
-                                    getattr(
-                                        cfg,
-                                        "auto_release_actuation_prediction_sec",
-                                        0.0075,
-                                    )
+                                configured_prediction_delay_sec=max(
+                                    0.0,
+                                    capture_initial_prediction.horizon_sec
+                                    - max(
+                                        0.0,
+                                        float(capture_started_at)
+                                        - capture_start_estimate.measurement_time_sec,
+                                    ),
                                 ),
                             )
                             capture_onset_prediction = predict_capture_position(
@@ -2198,6 +2214,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                         10.0,
                                     )
                                 ),
+                                buoyancy_mN=capture_buoyancy_mN(cfg),
                             )
                             capture_logger.write(
                                 event="capture_braking_plan_started",
@@ -2428,7 +2445,13 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                             control_home = home
 
                         # 2. まず通常PIDを計算する。
-                        target, debug = controller.update(meas, control_home)
+                        controller_now_sec = time.perf_counter()
+                        target, debug = controller.update(
+                            meas,
+                            control_home,
+                            now_sec=controller_now_sec,
+                            actuation_delay_sec=estimated_actuation_delay_sec(),
+                        )
 
                         vx_now = float(debug.vx)
                         vy_now = float(debug.vy)
@@ -2554,11 +2577,10 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                             cfg.kd_xy,
                                         )
                                     ),
-                                    prediction_horizon_sec=float(
-                                        getattr(
-                                            cfg,
-                                            "auto_release_capture_xy_prediction_sec",
-                                            cfg.dt_pred_xy,
+                                    prediction_horizon_sec=(
+                                        timestamp_prediction_horizon_sec(
+                                            motion_estimate.measurement_time_sec,
+                                            now_capture,
                                         )
                                     ),
                                     maximum_distance_mm=float(
@@ -2747,11 +2769,10 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                             cfg.kd_xy,
                                         )
                                     ),
-                                    prediction_horizon_sec=float(
-                                        getattr(
-                                            cfg,
-                                            "auto_release_capture_xy_prediction_sec",
-                                            cfg.dt_pred_xy,
+                                    prediction_horizon_sec=(
+                                        timestamp_prediction_horizon_sec(
+                                            motion_estimate.measurement_time_sec,
+                                            now_capture,
                                         )
                                     ),
                                     maximum_distance_mm=float(

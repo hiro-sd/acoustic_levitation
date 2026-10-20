@@ -2,6 +2,7 @@ import numpy as np
 
 from .config import AppConfig
 from .models import ControllerDebug, HomePosition, Measurement3D, Target3D
+from .prediction_timing import prediction_timing_from_timestamps
 
 
 class PredictionPIDController:
@@ -52,7 +53,14 @@ class PredictionPIDController:
         if self.last_valid_target is None:
             self.last_valid_target = Target3D(home.x, home.y, home.z)
 
-    def update(self, meas: Measurement3D, home: HomePosition) -> tuple[Target3D, ControllerDebug]:
+    def update(
+        self,
+        meas: Measurement3D,
+        home: HomePosition,
+        *,
+        now_sec: float | None = None,
+        actuation_delay_sec: float | None = None,
+    ) -> tuple[Target3D, ControllerDebug]:
         """
         新しい測定値に基づいて、AUTDへ送るSTM中心 target を計算する。
 
@@ -63,6 +71,15 @@ class PredictionPIDController:
         target_x = self.last_valid_target.x
         target_y = self.last_valid_target.y
         target_z = self.last_valid_target.z
+
+        def prediction_horizon(measurement_time_sec: float, fallback_sec: float):
+            if now_sec is None or actuation_delay_sec is None:
+                return max(0.0, float(fallback_sec))
+            return prediction_timing_from_timestamps(
+                measurement_time_sec=measurement_time_sec,
+                now_sec=now_sec,
+                actuation_delay_sec=actuation_delay_sec,
+            ).horizon_sec
 
         # XY prediction PID
         if meas.detected_xy and meas.x is not None and meas.y is not None and meas.t_xy is not None:
@@ -89,8 +106,12 @@ class PredictionPIDController:
             self.prev_vy = vy
 
             if self.cfg.enable_delay_compensation:
-                x_pred = current_x + vx * self.cfg.dt_pred_xy
-                y_pred = current_y + vy * self.cfg.dt_pred_xy
+                horizon_xy = prediction_horizon(
+                    float(meas.t_xy),
+                    self.cfg.dt_pred_xy,
+                )
+                x_pred = current_x + vx * horizon_xy
+                y_pred = current_y + vy * horizon_xy
             else:
                 x_pred = current_x
                 y_pred = current_y
@@ -176,16 +197,21 @@ class PredictionPIDController:
             self.prev_z_meas_time = float(meas.t_z)
             self.prev_vz = vz
 
+            horizon_z = prediction_horizon(
+                float(meas.t_z),
+                self.cfg.dt_pred_z,
+            )
+
             if self.cfg.enable_delay_compensation and self.cfg.use_gravity_prediction_z:
                 # 自由飛行ではないので通常はOFF推奨。
                 # 試す場合のみ使う。
                 z_pred = (
                     z_filt
-                    + vz * self.cfg.dt_pred_z
-                    - 0.5 * self.cfg.gravity_mm_s2 * (self.cfg.dt_pred_z ** 2)
+                    + vz * horizon_z
+                    - 0.5 * self.cfg.gravity_mm_s2 * (horizon_z ** 2)
                 )
             elif self.cfg.enable_delay_compensation:
-                z_pred = z_filt + vz * self.cfg.dt_pred_z
+                z_pred = z_filt + vz * horizon_z
             else:
                 z_pred = z_filt
 

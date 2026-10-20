@@ -609,6 +609,25 @@ class CapturePredictionTest(unittest.TestCase):
         self.assertAlmostEqual(plan.required_force_mN, 6.0, places=6)
         self.assertAlmostEqual(plan.stopping_distance_mm, 56.99, places=2)
 
+    def test_braking_plan_accounts_for_buoyancy(self):
+        plan = make_braking_plan(
+            start_time_sec=1.0,
+            initial_z_mm=400.0,
+            initial_vz_mm_s=0.0,
+            nominal_duration_sec=0.12,
+            maximum_duration_sec=1.0,
+            minimum_duration_sec=0.05,
+            ball_mass_kg=0.0005,
+            gravity_mm_s2=9806.65,
+            maximum_force_mN=8.4,
+            z_min_mm=250.0,
+            workspace_margin_mm=10.0,
+            buoyancy_mN=0.339232,
+        )
+
+        self.assertAlmostEqual(plan.required_force_mN, 4.564093, places=6)
+        self.assertTrue(plan.feasible)
+
     def test_braking_plan_marks_insufficient_workspace(self):
         plan = make_braking_plan(
             start_time_sec=1.0,

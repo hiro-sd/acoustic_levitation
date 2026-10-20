@@ -989,7 +989,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--maximum-abs-z-displacement-mm", type=float, default=15.0)
     parser.add_argument("--maximum-speed-mm-s", type=float, default=500.0)
     parser.add_argument("--arming-timeout-sec", type=float, default=0.20)
-    parser.add_argument("--sphere-mass-g", type=float, default=0.5)
+    parser.add_argument("--sphere-mass-g", type=float, default=0.53)
     parser.add_argument("--sphere-diameter-mm", type=float, default=38.0)
     parser.add_argument("--air-density-kg-m3", type=float, default=1.204)
     parser.add_argument("--seed", type=int, default=20261019)

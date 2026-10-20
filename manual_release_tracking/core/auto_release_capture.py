@@ -8,6 +8,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from tracking.core.prediction_timing import prediction_timing_from_timestamps
+
 
 CAPTURE_ALIGN = "CAPTURE_ALIGN"
 CAPTURE_SETTLE = "CAPTURE_SETTLE"
@@ -416,11 +418,12 @@ def predict_capture_position(
     gravity_mm_s2: float,
     apply_gravity: bool = True,
 ) -> PredictedCapture:
-    measurement_age_sec = max(
-        0.0,
-        float(now_sec) - estimate.measurement_time_sec,
+    timing = prediction_timing_from_timestamps(
+        measurement_time_sec=estimate.measurement_time_sec,
+        now_sec=now_sec,
+        actuation_delay_sec=actuation_delay_sec,
     )
-    horizon = measurement_age_sec + max(0.0, float(actuation_delay_sec))
+    horizon = timing.horizon_sec
     gravity = float(gravity_mm_s2) if apply_gravity else 0.0
     predicted_z = (
         estimate.z_mm
@@ -517,6 +520,7 @@ def make_braking_plan(
     maximum_force_mN: float,
     z_min_mm: float,
     workspace_margin_mm: float,
+    buoyancy_mN: float = 0.0,
 ) -> BrakingPlan:
     """Create a constant-deceleration Z trajectory within force/workspace limits."""
     mass_kg = max(1e-9, float(ball_mass_kg))
@@ -527,11 +531,15 @@ def make_braking_plan(
     nominal_duration = max(minimum_duration, float(nominal_duration_sec))
     maximum_duration = max(minimum_duration, float(maximum_duration_sec))
     maximum_force = max(0.0, float(maximum_force_mN))
+    buoyancy = max(0.0, float(buoyancy_mN))
     lower_boundary_z = float(z_min_mm) + max(0.0, float(workspace_margin_mm))
     available_drop = max(0.0, float(initial_z_mm) - lower_boundary_z)
 
     if downward_speed <= 1e-9:
-        weight_mn = mass_kg * (gravity / 1000.0) * 1000.0
+        weight_mn = max(
+            0.0,
+            mass_kg * (gravity / 1000.0) * 1000.0 - buoyancy,
+        )
         return BrakingPlan(
             start_time_sec=float(start_time_sec),
             initial_z_mm=float(initial_z_mm),
@@ -550,7 +558,7 @@ def make_braking_plan(
         )
 
     maximum_gross_acceleration = (
-        maximum_force / 1000.0 / mass_kg * 1000.0
+        (maximum_force + buoyancy) / 1000.0 / mass_kg * 1000.0
     )
     maximum_net_acceleration = maximum_gross_acceleration - gravity
     if maximum_net_acceleration > 0.0:
@@ -589,7 +597,9 @@ def make_braking_plan(
         mass_kg
         * ((gravity + acceleration) / 1000.0)
         * 1000.0
+        - buoyancy
     )
+    required_force = max(0.0, required_force)
     force_saturated = required_force > maximum_force + 1e-9
 
     return BrakingPlan(

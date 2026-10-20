@@ -68,7 +68,7 @@ F_b    = rho_air * sphere_volume * g
 
 最初は既知の範囲である0.5～0.8、中心オフセット0、各3回程度で確認する。
 リポジトリ直下からPowerShellで実行する。
-既定値は質量0.5 g、直径38 mmなので、実験前に同じ球体を測定し、異なる
+既定値は質量0.53 g、直径38 mmなので、実験前に同じ球体を測定し、異なる
 場合は`--sphere-mass-g`と`--sphere-diameter-mm`で実測値を指定する。
 
 ```powershell
@@ -77,7 +77,7 @@ F_b    = rho_air * sphere_volume * g
   --z-offsets-mm 0 `
   --repeats 3 `
   --pulse-ms 60 `
-  --sphere-mass-g 0.500 `
+  --sphere-mass-g 0.530 `
   --sphere-diameter-mm 38.0 `
   --operator "Hiroto Yoshida"
 ```
@@ -159,6 +159,6 @@ tracking/acoustic_force_data/session_YYYYMMDD_HHMMSS_PID/
 - 隣接する強度間の力差が試行間95%信頼区間より大きい。
 - 0.6付近の力が、静止球に必要な`mg - F_b`と大きく矛盾しない。
 
-最後の条件は校正の独立な整合性確認になる。質量0.5 g、直径38 mm、
+最後の条件は校正の独立な整合性確認になる。質量0.53 g、直径38 mm、
 空気密度1.204 kg/m³なら、浮力は約0.34 mN、静止に必要な上向き音響力は
-約4.56 mNである。
+約4.86 mNである。

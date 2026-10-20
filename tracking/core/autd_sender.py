@@ -178,6 +178,7 @@ class AutdSender:
         self.display_fps = 0.0
         self.build_time_ema_ms = 0.0
         self.send_time_ema_ms = 0.0
+        self.command_latency_ema_ms: float | None = None
 
         self._last_mask_center_x = None
         self._last_mask_center_y = None
@@ -249,6 +250,20 @@ class AutdSender:
                 if telemetry.sequence >= int(sequence):
                     return telemetry
         return None
+
+    def estimated_command_latency_sec(self, fallback_sec: float) -> float:
+        """Estimate enqueue-to-send-completion latency from this run.
+
+        Before the first command has completed, the caller-provided fallback is
+        used.  Thereafter the estimate follows the latency of commands that were
+        actually emitted, so prediction horizons adapt to the current host and
+        network rather than assuming a fixed delay for the whole session.
+        """
+        with self._lock:
+            latency_ms = self.command_latency_ema_ms
+        if latency_ms is None or not np.isfinite(latency_ms):
+            return max(0.0, float(fallback_sec))
+        return max(0.0, float(latency_ms) * 1e-3)
 
     def _send_output_mask_if_needed(self, target: TargetCommand):
         """
@@ -433,9 +448,20 @@ class AutdSender:
 
                 build_ms = (t1 - t0) * 1000.0
                 send_ms = (t2 - t1) * 1000.0
+                command_latency_ms = (
+                    t2 - float(target.enqueued_time_sec)
+                ) * 1000.0
 
                 self.build_time_ema_ms = 0.9 * self.build_time_ema_ms + 0.1 * build_ms
                 self.send_time_ema_ms = 0.9 * self.send_time_ema_ms + 0.1 * send_ms
+                with self._lock:
+                    if self.command_latency_ema_ms is None:
+                        self.command_latency_ema_ms = command_latency_ms
+                    else:
+                        self.command_latency_ema_ms = (
+                            0.9 * self.command_latency_ema_ms
+                            + 0.1 * command_latency_ms
+                        )
 
                 last_seq = seq
                 fps_frame_count += 1
@@ -447,11 +473,18 @@ class AutdSender:
             now = time.perf_counter()
             if now - fps_start_time >= 1.0:
                 self.display_fps = fps_frame_count / (now - fps_start_time)
+                command_latency_ema_ms = (
+                    0.0
+                    if self.command_latency_ema_ms is None
+                    else self.command_latency_ema_ms
+                )
 
                 print(
                     f"[AUTD] fps={self.display_fps:.1f}, "
                     f"build_ema={self.build_time_ema_ms:.2f} ms, "
-                    f"send_ema={self.send_time_ema_ms:.2f} ms"
+                    f"send_ema={self.send_time_ema_ms:.2f} ms, "
+                    f"command_latency_ema="
+                    f"{command_latency_ema_ms:.2f} ms"
                 )
 
                 fps_start_time = now

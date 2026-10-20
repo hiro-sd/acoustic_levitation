@@ -152,8 +152,9 @@ class AppConfig:
     log_trigger_key: str = "l"
 
     # Capture-force model shared by automatic release capture.
-    ball_mass_kg: float = 0.0005
+    ball_mass_kg: float = 0.00053
     ball_diameter_mm: float = 38.0
+    air_density_kg_m3: float = 1.204
     capture_time_sec: float = 0.12
     capture_force_safety_factor: float = 1.0
     capture_max_intensity_ratio: float = 0.9

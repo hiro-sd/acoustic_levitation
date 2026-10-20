@@ -1,4 +1,5 @@
 import unittest
+import threading
 from types import SimpleNamespace
 
 from autd3.commands import Modulation
@@ -22,6 +23,8 @@ def make_sender(*, last_intensity=None, autd=None):
     sender.autd = FakeAutd() if autd is None else autd
     sender.cfg = SimpleNamespace(intensity_update_eps=0.005)
     sender._last_intensity_ratio = last_intensity
+    sender._lock = threading.Lock()
+    sender.command_latency_ema_ms = None
     return sender
 
 
@@ -36,6 +39,13 @@ def make_target(intensity_ratio):
 
 
 class AutdSenderIntensityIntegrationTests(unittest.TestCase):
+    def test_command_latency_uses_fallback_then_runtime_ema(self):
+        sender = make_sender()
+
+        self.assertAlmostEqual(sender.estimated_command_latency_sec(0.0075), 0.0075)
+        sender.command_latency_ema_ms = 3.25
+        self.assertAlmostEqual(sender.estimated_command_latency_sec(0.0075), 0.00325)
+
     def test_existing_target_defaults_to_unweighted_stm(self):
         self.assertIsNone(make_target(0.6).focus_dwell_counts)
 
