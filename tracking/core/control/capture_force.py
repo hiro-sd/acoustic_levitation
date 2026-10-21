@@ -48,10 +48,26 @@ def capture_buoyancy_mN(cfg: AppConfig) -> float:
 def required_capture_force_mN(
     cfg: AppConfig,
     predicted_vz_mm_s: float,
+    *,
+    time_to_stop_sec: float | None = None,
 ) -> float:
-    """Return the upward force required to stop the current downward speed."""
+    """Return the upward force required to stop by a common deadline.
+
+    ``time_to_stop_sec`` is the time remaining until the braking plan's fixed
+    end time.  When it is omitted, the configured capture time is used.  This
+    keeps the legacy standalone calculation available while allowing the
+    closed-loop braking controller to use the same endpoint as its Z
+    trajectory.
+    """
     u_m_s = max(0.0, -float(predicted_vz_mm_s) / 1000.0)
-    t_capture = max(1e-6, float(cfg.capture_time_sec))
+    t_capture = max(
+        1e-6,
+        float(
+            cfg.capture_time_sec
+            if time_to_stop_sec is None
+            else time_to_stop_sec
+        ),
+    )
     force_n = float(cfg.ball_mass_kg) * (9.80665 + u_m_s / t_capture)
     acoustic_force_mn = 1000.0 * force_n - capture_buoyancy_mN(cfg)
     return max(
@@ -135,6 +151,7 @@ def capture_force_command_for_velocity(
     cfg: AppConfig,
     predicted_vz_mm_s: float,
     *,
+    time_to_stop_sec: float | None = None,
     current_intensity: float | None = None,
     downward_hysteresis_mN: float = 0.0,
     interpolate_intensity: bool = False,
@@ -142,7 +159,11 @@ def capture_force_command_for_velocity(
     intensity_deadband: float = 0.0,
 ) -> CaptureForceCommand:
     """Convert downward velocity to a calibrated acoustic intensity."""
-    required_force = required_capture_force_mN(cfg, predicted_vz_mm_s)
+    required_force = required_capture_force_mN(
+        cfg,
+        predicted_vz_mm_s,
+        time_to_stop_sec=time_to_stop_sec,
+    )
     requested = (
         capture_intensity_interpolated_from_force(cfg, required_force)
         if interpolate_intensity

@@ -545,10 +545,16 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 getattr(cfg, "false_release_reject_key", "x")
             ).lower()
 
-            def force_command_for_vz(vz_mm_s, current_intensity=None):
+            def force_command_for_vz(
+                vz_mm_s,
+                current_intensity=None,
+                *,
+                time_to_stop_sec=None,
+            ):
                 return capture_force_command_for_velocity(
                     cfg,
                     float(vz_mm_s),
+                    time_to_stop_sec=time_to_stop_sec,
                     current_intensity=current_intensity,
                     downward_hysteresis_mN=float(
                         getattr(
@@ -1965,7 +1971,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                             getattr(
                                 cfg,
                                 "auto_release_minimum_alignment_time_sec",
-                                0.120,
+                                0.100,
                             )
                         )
                         minimum_alignment_complete = (
@@ -2091,7 +2097,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     getattr(
                                         cfg,
                                         "auto_release_nominal_stop_time_sec",
-                                        0.120,
+                                        0.100,
                                     )
                                 ),
                                 maximum_duration_sec=float(
@@ -2495,9 +2501,22 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     )
                                 ),
                             )
+                            time_to_braking_deadline_sec = None
+                            if (
+                                capture_braking_plan is not None
+                                and trajectory_reference is not None
+                            ):
+                                time_to_braking_deadline_sec = max(
+                                    0.0,
+                                    capture_braking_plan.duration_sec
+                                    - trajectory_reference.elapsed_sec,
+                                )
                             force_command = force_command_for_vz(
                                 motion_estimate.vz_mm_s,
                                 current_intensity=current_intensity_ratio,
+                                time_to_stop_sec=(
+                                    time_to_braking_deadline_sec
+                                ),
                             )
                             if initial_capture_command_pending:
                                 capture_intensity_ratio = float(

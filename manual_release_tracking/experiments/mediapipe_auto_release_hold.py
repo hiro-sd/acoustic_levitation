@@ -192,9 +192,9 @@ if __name__ == "__main__":
 
     # Build the constant-deceleration Z reference after the exact initial field
     # command is confirmed sent. Braking transitions directly to LOCAL_HOLD.
-    cfg.auto_release_nominal_stop_time_sec = 0.120
+    cfg.auto_release_nominal_stop_time_sec = 0.100
     cfg.auto_release_min_stop_time_sec = 0.050
-    cfg.auto_release_minimum_alignment_time_sec = 0.120
+    cfg.auto_release_minimum_alignment_time_sec = 0.100
 
     # The first multi-frame predicted XY position is the reference. After the
     # initial command is sent, braking XY uses the same timestamp-aware PID as
@@ -209,14 +209,16 @@ if __name__ == "__main__":
     cfg.auto_release_brake_exit_vz_mm_s = -30.0
     cfg.auto_release_brake_exit_stable_sec = 0.015
 
-    # Convert the measured/predicted Z velocity to the force needed to stop in
-    # 120 ms, then invert the 300-trial camera step-response calibration.
+    # Convert the initial predicted Z velocity to the force needed to stop in
+    # 100 ms, then invert the 300-trial camera step-response calibration. Once
+    # the initial command is sent, the same force calculation uses the time
+    # remaining until the braking trajectory's fixed end time.
     # A weighted model with intensity and categorical z offset, corrected from
     # the nominal 0.50 g analysis to the measured 0.53 g mass, gives at the
     # intended zero offset F[A] = 9.94437622 A - 1.02485060 mN (239 valid fits
     # in session 20261020_123846_25876). The table samples that line at the
     # available commands and the controller interpolates between the points.
-    cfg.capture_time_sec = 0.120
+    cfg.capture_time_sec = 0.100
     cfg.capture_force_safety_factor = 1.0
     cfg.capture_max_intensity_ratio = 1.0
     cfg.capture_intensity_levels = (0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
