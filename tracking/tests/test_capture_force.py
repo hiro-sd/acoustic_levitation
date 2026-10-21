@@ -6,10 +6,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tracking.core.config import AppConfig
-from manual_release_tracking.core.auto_release_capture import (
-    braking_reference_at,
-    make_braking_plan,
-)
 from tracking.core.control.capture_force import (
     SI2026_CAPTURE_FORCE_MODEL,
     apply_capture_intensity_slew,
@@ -41,104 +37,6 @@ class CaptureForceTests(unittest.TestCase):
             - capture_buoyancy_mN(cfg)
         )
         self.assertAlmostEqual(force_mN, expected_mN, places=6)
-
-    def test_fixed_deadline_keeps_ideal_required_force_constant(self):
-        cfg = AppConfig(
-            ball_mass_kg=0.0005,
-            capture_time_sec=0.1,
-            capture_force_safety_factor=1.0,
-        )
-
-        initial = required_capture_force_mN(
-            cfg,
-            predicted_vz_mm_s=-200.0,
-            time_to_stop_sec=0.1,
-        )
-        halfway = required_capture_force_mN(
-            cfg,
-            predicted_vz_mm_s=-100.0,
-            time_to_stop_sec=0.05,
-        )
-
-        self.assertAlmostEqual(initial, halfway, places=6)
-
-    def test_fixed_deadline_uses_remaining_time_in_force_command(self):
-        cfg = AppConfig(
-            ball_mass_kg=0.0005,
-            capture_time_sec=0.1,
-            capture_force_safety_factor=1.0,
-            capture_max_intensity_ratio=1.0,
-            capture_loadcell_model=(
-                (0.5, 4.0),
-                (0.6, 5.0),
-                (0.7, 6.0),
-                (0.8, 7.0),
-                (0.9, 8.0),
-                (1.0, 9.0),
-            ),
-        )
-
-        initial = capture_force_command_for_velocity(
-            cfg,
-            -200.0,
-            time_to_stop_sec=0.1,
-            interpolate_intensity=True,
-            minimum_intensity=0.5,
-        )
-        halfway = capture_force_command_for_velocity(
-            cfg,
-            -100.0,
-            time_to_stop_sec=0.05,
-            interpolate_intensity=True,
-            minimum_intensity=0.5,
-        )
-
-        self.assertAlmostEqual(
-            initial.commanded_intensity,
-            halfway.commanded_intensity,
-            places=6,
-        )
-
-    def test_braking_reference_and_force_share_fixed_endpoint(self):
-        cfg = AppConfig(
-            ball_mass_kg=0.00053,
-            ball_diameter_mm=38.0,
-            capture_time_sec=0.1,
-            capture_force_safety_factor=1.0,
-            capture_max_intensity_ratio=1.0,
-            capture_loadcell_model=SI2026_CAPTURE_FORCE_MODEL,
-        )
-        plan = make_braking_plan(
-            start_time_sec=1.0,
-            initial_z_mm=460.0,
-            initial_vz_mm_s=-700.0,
-            nominal_duration_sec=0.1,
-            maximum_duration_sec=1.0,
-            minimum_duration_sec=0.05,
-            ball_mass_kg=cfg.ball_mass_kg,
-            gravity_mm_s2=9806.65,
-            maximum_force_mN=SI2026_CAPTURE_FORCE_MODEL[-1][1],
-            z_min_mm=250.0,
-            workspace_margin_mm=10.0,
-            buoyancy_mN=capture_buoyancy_mN(cfg),
-        )
-
-        for fraction in (0.25, 0.5, 0.75):
-            elapsed = plan.duration_sec * fraction
-            reference = braking_reference_at(
-                plan,
-                now_sec=plan.start_time_sec + elapsed,
-            )
-            force_mn = required_capture_force_mN(
-                cfg,
-                reference.vz_mm_s,
-                time_to_stop_sec=plan.duration_sec - elapsed,
-            )
-            self.assertAlmostEqual(
-                force_mn,
-                plan.required_force_mN,
-                places=6,
-            )
 
     def test_upward_or_stationary_speed_needs_weight_only_before_safety(self):
         cfg = AppConfig(

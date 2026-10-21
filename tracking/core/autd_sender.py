@@ -156,6 +156,7 @@ class TargetCommand:
     prediction_horizon_sec: float | None = None
     control_mode: str = ""
     release_timestamp_ms: int | None = None
+    is_initial_capture_command: bool = False
 
 
 @dataclass(frozen=True)
@@ -221,6 +222,7 @@ class AutdSender:
         self.build_time_ema_ms = 0.0
         self.send_time_ema_ms = 0.0
         self.command_latency_ema_ms: float | None = None
+        self.initial_capture_latency_ema_ms: float | None = None
 
         self._last_mask_center_x = None
         self._last_mask_center_y = None
@@ -269,6 +271,7 @@ class AutdSender:
         prediction_horizon_sec: float | None = None,
         control_mode: str = "",
         release_timestamp_ms: int | None = None,
+        is_initial_capture_command: bool = False,
     ):
         """
         メインスレッドから呼ぶ。
@@ -309,6 +312,7 @@ class AutdSender:
                 release_timestamp_ms=(
                     None if release_timestamp_ms is None else int(release_timestamp_ms)
                 ),
+                is_initial_capture_command=bool(is_initial_capture_command),
             )
             self._seq += 1
             return self._seq
@@ -431,6 +435,45 @@ class AutdSender:
         if latency_ms is None or not np.isfinite(latency_ms):
             return max(0.0, float(fallback_sec))
         return max(0.0, float(latency_ms) * 1e-3)
+
+    def estimated_initial_capture_latency_sec(self, fallback_sec: float) -> float:
+        """Estimate latency using only previously sent initial capture commands.
+
+        Seed the EMA with the measured fallback before the first release.  A
+        single first-command queue stall therefore cannot replace the estimate
+        outright; it is incorporated with the same 0.1 EMA weight as later
+        observations.
+        """
+        fallback_ms = max(0.0, float(fallback_sec)) * 1000.0
+        with self._lock:
+            latency_ms = self.initial_capture_latency_ema_ms
+            if latency_ms is None or not np.isfinite(latency_ms):
+                latency_ms = fallback_ms
+                self.initial_capture_latency_ema_ms = latency_ms
+        return max(0.0, float(latency_ms) * 1e-3)
+
+    def _record_command_latency_ms(
+        self,
+        target: TargetCommand,
+        command_latency_ms: float,
+    ) -> None:
+        """Update the global EMA and, when applicable, the initial-only EMA."""
+        latency_ms = float(command_latency_ms)
+        with self._lock:
+            if self.command_latency_ema_ms is None:
+                self.command_latency_ema_ms = latency_ms
+            else:
+                self.command_latency_ema_ms = (
+                    0.9 * self.command_latency_ema_ms + 0.1 * latency_ms
+                )
+            if target.is_initial_capture_command:
+                if self.initial_capture_latency_ema_ms is None:
+                    self.initial_capture_latency_ema_ms = latency_ms
+                else:
+                    self.initial_capture_latency_ema_ms = (
+                        0.9 * self.initial_capture_latency_ema_ms
+                        + 0.1 * latency_ms
+                    )
 
     def _send_output_mask_if_needed(self, target: TargetCommand):
         """
@@ -644,14 +687,7 @@ class AutdSender:
 
                 self.build_time_ema_ms = 0.9 * self.build_time_ema_ms + 0.1 * build_ms
                 self.send_time_ema_ms = 0.9 * self.send_time_ema_ms + 0.1 * send_ms
-                with self._lock:
-                    if self.command_latency_ema_ms is None:
-                        self.command_latency_ema_ms = command_latency_ms
-                    else:
-                        self.command_latency_ema_ms = (
-                            0.9 * self.command_latency_ema_ms
-                            + 0.1 * command_latency_ms
-                        )
+                self._record_command_latency_ms(target, command_latency_ms)
 
                 fps_frame_count += 1
 
@@ -698,6 +734,7 @@ def set_tracking_target(
     prediction_horizon_sec: float | None = None,
     control_mode: str = "",
     release_timestamp_ms: int | None = None,
+    is_initial_capture_command: bool = False,
 ):
     """Send a target while keeping OutputMask-specific arguments out of app.py."""
     if cfg.use_output_mask:
@@ -715,6 +752,7 @@ def set_tracking_target(
             prediction_horizon_sec=prediction_horizon_sec,
             control_mode=control_mode,
             release_timestamp_ms=release_timestamp_ms,
+            is_initial_capture_command=is_initial_capture_command,
         )
     else:
         return sender.set_target(
@@ -729,4 +767,5 @@ def set_tracking_target(
             prediction_horizon_sec=prediction_horizon_sec,
             control_mode=control_mode,
             release_timestamp_ms=release_timestamp_ms,
+            is_initial_capture_command=is_initial_capture_command,
         )

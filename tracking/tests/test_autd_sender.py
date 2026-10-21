@@ -35,6 +35,7 @@ def make_sender(*, last_intensity=None, autd=None):
     sender._last_intensity_ratio = last_intensity
     sender._lock = threading.Lock()
     sender.command_latency_ema_ms = None
+    sender.initial_capture_latency_ema_ms = None
     return sender
 
 
@@ -120,6 +121,50 @@ class AutdSenderIntensityIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(sender.estimated_command_latency_sec(0.0075), 0.0075)
         sender.command_latency_ema_ms = 3.25
         self.assertAlmostEqual(sender.estimated_command_latency_sec(0.0075), 0.00325)
+
+    def test_initial_capture_latency_has_independent_fallback_and_ema(self):
+        sender = make_sender()
+
+        self.assertAlmostEqual(
+            sender.estimated_initial_capture_latency_sec(0.0035),
+            0.0035,
+        )
+        self.assertAlmostEqual(sender.initial_capture_latency_ema_ms, 3.5)
+        sender.command_latency_ema_ms = 2.25
+        self.assertAlmostEqual(
+            sender.estimated_initial_capture_latency_sec(0.0035),
+            0.0035,
+        )
+        sender.initial_capture_latency_ema_ms = 3.75
+        self.assertAlmostEqual(
+            sender.estimated_initial_capture_latency_sec(0.0035),
+            0.00375,
+        )
+
+    def test_only_initial_commands_update_initial_latency_ema(self):
+        sender = make_sender()
+        normal = make_target(0.6)
+        initial = TargetCommand(
+            x=0.0,
+            y=0.0,
+            z=400.0,
+            enqueued_time_sec=0.0,
+            intensity_ratio=0.8,
+            is_initial_capture_command=True,
+        )
+
+        sender.estimated_initial_capture_latency_sec(0.0035)
+        sender._record_command_latency_ms(normal, 2.0)
+        self.assertAlmostEqual(sender.command_latency_ema_ms, 2.0)
+        self.assertAlmostEqual(sender.initial_capture_latency_ema_ms, 3.5)
+
+        sender._record_command_latency_ms(initial, 4.0)
+        self.assertAlmostEqual(sender.command_latency_ema_ms, 2.2)
+        self.assertAlmostEqual(sender.initial_capture_latency_ema_ms, 3.55)
+
+        sender._record_command_latency_ms(initial, 3.0)
+        self.assertAlmostEqual(sender.command_latency_ema_ms, 2.28)
+        self.assertAlmostEqual(sender.initial_capture_latency_ema_ms, 3.495)
 
     def test_existing_target_defaults_to_unweighted_stm(self):
         self.assertIsNone(make_target(0.6).focus_dwell_counts)

@@ -353,6 +353,17 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     )
                 )
 
+            def estimated_initial_capture_actuation_delay_sec() -> float:
+                return sender.estimated_initial_capture_latency_sec(
+                    float(
+                        getattr(
+                            cfg,
+                            "auto_release_initial_actuation_prediction_sec",
+                            0.0035,
+                        )
+                    )
+                )
+
             def enqueue_tracking_target(
                 target_x: float,
                 target_y: float,
@@ -363,6 +374,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 estimated_actuation_delay_override_sec: float | None = None,
                 prediction_horizon_sec: float | None = None,
                 command_mode: str | None = None,
+                is_initial_capture_command: bool = False,
             ) -> int:
                 """Queue one field command with timing metadata for the log."""
                 command_time_sec = time.perf_counter()
@@ -406,6 +418,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                         control_mode if command_mode is None else command_mode
                     ),
                     release_timestamp_ms=auto_release_timestamp_ms,
+                    is_initial_capture_command=is_initial_capture_command,
                 )
 
             controller = PredictionPIDController(cfg)
@@ -545,16 +558,10 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                 getattr(cfg, "false_release_reject_key", "x")
             ).lower()
 
-            def force_command_for_vz(
-                vz_mm_s,
-                current_intensity=None,
-                *,
-                time_to_stop_sec=None,
-            ):
+            def force_command_for_vz(vz_mm_s, current_intensity=None):
                 return capture_force_command_for_velocity(
                     cfg,
                     float(vz_mm_s),
-                    time_to_stop_sec=time_to_stop_sec,
                     current_intensity=current_intensity,
                     downward_hysteresis_mN=float(
                         getattr(
@@ -820,10 +827,13 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     )
                     return False
 
+                initial_actuation_delay_sec = (
+                    estimated_initial_capture_actuation_delay_sec()
+                )
                 prediction = predict_capture_position(
                     estimate,
                     now_sec=now_sec,
-                    actuation_delay_sec=estimated_actuation_delay_sec(),
+                    actuation_delay_sec=initial_actuation_delay_sec,
                     gravity_mm_s2=float(cfg.gravity_mm_s2),
                     apply_gravity=True,
                 )
@@ -884,12 +894,11 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                     current_intensity_ratio,
                     measurement_time_sec=estimate.measurement_time_sec,
                     estimated_actuation_delay_override_sec=max(
-                        0.0,
-                        prediction.horizon_sec
-                        - max(0.0, now_sec - estimate.measurement_time_sec),
+                        0.0, initial_actuation_delay_sec
                     ),
                     prediction_horizon_sec=prediction.horizon_sec,
                     command_mode=CAPTURE_BRAKING,
+                    is_initial_capture_command=True,
                 )
                 capture_logger.write(
                     event="release_candidate_command_enqueued",
@@ -2501,22 +2510,9 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
                                     )
                                 ),
                             )
-                            time_to_braking_deadline_sec = None
-                            if (
-                                capture_braking_plan is not None
-                                and trajectory_reference is not None
-                            ):
-                                time_to_braking_deadline_sec = max(
-                                    0.0,
-                                    capture_braking_plan.duration_sec
-                                    - trajectory_reference.elapsed_sec,
-                                )
                             force_command = force_command_for_vz(
                                 motion_estimate.vz_mm_s,
                                 current_intensity=current_intensity_ratio,
-                                time_to_stop_sec=(
-                                    time_to_braking_deadline_sec
-                                ),
                             )
                             if initial_capture_command_pending:
                                 capture_intensity_ratio = float(

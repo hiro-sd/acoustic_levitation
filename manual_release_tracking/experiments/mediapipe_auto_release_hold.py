@@ -164,10 +164,12 @@ if __name__ == "__main__":
     cfg.auto_release_min_velocity_samples = 5
     cfg.auto_release_min_velocity_span_sec = 0.020
     cfg.auto_release_max_motion_age_sec = 0.050
-    # Used only until this process has measured its first AUTD command latency.
-    # Subsequent prediction horizons use measurement age plus the runtime
-    # enqueue-to-send-completion latency estimate.
+    # Ongoing braking/hold commands use the all-command runtime latency EMA.
     cfg.auto_release_actuation_prediction_sec = 0.0075
+    # Initial capture changes both modulation and STM and is slower than a
+    # typical hold update.  Use its own EMA; 3.5 ms is the median observed in
+    # the two pilot sessions and is used only until one initial command is sent.
+    cfg.auto_release_initial_actuation_prediction_sec = 0.0035
 
     # The initial capture command no longer uses motion while the sphere is
     # held. The first separation resets a dedicated estimator, the field stays
@@ -209,10 +211,8 @@ if __name__ == "__main__":
     cfg.auto_release_brake_exit_vz_mm_s = -30.0
     cfg.auto_release_brake_exit_stable_sec = 0.015
 
-    # Convert the initial predicted Z velocity to the force needed to stop in
-    # 100 ms, then invert the 300-trial camera step-response calibration. Once
-    # the initial command is sent, the same force calculation uses the time
-    # remaining until the braking trajectory's fixed end time.
+    # At each braking update, convert the current Z velocity to the force needed
+    # to stop in 100 ms, then invert the 300-trial camera step-response model.
     # A weighted model with intensity and categorical z offset, corrected from
     # the nominal 0.50 g analysis to the measured 0.53 g mass, gives at the
     # intended zero offset F[A] = 9.94437622 A - 1.02485060 mN (239 valid fits
