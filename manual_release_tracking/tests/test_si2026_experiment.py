@@ -71,7 +71,50 @@ class SI2026ExperimentLoggerTest(unittest.TestCase):
             auto_release_gate_consecutive_estimates=3,
             si2026_success_hold_sec=5.0,
             si2026_observation_sec=10.0,
+            si2026_target_valid_trials=2,
         )
+
+    def test_target_valid_trials_counts_only_success_and_failure(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            logger = SI2026ExperimentLogger(
+                temporary_directory,
+                config=self.make_config(),
+                enabled=True,
+                session_id="target_count",
+            )
+            logger.start_trial(release_timestamp_ms=1000)
+            logger.finish_trial(status="invalid", reason="false_release")
+            self.assertEqual(logger.valid_trial_count, 0)
+            self.assertFalse(logger.target_valid_trials_reached)
+
+            logger.start_trial(release_timestamp_ms=2000)
+            logger.finish_trial(status="success", reason="held")
+            self.assertEqual(logger.valid_trial_count, 1)
+            self.assertFalse(logger.target_valid_trials_reached)
+
+            logger.start_trial(release_timestamp_ms=3000)
+            logger.finish_trial(status="failure", reason="fell")
+            self.assertEqual(logger.valid_trial_count, 2)
+            self.assertTrue(logger.target_valid_trials_reached)
+            logger.close()
+
+    def test_excluding_recent_failure_removes_it_from_valid_count(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            logger = SI2026ExperimentLogger(
+                temporary_directory,
+                config=self.make_config(),
+                enabled=True,
+                session_id="target_exclusion",
+            )
+            logger.start_trial(release_timestamp_ms=1000)
+            logger.finish_trial(status="failure", reason="false_release")
+            self.assertEqual(logger.valid_trial_count, 1)
+            excluded = logger.exclude_recent_failed_trial(
+                reason="operator_rejected",
+            )
+            self.assertIsNotNone(excluded)
+            self.assertEqual(logger.valid_trial_count, 0)
+            logger.close()
 
     def test_successful_trial_writes_timeseries_summary_and_metadata(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

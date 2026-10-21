@@ -53,6 +53,21 @@ class PredictionPIDController:
         if self.last_valid_target is None:
             self.last_valid_target = Target3D(home.x, home.y, home.z)
 
+    def reset_z_state(self, initial_target_z: float | None = None):
+        """Reset only Z estimation/PID state while preserving XY PID history."""
+        self.prev_particle_z = None
+        self.prev_particle_z_filt = None
+        self.prev_z_meas_time = None
+        self.prev_vz = 0.0
+        self.integral_z = 0.0
+        self.prev_z_integral_time = None
+        if initial_target_z is not None and self.last_valid_target is not None:
+            self.last_valid_target = Target3D(
+                self.last_valid_target.x,
+                self.last_valid_target.y,
+                float(initial_target_z),
+            )
+
     def update(
         self,
         meas: Measurement3D,

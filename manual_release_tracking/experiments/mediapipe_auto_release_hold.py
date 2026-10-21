@@ -190,21 +190,16 @@ if __name__ == "__main__":
     cfg.auto_release_gate_consecutive_estimates = 3
     cfg.auto_release_gate_timeout_sec = 0.120
 
-    # Build the existing constant-deceleration Z reference after the first
-    # field is sent. Keep at least 120 ms of CAPTURE_ALIGN before SETTLE, while
-    # Z may extend longer when force/workspace constraints require it.
+    # Build the constant-deceleration Z reference after the exact initial field
+    # command is confirmed sent. Braking transitions directly to LOCAL_HOLD.
     cfg.auto_release_nominal_stop_time_sec = 0.120
     cfg.auto_release_min_stop_time_sec = 0.050
     cfg.auto_release_minimum_alignment_time_sec = 0.120
 
-    # The first multi-frame predicted XY position is a fixed reference. Once
-    # the first field is confirmed sent, use a dedicated PD controller around
-    # that anchor; no integral term is used during ALIGN or SETTLE.  Prediction
-    # time is computed from each stereo measurement timestamp and the measured
-    # AUTD command latency, instead of using a fixed 10 ms value.
-    cfg.auto_release_capture_xy_kp = 0.30
-    cfg.auto_release_capture_xy_kd = 0.05
-    # The measured acoustic influence range is about 20 mm. The final PD
+    # The first multi-frame predicted XY position is the reference. After the
+    # initial command is sent, braking XY uses the same timestamp-aware PID as
+    # LOCAL_HOLD; only Z is overridden by the braking trajectory.
+    # The measured acoustic influence range is about 20 mm, so the final
     # command is conservatively limited to 15 mm from the measured sphere.
     cfg.auto_release_xy_capture_radius_mm = 15.0
     cfg.auto_release_z_workspace_margin_mm = 10.0
@@ -231,27 +226,6 @@ if __name__ == "__main__":
     cfg.auto_release_upward_vz_mm_s = 20.0
     cfg.auto_release_upward_intensity_ratio = 0.5
     cfg.auto_release_max_intensity_ratio = 1.0
-    # CAPTURE_SETTLE uses the same force command. The upward safety latch is
-    # retained so an upward-moving sphere immediately receives intensity 0.5.
-    cfg.auto_release_settle_normal_intensity_ratio = 0.6
-    cfg.auto_release_settle_upward_intensity_ratio = 0.5
-    cfg.auto_release_settle_upward_enter_vz_mm_s = 60.0
-    cfg.auto_release_settle_upward_exit_vz_mm_s = 20.0
-
-    cfg.auto_release_local_hold_vz_abs_mm_s = 60.0
-    cfg.auto_release_local_hold_vxy_max_mm_s = 60.0
-    cfg.auto_release_local_hold_xy_distance_max_mm = 15.0
-    cfg.auto_release_local_hold_z_error_max_mm = 10.0
-    cfg.auto_release_local_hold_stable_sec = 0.025
-    # At an edge of the AUTD workspace the sphere can remain captured while
-    # vibration prevents the strict LOCAL_HOLD conditions from becoming true.
-    # After 10 s of continuous, bounded SETTLE, start the speed-limited return
-    # directly from the current filtered sphere position.
-    cfg.auto_release_settle_return_timeout_sec = 10.0
-    cfg.auto_release_settle_return_max_abs_vz_mm_s = 200.0
-    cfg.auto_release_settle_return_max_vxy_mm_s = 200.0
-    cfg.auto_release_settle_return_max_target_distance_mm = 15.0
-    cfg.auto_release_settle_return_z_workspace_margin_mm = 10.0
     # Hold at the released position first, then move the PID reference back to
     # AUTD center / z=400 using the existing speed-limited return controller.
     cfg.auto_release_local_hold_before_return_sec = 3.0
@@ -261,8 +235,8 @@ if __name__ == "__main__":
     cfg.auto_release_min_return_from_release_sec = 10.0
     cfg.return_home_speed_xy_mm_s = 20.0
     cfg.return_home_speed_z_mm_s = 15.0
-    # Loss of stereo tracking still silences the field. The 1 s capture limit
-    # only forces CAPTURE_ALIGN -> CAPTURE_SETTLE; it no longer stops output.
+    # Loss of stereo tracking still silences the field. The 1 s braking limit
+    # transitions directly to LOCAL_HOLD after release confirmation.
     cfg.auto_release_capture_measurement_timeout_sec = 0.100
     cfg.auto_release_capture_timeout_sec = 1.0
     cfg.auto_release_capture_log_path = (
@@ -280,6 +254,9 @@ if __name__ == "__main__":
     # script without arguments retains the previous capture timing.
     cfg.si2026_logging_enabled = not args.no_paper_log
     cfg.si2026_data_directory = args.paper_data_dir
+    cfg.autd_update_log_path = str(
+        Path(args.paper_data_dir) / "autd_update_telemetry.csv"
+    )
     cfg.si2026_condition_id = args.condition_id
     cfg.si2026_planned_release_x_mm = args.release_x_mm
     cfg.si2026_planned_release_y_mm = args.release_y_mm

@@ -1271,6 +1271,8 @@ def plot_control_mechanism_validation(
     axes[2].set_ylabel("Intensity ratio")
 
     mode_order = [
+        "CAPTURE_BRAKING",
+        # Retained so the same analysis can still render historical sessions.
         "CAPTURE_ALIGN",
         "CAPTURE_SETTLE",
         "LOCAL_HOLD",

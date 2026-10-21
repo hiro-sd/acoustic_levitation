@@ -11,6 +11,10 @@ import numpy as np
 from tracking.core.prediction_timing import prediction_timing_from_timestamps
 
 
+# Active controller state: free-fall detection transitions directly to braking,
+# then to LOCAL_HOLD.  The legacy names remain only so older CSVs/tests can be
+# read without rewriting historical data.
+CAPTURE_BRAKING = "CAPTURE_BRAKING"
 CAPTURE_ALIGN = "CAPTURE_ALIGN"
 CAPTURE_SETTLE = "CAPTURE_SETTLE"
 SETTLE_INTENSITY_NORMAL = "NORMAL"

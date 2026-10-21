@@ -285,6 +285,8 @@ class SI2026ExperimentLogger:
             f"{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
         )
         self._trial_counter = 0
+        self._valid_trial_count = 0
+        self._excluded_trial_ids: set[str] = set()
         self._timeseries_file = None
         self._timeseries_writer = None
         self._active: dict[str, Any] | None = None
@@ -315,6 +317,24 @@ class SI2026ExperimentLogger:
     @property
     def trial_id(self) -> str | None:
         return None if not self.active else str(self._active["trial_id"])
+
+    @property
+    def valid_trial_count(self) -> int:
+        """Number of completed success/failure trials in this process."""
+        return int(self._valid_trial_count)
+
+    @property
+    def target_valid_trials(self) -> int | None:
+        value = getattr(self.config, "si2026_target_valid_trials", None)
+        if value is None:
+            return None
+        value = int(value)
+        return value if value > 0 else None
+
+    @property
+    def target_valid_trials_reached(self) -> bool:
+        target = self.target_valid_trials
+        return bool(target is not None and self.valid_trial_count >= target)
 
     def _ensure_header(self, path: Path, header: list[str]):
         if path.exists() and path.stat().st_size > 0:
@@ -585,6 +605,12 @@ class SI2026ExperimentLogger:
             writer = csv.DictWriter(file, fieldnames=["trial_id", "reason"])
             writer.writeheader()
             writer.writerows(rows)
+        if (
+            trial_id not in self._excluded_trial_ids
+            and bool(completed.get("counted_valid", False))
+        ):
+            self._valid_trial_count = max(0, self._valid_trial_count - 1)
+            self._excluded_trial_ids.add(trial_id)
         return trial_id
 
     def record_sample(
@@ -1110,7 +1136,10 @@ class SI2026ExperimentLogger:
             "status": status,
             "reason": str(reason),
             "event_time_sec": now_sec,
+            "counted_valid": status in {"success", "failure"},
         }
+        if status in {"success", "failure"}:
+            self._valid_trial_count += 1
         self._active = None
 
     def close(self):

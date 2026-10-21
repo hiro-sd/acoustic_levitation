@@ -1,10 +1,20 @@
 import unittest
 import threading
+import csv
+import tempfile
+from collections import deque
+from pathlib import Path
 from types import SimpleNamespace
 
 from autd3.commands import Modulation
 
-from core.autd_sender import AutdSender, TargetCommand
+from core.autd_sender import (
+    AutdSender,
+    AUTD_UPDATE_LOG_HEADER,
+    SentCommandTelemetry,
+    TargetCommand,
+    quantize_intensity_ratio,
+)
 
 
 class FakeAutd:
@@ -39,6 +49,71 @@ def make_target(intensity_ratio):
 
 
 class AutdSenderIntensityIntegrationTests(unittest.TestCase):
+    def test_sent_update_log_contains_timing_and_quantized_intensity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "updates.csv"
+            sender = make_sender()
+            sender._update_session_id = "session"
+            sender._update_log_file = path.open("w", newline="", encoding="utf-8")
+            sender._update_log_writer = csv.writer(sender._update_log_file)
+            sender._update_log_writer.writerow(AUTD_UPDATE_LOG_HEADER)
+            sender._update_log_rows_since_flush = 0
+            sender._update_log_last_flush_sec = 0.0
+            target = TargetCommand(
+                x=1.0,
+                y=2.0,
+                z=3.0,
+                enqueued_time_sec=10.000,
+                intensity_ratio=0.6,
+                measurement_time_sec=9.990,
+                measurement_age_sec=0.010,
+                estimated_actuation_delay_sec=0.003,
+                prediction_horizon_sec=0.013,
+                control_mode="CAPTURE_BRAKING",
+                release_timestamp_ms=9990,
+            )
+            telemetry = SentCommandTelemetry(
+                sequence=7,
+                dequeued_time_sec=10.001,
+                send_started_time_sec=10.002,
+                sent_time_sec=10.004,
+                target=target,
+                modulation_byte=153,
+                quantized_intensity_ratio=0.6,
+            )
+            sender._write_update_telemetry(telemetry)
+            sender._update_log_file.close()
+
+            with path.open(newline="", encoding="utf-8") as file:
+                row = next(csv.DictReader(file))
+            self.assertEqual(row["command_sequence"], "7")
+            self.assertEqual(row["control_mode"], "CAPTURE_BRAKING")
+            self.assertEqual(row["modulation_byte"], "153")
+            self.assertAlmostEqual(float(row["measurement_age_ms"]), 10.0)
+            self.assertAlmostEqual(float(row["prediction_horizon_ms"]), 13.0)
+            self.assertAlmostEqual(
+                float(row["prediction_horizon_shortfall_ms"]),
+                1.0,
+            )
+
+    def test_intensity_quantization_matches_8_bit_modulation(self):
+        modulation_byte, quantized = quantize_intensity_ratio(0.6)
+        self.assertEqual(modulation_byte, 153)
+        self.assertAlmostEqual(quantized, 0.6)
+
+    def test_exact_sent_lookup_does_not_accept_a_later_sequence(self):
+        sender = make_sender()
+        later = SentCommandTelemetry(
+            sequence=11,
+            dequeued_time_sec=1.0,
+            send_started_time_sec=1.1,
+            sent_time_sec=1.2,
+            target=make_target(0.7),
+        )
+        sender._sent_history = deque([later], maxlen=256)
+        self.assertIsNone(sender.get_sent_telemetry(10))
+        self.assertIs(sender.get_sent_telemetry(11), later)
+
     def test_command_latency_uses_fallback_then_runtime_ema(self):
         sender = make_sender()
 

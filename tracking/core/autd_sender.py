@@ -1,7 +1,9 @@
+import csv
 import time
 import threading
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -127,8 +129,14 @@ def make_circular_output_mask(
 def make_constant_modulation(intensity_ratio: float) -> Modulation:
     ratio = float(np.clip(intensity_ratio, 0.0, 1.0))
     buffer = modulation_buffer()
-    constant(int(0xFF * ratio), buffer)
+    constant(quantize_intensity_ratio(ratio)[0], buffer)
     return Modulation(SamplingConfig.FREQ_4K, buffer)
+
+
+def quantize_intensity_ratio(intensity_ratio: float) -> tuple[int, float]:
+    """Return the exact 8-bit modulation command and its normalized value."""
+    modulation_byte = int(0xFF * float(np.clip(intensity_ratio, 0.0, 1.0)))
+    return modulation_byte, modulation_byte / 255.0
 
 
 @dataclass
@@ -142,6 +150,12 @@ class TargetCommand:
     radius: float | None = None
     intensity_ratio: float | None = None
     focus_dwell_counts: tuple[int, ...] | None = None
+    measurement_time_sec: float | None = None
+    measurement_age_sec: float | None = None
+    estimated_actuation_delay_sec: float | None = None
+    prediction_horizon_sec: float | None = None
+    control_mode: str = ""
+    release_timestamp_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -151,6 +165,34 @@ class SentCommandTelemetry:
     send_started_time_sec: float
     sent_time_sec: float
     target: TargetCommand
+    modulation_byte: int | None = None
+    quantized_intensity_ratio: float | None = None
+
+
+AUTD_UPDATE_LOG_HEADER = [
+    "session_id",
+    "wall_time_sec",
+    "command_sequence",
+    "control_mode",
+    "release_timestamp_ms",
+    "enqueued_time_sec",
+    "dequeued_time_sec",
+    "send_started_time_sec",
+    "send_completed_time_sec",
+    "enqueue_to_send_completed_ms",
+    "measurement_time_sec",
+    "measurement_age_ms",
+    "measurement_age_at_send_completed_ms",
+    "estimated_actuation_delay_ms",
+    "prediction_horizon_ms",
+    "prediction_horizon_shortfall_ms",
+    "target_x_mm",
+    "target_y_mm",
+    "target_z_mm",
+    "requested_intensity_ratio",
+    "modulation_byte",
+    "quantized_intensity_ratio",
+]
 
 
 class AutdSender:
@@ -184,17 +226,49 @@ class AutdSender:
         self._last_mask_center_y = None
 
         self._last_intensity_ratio = None
+        self._last_modulation_byte: int | None = None
+        self._update_log_file = None
+        self._update_log_writer = None
+        self._update_log_rows_since_flush = 0
+        self._update_log_last_flush_sec = time.perf_counter()
+        self._update_session_id = str(
+            getattr(cfg, "autd_update_session_id", "")
+        )
+        update_log_path = str(getattr(cfg, "autd_update_log_path", "")).strip()
+        if update_log_path:
+            path = Path(update_log_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            exists = path.exists() and path.stat().st_size > 0
+            if exists:
+                with path.open(newline="", encoding="utf-8") as existing_file:
+                    existing_header = next(csv.reader(existing_file), [])
+                if existing_header != AUTD_UPDATE_LOG_HEADER:
+                    raise RuntimeError(
+                        f"CSV schema mismatch: {path}. Use a new data directory "
+                        "or move the old AUTD update telemetry file."
+                    )
+            self._update_log_file = path.open("a", newline="", encoding="utf-8")
+            self._update_log_writer = csv.writer(self._update_log_file)
+            if not exists:
+                self._update_log_writer.writerow(AUTD_UPDATE_LOG_HEADER)
+                self._update_log_file.flush()
 
     def set_target(
-    self,
-    x: float,
-    y: float,
-    z: float,
-    mask_center_x: float | None = None,
-    mask_center_y: float | None = None,
-    radius: float | None = None,
-    intensity_ratio: float | None = None,
-    focus_dwell_counts: tuple[int, ...] | None = None,
+        self,
+        x: float,
+        y: float,
+        z: float,
+        mask_center_x: float | None = None,
+        mask_center_y: float | None = None,
+        radius: float | None = None,
+        intensity_ratio: float | None = None,
+        focus_dwell_counts: tuple[int, ...] | None = None,
+        measurement_time_sec: float | None = None,
+        measurement_age_sec: float | None = None,
+        estimated_actuation_delay_sec: float | None = None,
+        prediction_horizon_sec: float | None = None,
+        control_mode: str = "",
+        release_timestamp_ms: int | None = None,
     ):
         """
         メインスレッドから呼ぶ。
@@ -215,6 +289,26 @@ class AutdSender:
                     if focus_dwell_counts is None
                     else tuple(int(value) for value in focus_dwell_counts)
                 ),
+                measurement_time_sec=(
+                    None if measurement_time_sec is None else float(measurement_time_sec)
+                ),
+                measurement_age_sec=(
+                    None if measurement_age_sec is None else float(measurement_age_sec)
+                ),
+                estimated_actuation_delay_sec=(
+                    None
+                    if estimated_actuation_delay_sec is None
+                    else float(estimated_actuation_delay_sec)
+                ),
+                prediction_horizon_sec=(
+                    None
+                    if prediction_horizon_sec is None
+                    else float(prediction_horizon_sec)
+                ),
+                control_mode=str(control_mode),
+                release_timestamp_ms=(
+                    None if release_timestamp_ms is None else int(release_timestamp_ms)
+                ),
             )
             self._seq += 1
             return self._seq
@@ -232,6 +326,10 @@ class AutdSender:
 
         if self._thread is not None:
             self._thread.join(timeout=timeout)
+        if self._update_log_file is not None:
+            self._update_log_file.close()
+            self._update_log_file = None
+            self._update_log_writer = None
 
     def _get_latest_target(self):
         with self._lock:
@@ -250,6 +348,75 @@ class AutdSender:
                 if telemetry.sequence >= int(sequence):
                     return telemetry
         return None
+
+    def get_sent_telemetry(self, sequence: int) -> SentCommandTelemetry | None:
+        """Return telemetry only when the exact queued command was emitted."""
+        with self._lock:
+            for telemetry in self._sent_history:
+                if telemetry.sequence == int(sequence):
+                    return telemetry
+        return None
+
+    def _write_update_telemetry(self, telemetry: SentCommandTelemetry):
+        if self._update_log_writer is None:
+            return
+        target = telemetry.target
+
+        def value_or_empty(value, scale=1.0):
+            return "" if value is None else float(value) * float(scale)
+
+        self._update_log_writer.writerow(
+            [
+                self._update_session_id,
+                time.time(),
+                telemetry.sequence,
+                target.control_mode,
+                "" if target.release_timestamp_ms is None else target.release_timestamp_ms,
+                target.enqueued_time_sec,
+                telemetry.dequeued_time_sec,
+                telemetry.send_started_time_sec,
+                telemetry.sent_time_sec,
+                (telemetry.sent_time_sec - target.enqueued_time_sec) * 1000.0,
+                value_or_empty(target.measurement_time_sec),
+                value_or_empty(target.measurement_age_sec, 1000.0),
+                (
+                    ""
+                    if target.measurement_time_sec is None
+                    else (
+                        telemetry.sent_time_sec - target.measurement_time_sec
+                    )
+                    * 1000.0
+                ),
+                value_or_empty(target.estimated_actuation_delay_sec, 1000.0),
+                value_or_empty(target.prediction_horizon_sec, 1000.0),
+                (
+                    ""
+                    if target.measurement_time_sec is None
+                    or target.prediction_horizon_sec is None
+                    else (
+                        telemetry.sent_time_sec
+                        - target.measurement_time_sec
+                        - target.prediction_horizon_sec
+                    )
+                    * 1000.0
+                ),
+                target.x,
+                target.y,
+                target.z,
+                value_or_empty(target.intensity_ratio),
+                "" if telemetry.modulation_byte is None else telemetry.modulation_byte,
+                value_or_empty(telemetry.quantized_intensity_ratio),
+            ]
+        )
+        self._update_log_rows_since_flush += 1
+        now_sec = time.perf_counter()
+        if (
+            self._update_log_rows_since_flush >= 100
+            or now_sec - self._update_log_last_flush_sec >= 1.0
+        ):
+            self._update_log_file.flush()
+            self._update_log_rows_since_flush = 0
+            self._update_log_last_flush_sec = now_sec
 
     def estimated_command_latency_sec(self, fallback_sec: float) -> float:
         """Estimate enqueue-to-send-completion latency from this run.
@@ -333,6 +500,9 @@ class AutdSender:
         self.autd.send(datagram)
         if intensity_ratio is not None:
             self._last_intensity_ratio = float(intensity_ratio)
+            self._last_modulation_byte = quantize_intensity_ratio(
+                intensity_ratio
+            )[0]
 
     def _loop(self):
         print("[THREAD] AUTD Control Thread Started.")
@@ -442,9 +612,29 @@ class AutdSender:
                         send_started_time_sec=float(send_started_time_sec),
                         sent_time_sec=float(t2),
                         target=target,
+                        modulation_byte=self._last_modulation_byte,
+                        quantized_intensity_ratio=(
+                            None
+                            if self._last_modulation_byte is None
+                            else self._last_modulation_byte / 255.0
+                        ),
                     )
                     self._last_sent = telemetry
                     self._sent_history.append(telemetry)
+                # The physical send has completed. Mark the sequence before
+                # file I/O so a telemetry-disk failure can never resend it.
+                last_seq = seq
+                try:
+                    self._write_update_telemetry(telemetry)
+                except Exception as log_error:
+                    print(f"[AUTD Telemetry Warning] {log_error}")
+                    if self._update_log_file is not None:
+                        try:
+                            self._update_log_file.close()
+                        except Exception:
+                            pass
+                    self._update_log_file = None
+                    self._update_log_writer = None
 
                 build_ms = (t1 - t0) * 1000.0
                 send_ms = (t2 - t1) * 1000.0
@@ -463,7 +653,6 @@ class AutdSender:
                             + 0.1 * command_latency_ms
                         )
 
-                last_seq = seq
                 fps_frame_count += 1
 
             except Exception as e:
@@ -502,6 +691,13 @@ def set_tracking_target(
     home: HomePosition,
     radius: float | None = None,
     intensity_ratio: float | None = None,
+    *,
+    measurement_time_sec: float | None = None,
+    measurement_age_sec: float | None = None,
+    estimated_actuation_delay_sec: float | None = None,
+    prediction_horizon_sec: float | None = None,
+    control_mode: str = "",
+    release_timestamp_ms: int | None = None,
 ):
     """Send a target while keeping OutputMask-specific arguments out of app.py."""
     if cfg.use_output_mask:
@@ -513,6 +709,12 @@ def set_tracking_target(
             home.y,
             radius=radius,
             intensity_ratio=intensity_ratio,
+            measurement_time_sec=measurement_time_sec,
+            measurement_age_sec=measurement_age_sec,
+            estimated_actuation_delay_sec=estimated_actuation_delay_sec,
+            prediction_horizon_sec=prediction_horizon_sec,
+            control_mode=control_mode,
+            release_timestamp_ms=release_timestamp_ms,
         )
     else:
         return sender.set_target(
@@ -521,4 +723,10 @@ def set_tracking_target(
             target_z,
             radius=radius,
             intensity_ratio=intensity_ratio,
+            measurement_time_sec=measurement_time_sec,
+            measurement_age_sec=measurement_age_sec,
+            estimated_actuation_delay_sec=estimated_actuation_delay_sec,
+            prediction_horizon_sec=prediction_horizon_sec,
+            control_mode=control_mode,
+            release_timestamp_ms=release_timestamp_ms,
         )

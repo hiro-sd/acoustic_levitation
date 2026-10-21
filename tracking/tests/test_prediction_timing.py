@@ -2,11 +2,27 @@ import unittest
 
 from tracking.core.config import AppConfig
 from tracking.core.controller import PredictionPIDController
-from tracking.core.models import HomePosition, Measurement3D
+from tracking.core.models import HomePosition, Measurement3D, Target3D
 from tracking.core.prediction_timing import prediction_timing_from_timestamps
 
 
 class PredictionTimingTests(unittest.TestCase):
+    def test_reset_z_state_preserves_xy_pid_history(self):
+        controller = PredictionPIDController(AppConfig())
+        controller.last_valid_target = Target3D(12.0, 34.0, 390.0)
+        controller.integral_x = 1.5
+        controller.integral_y = -2.5
+        controller.integral_z = 9.0
+        controller.prev_particle_z = 388.0
+
+        controller.reset_z_state(400.0)
+
+        self.assertEqual(controller.integral_x, 1.5)
+        self.assertEqual(controller.integral_y, -2.5)
+        self.assertEqual(controller.integral_z, 0.0)
+        self.assertIsNone(controller.prev_particle_z)
+        self.assertEqual(controller.last_valid_target, Target3D(12.0, 34.0, 400.0))
+
     def test_horizon_adds_measurement_age_and_measured_actuation_delay(self):
         timing = prediction_timing_from_timestamps(
             measurement_time_sec=10.000,
