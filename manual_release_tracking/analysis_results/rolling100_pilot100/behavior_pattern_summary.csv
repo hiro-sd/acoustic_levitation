@@ -1,0 +1,5 @@
+behavior_pattern,count,fraction
+Held at least 5 s,54,0.54
+Left workspace,28,0.28
+Regrasp after release,16,0.16
+Tracking/estimation loss,2,0.02

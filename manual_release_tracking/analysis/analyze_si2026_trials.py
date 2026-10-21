@@ -861,6 +861,160 @@ def plot_successful_trials_mean_response(
     )
 
 
+def plot_successful_z_trajectories(
+    trials: pd.DataFrame,
+    timeseries: pd.DataFrame,
+    output_directory: Path,
+):
+    """Create separate, paper-ready z-position and z-velocity figures."""
+    successful = eligible_trials(trials)
+    successful = successful[successful["status"] == "success"].copy()
+    position_path = output_directory / "successful_z_position_trajectory"
+    velocity_path = output_directory / "successful_z_velocity_trajectory"
+    if successful.empty:
+        _placeholder_figure(position_path, "No successful trials are available")
+        _placeholder_figure(velocity_path, "No successful trials are available")
+        return
+
+    time_grid_ms = np.arange(0.0, 1000.0 + 2.0, 2.0)
+    z_rows = []
+    vz_rows = []
+    for _, trial in successful.iterrows():
+        samples = timeseries[timeseries["trial_id"] == trial["trial_id"]].copy()
+        samples = samples.sort_values("elapsed_from_release_ms")
+        samples = samples[samples["elapsed_from_release_ms"] >= 0.0]
+        z_rows.append(
+            _resample_success_series(
+                samples,
+                time_grid_ms,
+                "filtered_z_mm",
+                initial_value=trial.get("release_z_mm"),
+            )
+        )
+        vz_rows.append(
+            _resample_success_series(samples, time_grid_ms, "vz_mm_s")
+        )
+
+    z_matrix = np.asarray(z_rows, dtype=float)
+    vz_matrix = np.asarray(vz_rows, dtype=float)
+    field_onset_ms = float(successful["release_to_field_ms"].median())
+    hold_onset_ms = float(
+        (
+            successful["release_to_field_ms"]
+            + successful["braking_end_from_field_ms"]
+        ).median()
+    )
+
+    def summarize(matrix: np.ndarray):
+        count = np.sum(np.isfinite(matrix), axis=0)
+        median = np.full(matrix.shape[1], np.nan, dtype=float)
+        q1 = np.full(matrix.shape[1], np.nan, dtype=float)
+        q3 = np.full(matrix.shape[1], np.nan, dtype=float)
+        for sample_index in np.flatnonzero(count > 0):
+            values = matrix[:, sample_index]
+            values = values[np.isfinite(values)]
+            median[sample_index] = np.median(values)
+            q1[sample_index], q3[sample_index] = np.percentile(
+                values,
+                [25.0, 75.0],
+            )
+        return count, median, q1, q3
+
+    z_count, z_median, z_q1, z_q3 = summarize(z_matrix)
+    vz_count, vz_median, vz_q1, vz_q3 = summarize(vz_matrix)
+    time_sec = time_grid_ms / 1000.0
+
+    def draw(
+        matrix: np.ndarray,
+        median: np.ndarray,
+        q1: np.ndarray,
+        q3: np.ndarray,
+        *,
+        color: str,
+        ylabel: str,
+        output_path: Path,
+        zero_line: bool = False,
+    ):
+        figure, axis = plt.subplots(figsize=(8.0, 4.8), constrained_layout=True)
+        for values in matrix:
+            axis.plot(time_sec, values, color="#7f7f7f", alpha=0.12, linewidth=0.55)
+        axis.fill_between(
+            time_sec,
+            q1,
+            q3,
+            color=color,
+            alpha=0.22,
+            linewidth=0.0,
+            label="Interquartile range",
+        )
+        axis.plot(time_sec, median, color=color, linewidth=2.5, label="Median")
+        axis.axvline(
+            field_onset_ms / 1000.0,
+            color="#e66101",
+            linestyle="--",
+            linewidth=1.5,
+            label=f"Field onset (median {field_onset_ms:.1f} ms)",
+        )
+        axis.axvline(
+            hold_onset_ms / 1000.0,
+            color="#1b9e77",
+            linestyle=":",
+            linewidth=1.8,
+            label=f"Hold onset (median {hold_onset_ms:.1f} ms)",
+        )
+        if zero_line:
+            axis.axhline(0.0, color="black", linewidth=0.8, alpha=0.7)
+        axis.set_xlim(0.0, 1.0)
+        axis.set_xlabel("Time from release [s]", fontsize=15)
+        axis.set_ylabel(ylabel, fontsize=15)
+        axis.tick_params(axis="both", labelsize=13)
+        axis.grid(True, alpha=0.22)
+        axis.plot(
+            [],
+            [],
+            color="#7f7f7f",
+            alpha=0.45,
+            linewidth=0.8,
+            label=f"Individual successful trials ($n={len(successful)}$)",
+        )
+        axis.legend(loc="best", fontsize=10)
+        _save_figure(figure, output_path)
+
+    draw(
+        z_matrix,
+        z_median,
+        z_q1,
+        z_q3,
+        color="#2166ac",
+        ylabel="Measured $z$ position [mm]",
+        output_path=position_path,
+    )
+    draw(
+        vz_matrix,
+        vz_median,
+        vz_q1,
+        vz_q3,
+        color="#d73027",
+        ylabel="Measured $z$ velocity [mm/s]",
+        output_path=velocity_path,
+        zero_line=True,
+    )
+
+    pd.DataFrame(
+        {
+            "time_from_release_s": time_sec,
+            "z_median_mm": z_median,
+            "z_q1_mm": z_q1,
+            "z_q3_mm": z_q3,
+            "z_n": z_count,
+            "vz_median_mm_s": vz_median,
+            "vz_q1_mm_s": vz_q1,
+            "vz_q3_mm_s": vz_q3,
+            "vz_n": vz_count,
+        }
+    ).to_csv(output_directory / "successful_z_trajectory_summary.csv", index=False)
+
+
 def plot_failed_trials_mean_response(
     trials: pd.DataFrame,
     timeseries: pd.DataFrame,
@@ -1761,6 +1915,9 @@ def plot_capture_success_vs_vxy(
             bins["success_ci95_high"].to_numpy(dtype=float) - rates,
         ]
     )
+    # Numerical round-off in a degenerate bin can put a bound a few ulps on
+    # the wrong side of the point estimate; Matplotlib rejects negative yerr.
+    errors = np.maximum(errors, 0.0)
     trials_per_bin = sorted(set(int(value) for value in bins["trials"]))
     if len(trials_per_bin) == 1:
         bin_size_label = f"n={trials_per_bin[0]}/bin; "
@@ -2161,6 +2318,11 @@ def build_all_outputs(
         representative,
     )
     plot_successful_trials_mean_response(
+        enriched,
+        timeseries,
+        output_directory,
+    )
+    plot_successful_z_trajectories(
         enriched,
         timeseries,
         output_directory,
