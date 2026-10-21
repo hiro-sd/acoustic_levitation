@@ -197,6 +197,7 @@ manual_release_tracking/si2026_data/
 manual_release_tracking/si2026_figures/
 manual_release_tracking/si2026_data_center50/
 manual_release_tracking/si2026_figures_center50/
+manual_release_tracking/new_100_ms_pilot100/
 
 # Runtime logs from the optical acoustic-force step-response experiment
 tracking/acoustic_force_data/

@@ -5,7 +5,7 @@
 Windows PowerShell で、捕捉実験とは別のターミナルから実行します。
 
 ```powershell
-.\venv_autd3\Scripts\python.exe manual_release_tracking\demo_open_campus\moon_fragment_mission.py --fullscreen
+.\venv_autd3\Scripts\python.exe manual_release_tracking\demo_open_campus\moon_fragment_mission.py
 ```
 
 操作は次の通りです。
