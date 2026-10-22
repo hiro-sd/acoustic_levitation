@@ -15,6 +15,10 @@ GOLD = "#ffd166"
 WHITE = "#f7fbff"
 GREEN = "#66f2a4"
 
+STORY_DISCOVERY_SEC = 5.0
+STORY_LOADING_SEC = 5.0
+STORY_ACCIDENT_SEC = 5.0
+
 
 class CaptureEventTailer:
     """Read only newly appended capture-event rows from a CSV file."""
@@ -103,6 +107,8 @@ class MoonFragmentMission:
         self.root.bind("<Key-s>", lambda _event: self._set_state("SUCCESS"))
         self.root.bind("<Key-f>", lambda _event: self._fail("operator_test"))
         self.root.bind("<Key-r>", lambda _event: self._set_state("READY"))
+        self.root.bind("<Key-0>", lambda _event: self._set_state("INTRO"))
+        self.root.bind("<KP_0>", lambda _event: self._set_state("INTRO"))
         self.root.bind("<Escape>", lambda _event: self.root.destroy())
         self.root.after(33, self._tick)
 
@@ -165,11 +171,20 @@ class MoonFragmentMission:
     def _tick(self):
         now = time.monotonic()
         self._consume_capture_events()
-        if self.state == "STORY_DISCOVERY" and now - self.state_started_at >= 2.6:
+        if (
+            self.state == "STORY_DISCOVERY"
+            and now - self.state_started_at >= STORY_DISCOVERY_SEC
+        ):
             self._set_state("STORY_LOADING")
-        elif self.state == "STORY_LOADING" and now - self.state_started_at >= 2.8:
+        elif (
+            self.state == "STORY_LOADING"
+            and now - self.state_started_at >= STORY_LOADING_SEC
+        ):
             self._set_state("STORY_ACCIDENT")
-        elif self.state == "STORY_ACCIDENT" and now - self.state_started_at >= 3.0:
+        elif (
+            self.state == "STORY_ACCIDENT"
+            and now - self.state_started_at >= STORY_ACCIDENT_SEC
+        ):
             self._set_state("READY")
         if self.state == "COUNTDOWN" and now - self.state_started_at >= 3.6:
             self._set_state("WAIT_RELEASE")
@@ -343,7 +358,8 @@ class MoonFragmentMission:
 
         elif self.state == "STORY_DISCOVERY":
             self._draw_moon_surface(width, height)
-            robot_x = width * 0.24 + min(width * 0.14, elapsed * width * 0.055)
+            discovery_progress = min(1.0, elapsed / (STORY_DISCOVERY_SEC * 0.8))
+            robot_x = width * (0.24 + 0.14 * discovery_progress)
             self._draw_robot(robot_x, height * 0.67, 0.72)
             glow = 42 + 7 * math.sin(now * 5.0)
             self.canvas.create_oval(
@@ -362,7 +378,7 @@ class MoonFragmentMission:
         elif self.state == "STORY_LOADING":
             self._draw_moon_surface(width, height)
             self._draw_spaceship(width * 0.73, height * 0.39, 0.85)
-            progress = min(1.0, elapsed / 2.2)
+            progress = min(1.0, elapsed / (STORY_LOADING_SEC * 0.8))
             fragment_x = width * (0.38 + 0.31 * progress)
             fragment_y = height * (0.69 - 0.28 * progress)
             self._draw_fragment(fragment_x, fragment_y, 32)
@@ -376,7 +392,8 @@ class MoonFragmentMission:
             ship_x = width * 0.57 + shake
             ship_y = height * 0.39 + math.sin(now * 17.0) * 5
             self._draw_spaceship(ship_x, ship_y, 0.92, flame=True)
-            fall = min(height * 0.27, elapsed * height * 0.09)
+            accident_progress = min(1.0, elapsed / (STORY_ACCIDENT_SEC * 0.8))
+            fall = height * 0.27 * accident_progress
             self._draw_fragment(ship_x + 55, ship_y + 68 + fall, 35)
             if int(elapsed * 4) % 2 == 0:
                 self._text(width * 0.5, height * 0.12, "！緊急事態！", size=44, color="#ff7891")
