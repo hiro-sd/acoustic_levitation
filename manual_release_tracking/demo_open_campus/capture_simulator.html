@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>超音波球体捕捉シミュレータ</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --panel: #11263a;
+      --panel-2: #0d1e30;
+      --border: #25465f;
+      --text: #eef7ff;
+      --muted: #8ca8bc;
+      --cyan: #66d9ef;
+      --green: #5ce1a7;
+      --gold: #ffd166;
+      --red: #ff7085;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at 70% -10%, #183957 0, var(--bg) 46%);
+      color: var(--text);
+      font-family: "Yu Gothic UI", "Noto Sans JP", system-ui, sans-serif;
+    }
+    main { width: min(1500px, 100%); margin: 0 auto; padding: 16px; }
+    header { display: flex; gap: 18px; align-items: end; justify-content: space-between; margin-bottom: 12px; }
+    .eyebrow { color: var(--cyan); font-size: 11px; letter-spacing: .16em; }
+    h1 { margin: 2px 0 0; font-size: clamp(22px, 3vw, 34px); }
+    .status { color: var(--green); font-size: 12px; letter-spacing: .08em; }
+    .controls {
+      display: grid;
+      grid-template-columns: minmax(250px, 1.8fr) minmax(180px, 1fr) auto auto auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 10px;
+    }
+    button, select, input::file-selector-button {
+      color: var(--text);
+      background: #17344d;
+      border: 1px solid #356080;
+      border-radius: 7px;
+      padding: 8px 11px;
+      font: inherit;
+    }
+    button { cursor: pointer; min-width: 82px; }
+    button:hover, input::file-selector-button:hover { background: #1d4565; }
+    input[type="file"] { width: 100%; color: var(--muted); }
+    .views { display: grid; grid-template-columns: 1.55fr 1fr; gap: 10px; }
+    .panel {
+      background: linear-gradient(150deg, #132b41, #0f2235);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      min-height: 370px;
+    }
+    .panel-title { display: flex; justify-content: space-between; padding: 10px 12px 0; font-size: 12px; color: var(--muted); }
+    canvas { display: block; width: 100%; height: 330px; }
+    .metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 9px; }
+    .metric { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }
+    .metric .label { color: var(--muted); font-size: 11px; }
+    .metric .value { font-size: 22px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .metric .unit { color: var(--muted); font-size: 11px; margin-left: 4px; }
+    .timeline-panel { margin-top: 9px; min-height: 215px; }
+    .timeline-panel canvas { height: 160px; }
+    .transport { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 0 12px 10px; }
+    input[type="range"] { accent-color: var(--cyan); width: 100%; }
+    .sequence { margin-top: 9px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+    .sequence-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+    .phase { height: 7px; border-radius: 4px; background: #35566d; }
+    .phase.active.release { background: var(--gold); }
+    .phase.active.predict { background: var(--cyan); }
+    .phase.active.brake { background: var(--green); }
+    .phase.active.hold { background: #6aa4c8; }
+    .phase-labels { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 5px; color: var(--muted); font-size: 9px; text-align: center; }
+    .note { color: var(--muted); font-size: 11px; margin: 8px 2px 0; }
+    @media (max-width: 850px) {
+      .controls { grid-template-columns: 1fr 1fr; }
+      .views { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .panel { min-height: 330px; }
+      canvas { height: 290px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div><div class="eyebrow">ACOUSTIC CAPTURE REPLAY</div><h1>見えない力で、空中キャッチ</h1></div>
+    <div id="runStatus" class="status">DEMO DATA</div>
+  </header>
+
+  <section class="controls" aria-label="再生設定">
+    <input id="fileInput" type="file" accept=".csv" multiple aria-label="実験CSVを選択">
+    <select id="trialSelect" aria-label="試行を選択"></select>
+    <button id="playButton" type="button">再生</button>
+    <select id="speedSelect" aria-label="再生速度">
+      <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+      <option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
+    </select>
+    <button id="resetButton" type="button">先頭へ</button>
+  </section>
+
+  <section class="views">
+    <div class="panel">
+      <div class="panel-title"><span>SIDE VIEW · XZ軸</span><span>実測・自由落下予測・制動参照</span></div>
+      <canvas id="sideCanvas" aria-label="球体のXZ軌跡"></canvas>
+    </div>
+    <div class="panel">
+      <div class="panel-title"><span>TOP VIEW · XY軸</span><span>球体・目標・焦点群中心</span></div>
+      <canvas id="topCanvas" aria-label="球体のXY軌跡"></canvas>
+    </div>
+  </section>
+
+  <section class="metrics">
+    <div class="metric"><div class="label">高さ z</div><div><span id="zValue" class="value">–</span><span class="unit">mm</span></div></div>
+    <div class="metric"><div class="label">鉛直速度 v<sub>z</sub></div><div><span id="vzValue" class="value">–</span><span class="unit">mm/s</span></div></div>
+    <div class="metric"><div class="label">超音波強度</div><div><span id="intensityValue" class="value">–</span><span class="unit">ratio</span></div></div>
+    <div class="metric"><div class="label">経過時間</div><div><span id="timeValue" class="value">–</span><span class="unit">ms</span></div></div>
+    <div class="metric"><div class="label">制御段階</div><div id="modeValue" class="value" style="font-size:16px">–</div></div>
+  </section>
+
+  <section class="panel timeline-panel">
+    <div class="panel-title"><span>TIME HISTORY</span><span>v<sub>z</sub> と超音波強度</span></div>
+    <canvas id="timelineCanvas" aria-label="速度と強度の時系列"></canvas>
+    <div class="transport"><span id="outcomeLabel">模式試行</span><input id="timeSlider" type="range" min="0" max="1" value="0"><span id="sampleLabel">1 / 1</span></div>
+  </section>
+
+  <section class="sequence">
+    <div class="sequence-row"><div class="phase release"></div><div class="phase predict"></div><div class="phase brake"></div><div class="phase hold"></div></div>
+    <div class="phase-labels"><span>RELEASE</span><span>PREDICT</span><span>BRAKE</span><span>HOLD</span></div>
+  </section>
+  <p class="note">CSV読込: trial_timeseries.csv（必須）と trial_summary.csv（任意）を同時選択できます。水色の自由落下予測は、その時点の実測位置・速度から120 ms先まで重力のみで外挿した展示用計算です。</p>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const colors = {grid:'#2e4b61', text:'#dbeaf5', muted:'#86a1b5', cyan:'#66d9ef', green:'#5ce1a7', gold:'#ffd166', red:'#ff7085', white:'#f7fbff'};
+  const wantedTime = ['trial_id','elapsed_from_release_ms','elapsed_from_field_ms','filtered_x_mm','filtered_y_mm','filtered_z_mm','vx_mm_s','vy_mm_s','vz_mm_s','reference_z_mm','target_x_mm','target_y_mm','target_z_mm','anchor_x_mm','anchor_y_mm','commanded_intensity','plan_stop_z_mm','control_mode'];
+  const wantedSummary = ['trial_id','status','reason','field_prediction_x_mm','field_prediction_y_mm','field_prediction_z_mm','plan_stop_z_mm'];
+  let trials = new Map(), summaries = new Map(), current = [], currentId = '', index = 0, playing = false, playWall = 0, playData = 0;
+
+  function number(v) { const n = Number(v); return Number.isFinite(n) ? n : NaN; }
+  function rowsSelected(text, wanted) {
+    const output = []; let row = [], field = '', quoted = false, header = null, indices = null;
+    const emit = () => {
+      row.push(field); field = '';
+      if (!header) { header = row; indices = wanted.map(k => header.indexOf(k)); }
+      else if (row.some(v => v !== '')) { const o = {}; wanted.forEach((k,i) => o[k] = indices[i] >= 0 ? row[indices[i]] : ''); output.push(o); }
+      row = [];
+    };
+    for (let i=0; i<text.length; i++) {
+      const ch=text[i];
+      if (quoted) { if (ch==='"' && text[i+1]==='"') { field+='"'; i++; } else if (ch==='"') quoted=false; else field+=ch; }
+      else if (ch==='"') quoted=true;
+      else if (ch===',') { row.push(field); field=''; }
+      else if (ch==='\n') emit();
+      else if (ch!=='\r') field+=ch;
+    }
+    if (field || row.length) emit();
+    return output;
+  }
+
+  function demoTrial() {
+    const a=[]; const g=9806.65;
+    for(let t=0;t<=1000;t+=5){
+      const s=t/1000, field=t-42, q=Math.max(0,field)/1000;
+      let z,vz,intensity,mode,ref=NaN;
+      if(field<0){ z=460-150*s-0.5*g*s*s; vz=-150-g*s; intensity=0; mode='RELEASE'; }
+      else { z=390+70*Math.exp(-4.4*q)*Math.cos(14.1*q); vz=70*Math.exp(-4.4*q)*(-4.4*Math.cos(14.1*q)-14.1*Math.sin(14.1*q)); intensity=q<.11 ? Math.min(.95,.76+q*2.0) : Math.max(.6,.95-(q-.05)*3.3); mode=q<.17?'CAPTURE_BRAKING':'LOCAL_HOLD'; if(q<.17) ref=443-44*(q/.17); }
+      a.push({trial_id:'DEMO',elapsed_from_release_ms:t,elapsed_from_field_ms:field,filtered_x_mm:279+6*Math.sin(s*9),filtered_y_mm:218+4*Math.sin(s*7+.4),filtered_z_mm:z,vx_mm_s:54*Math.cos(s*9),vy_mm_s:28*Math.cos(s*7+.4),vz_mm_s:vz,reference_z_mm:ref,target_x_mm:279,target_y_mm:218,target_z_mm:Number.isFinite(ref)?ref:390,anchor_x_mm:279,anchor_y_mm:218,commanded_intensity:intensity,plan_stop_z_mm:400,control_mode:mode});
+    }
+    return a;
+  }
+
+  function normalizeRows(rows){
+    const numeric=wantedTime.filter(k=>!['trial_id','control_mode'].includes(k));
+    rows.forEach(r=>numeric.forEach(k=>r[k]=number(r[k])));
+    return rows.filter(r=>r.trial_id && Number.isFinite(r.elapsed_from_release_ms));
+  }
+
+  function installDemo(){ trials=new Map([['DEMO',demoTrial()]]); summaries=new Map([['DEMO',{status:'illustration',reason:'built-in data',field_prediction_x_mm:279,field_prediction_y_mm:218,field_prediction_z_mm:443,plan_stop_z_mm:400}]]); $('runStatus').textContent='DEMO DATA'; rebuildSelector(); }
+  function rebuildSelector(){
+    $('trialSelect').innerHTML='';
+    [...trials.keys()].forEach(id=>{ const s=summaries.get(id)||{}; const o=document.createElement('option'); o.value=id; o.textContent=`${id}${s.status?' · '+s.status:''}`; $('trialSelect').appendChild(o); });
+    selectTrial($('trialSelect').value || [...trials.keys()][0]);
+  }
+  function selectTrial(id){ currentId=id; current=(trials.get(id)||[]).slice().sort((a,b)=>a.elapsed_from_release_ms-b.elapsed_from_release_ms); index=0; playing=false; $('playButton').textContent='再生'; $('timeSlider').max=Math.max(0,current.length-1); $('timeSlider').value=0; update(); }
+
+  $('fileInput').addEventListener('change', async e=>{
+    const files=[...e.target.files]; if(!files.length) return;
+    const timeFile=files.find(f=>f.name.toLowerCase()==='trial_timeseries.csv') || files.find(f=>f.name.toLowerCase().includes('timeseries'));
+    const summaryFile=files.find(f=>f.name.toLowerCase()==='trial_summary.csv') || files.find(f=>f.name.toLowerCase().includes('summary'));
+    if(!timeFile){ alert('trial_timeseries.csv を選択してください。'); return; }
+    $('runStatus').textContent='LOADING';
+    const parsed=normalizeRows(rowsSelected(await timeFile.text(),wantedTime)); trials=new Map();
+    parsed.forEach(r=>{ if(!trials.has(r.trial_id)) trials.set(r.trial_id,[]); trials.get(r.trial_id).push(r); });
+    summaries=new Map();
+    if(summaryFile){ rowsSelected(await summaryFile.text(),wantedSummary).forEach(r=>{ ['field_prediction_x_mm','field_prediction_y_mm','field_prediction_z_mm','plan_stop_z_mm'].forEach(k=>r[k]=number(r[k])); summaries.set(r.trial_id,r); }); }
+    $('runStatus').textContent=`LOG DATA · ${trials.size} TRIALS`; rebuildSelector();
+  });
+  $('trialSelect').addEventListener('change',e=>selectTrial(e.target.value));
+  $('playButton').addEventListener('click',()=>{ if(!current.length)return; playing=!playing; $('playButton').textContent=playing?'一時停止':'再生'; if(playing){ playWall=performance.now(); playData=current[index].elapsed_from_release_ms; requestAnimationFrame(loop); } });
+  $('resetButton').addEventListener('click',()=>{ index=0; playing=false; $('playButton').textContent='再生'; update(); });
+  $('timeSlider').addEventListener('input',e=>{ index=Number(e.target.value); playing=false; $('playButton').textContent='再生'; update(); });
+  function loop(now){ if(!playing)return; const speed=Number($('speedSelect').value); const target=playData+(now-playWall)*speed; while(index<current.length-1 && current[index+1].elapsed_from_release_ms<=target) index++; update(); if(index>=current.length-1){playing=false;$('playButton').textContent='再生';} else requestAnimationFrame(loop); }
+
+  function fitCanvas(canvas){ const dpr=devicePixelRatio||1, r=canvas.getBoundingClientRect(); const w=Math.max(10,r.width),h=Math.max(10,r.height); if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);} const c=canvas.getContext('2d'); c.setTransform(dpr,0,0,dpr,0,0); return {c,w,h}; }
+  function extent(values){ const f=values.filter(Number.isFinite); if(!f.length)return [0,1]; let lo=Math.min(...f),hi=Math.max(...f); if(lo===hi){lo-=1;hi+=1;} const p=(hi-lo)*.12; return [lo-p,hi+p]; }
+  function scale(v,d0,d1,r0,r1){ return r0+(v-d0)/(d1-d0)*(r1-r0); }
+  function grid(c,w,h,p,xTicks=5,yTicks=5){ c.strokeStyle=colors.grid;c.lineWidth=1;c.font='11px sans-serif';c.fillStyle=colors.muted; for(let i=0;i<=xTicks;i++){const x=p.l+(w-p.l-p.r)*i/xTicks;c.beginPath();c.moveTo(x,p.t);c.lineTo(x,h-p.b);c.stroke();} for(let i=0;i<=yTicks;i++){const y=p.t+(h-p.t-p.b)*i/yTicks;c.beginPath();c.moveTo(p.l,y);c.lineTo(w-p.r,y);c.stroke();} c.strokeStyle='#52718a';c.strokeRect(p.l,p.t,w-p.l-p.r,h-p.t-p.b); }
+  function path(c,pts,color,width=2,dash=[]){ const good=pts.filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1])); if(!good.length)return;c.strokeStyle=color;c.lineWidth=width;c.setLineDash(dash);c.beginPath();good.forEach((p,i)=>i?c.lineTo(...p):c.moveTo(...p));c.stroke();c.setLineDash([]); }
+  function dot(c,x,y,r,fill,stroke=colors.white){c.beginPath();c.arc(x,y,r,0,Math.PI*2);c.fillStyle=fill;c.fill();c.strokeStyle=stroke;c.lineWidth=2;c.stroke();}
+  function drawSide(){ const {c,w,h}=fitCanvas($('sideCanvas')),p={l:55,r:22,t:18,b:34},s=current[index],sum=summaries.get(currentId)||{}; c.clearRect(0,0,w,h); if(!s)return; const past=current.slice(0,index+1),future=current.slice(index).filter(r=>r.elapsed_from_release_ms<=s.elapsed_from_release_ms+180); const pred=[]; for(let dt=0;dt<=.12;dt+=.01)pred.push([s.filtered_x_mm+s.vx_mm_s*dt,s.filtered_z_mm+s.vz_mm_s*dt-.5*9806.65*dt*dt]); const xs=current.map(r=>r.filtered_x_mm).concat(pred.map(q=>q[0]),[s.target_x_mm,sum.field_prediction_x_mm]); const zs=current.map(r=>r.filtered_z_mm).concat(pred.map(q=>q[1]),[s.target_z_mm,s.plan_stop_z_mm,sum.field_prediction_z_mm]); const [xmin,xmax]=extent(xs),[zmin,zmax]=extent(zs); const X=x=>scale(x,xmin,xmax,p.l,w-p.r),Z=z=>scale(z,zmin,zmax,h-p.b,p.t); grid(c,w,h,p);
+    path(c,past.map(r=>[X(r.filtered_x_mm),Z(r.filtered_z_mm)]),'rgba(102,217,239,.48)',2); path(c,pred.map(q=>[X(q[0]),Z(q[1])]),colors.cyan,2,[6,5]); path(c,future.filter(r=>Number.isFinite(r.reference_z_mm)).map(r=>[X(Number.isFinite(r.target_x_mm)?r.target_x_mm:s.filtered_x_mm),Z(r.reference_z_mm)]),colors.green,3,[8,4]);
+    const stop=Number.isFinite(s.plan_stop_z_mm)?s.plan_stop_z_mm:sum.plan_stop_z_mm; if(Number.isFinite(stop)){c.strokeStyle=colors.gold;c.setLineDash([4,4]);c.beginPath();c.moveTo(p.l,Z(stop));c.lineTo(w-p.r,Z(stop));c.stroke();c.setLineDash([]);c.fillStyle=colors.gold;c.fillText('計画停止位置',p.l+5,Z(stop)-6);}
+    if(Number.isFinite(sum.field_prediction_x_mm)&&Number.isFinite(sum.field_prediction_z_mm)){dot(c,X(sum.field_prediction_x_mm),Z(sum.field_prediction_z_mm),6,'transparent',colors.cyan);c.fillStyle=colors.cyan;c.fillText('初期予測',X(sum.field_prediction_x_mm)+9,Z(sum.field_prediction_z_mm)-8);}
+    dot(c,X(s.filtered_x_mm),Z(s.filtered_z_mm),9,colors.gold); c.fillStyle=colors.text;c.fillText('現在位置',X(s.filtered_x_mm)+12,Z(s.filtered_z_mm)-12); c.fillStyle=colors.muted;c.fillText(`X [${xmin.toFixed(0)}, ${xmax.toFixed(0)}] mm`,p.l,h-9); c.save();c.translate(14,h/2);c.rotate(-Math.PI/2);c.fillText(`Z [${zmin.toFixed(0)}, ${zmax.toFixed(0)}] mm`,0,0);c.restore(); }
+  function drawTop(){ const {c,w,h}=fitCanvas($('topCanvas')),p={l:45,r:20,t:18,b:34},s=current[index]; c.clearRect(0,0,w,h); if(!s)return; const past=current.slice(0,index+1),pred=[];for(let dt=0;dt<=.12;dt+=.01)pred.push([s.filtered_x_mm+s.vx_mm_s*dt,s.filtered_y_mm+s.vy_mm_s*dt]); const xs=current.map(r=>r.filtered_x_mm).concat(pred.map(q=>q[0]),[s.target_x_mm,s.anchor_x_mm]),ys=current.map(r=>r.filtered_y_mm).concat(pred.map(q=>q[1]),[s.target_y_mm,s.anchor_y_mm]);const [xmin,xmax]=extent(xs),[ymin,ymax]=extent(ys),X=x=>scale(x,xmin,xmax,p.l,w-p.r),Y=y=>scale(y,ymin,ymax,h-p.b,p.t);grid(c,w,h,p);path(c,past.map(r=>[X(r.filtered_x_mm),Y(r.filtered_y_mm)]),'rgba(102,217,239,.5)',2);path(c,pred.map(q=>[X(q[0]),Y(q[1])]),colors.cyan,2,[6,5]);if(Number.isFinite(s.target_x_mm)&&Number.isFinite(s.target_y_mm)){dot(c,X(s.target_x_mm),Y(s.target_y_mm),8,'transparent',colors.green);c.fillStyle=colors.green;c.fillText('焦点群中心',X(s.target_x_mm)+10,Y(s.target_y_mm)-9);}dot(c,X(s.filtered_x_mm),Y(s.filtered_y_mm),8,colors.gold);c.fillStyle=colors.text;c.fillText('球体',X(s.filtered_x_mm)+10,Y(s.filtered_y_mm)-9);c.fillStyle=colors.muted;c.fillText('X [mm]',w/2,h-8);c.save();c.translate(12,h/2);c.rotate(-Math.PI/2);c.fillText('Y [mm]',0,0);c.restore(); }
+  function drawTimeline(){ const {c,w,h}=fitCanvas($('timelineCanvas')),p={l:55,r:45,t:16,b:28},s=current[index];c.clearRect(0,0,w,h);if(!s)return;const tmin=current[0].elapsed_from_release_ms,tmax=current.at(-1).elapsed_from_release_ms,X=t=>scale(t,tmin,tmax,p.l,w-p.r),V=v=>scale(v,-1200,300,h-p.b,p.t),I=v=>scale(v,0,1.05,h-p.b,p.t);grid(c,w,h,p,6,4);path(c,current.map(r=>[X(r.elapsed_from_release_ms),V(r.vz_mm_s)]),colors.red,2);path(c,current.map(r=>[X(r.elapsed_from_release_ms),I(r.commanded_intensity)]),colors.gold,2);c.strokeStyle=colors.white;c.beginPath();c.moveTo(X(s.elapsed_from_release_ms),p.t);c.lineTo(X(s.elapsed_from_release_ms),h-p.b);c.stroke();c.fillStyle=colors.red;c.fillText('vₙ  -1200…300 mm/s',p.l+5,p.t+12);c.fillStyle=colors.gold;c.fillText('強度  0…1.0',w-p.r-80,p.t+12);c.fillStyle=colors.muted;c.fillText('Time from release [ms]',w/2-45,h-7); }
+  function phase(mode,t){ if(t<0)return 0; if(mode==='RELEASE'||mode==='FIXED')return 0; if(mode.includes('BRAK'))return 2; if(mode.includes('HOLD')||mode.includes('RETURN'))return 3; return 1; }
+  function update(){ if(!current.length)return; index=Math.max(0,Math.min(index,current.length-1));const s=current[index],sum=summaries.get(currentId)||{};$('zValue').textContent=Number.isFinite(s.filtered_z_mm)?s.filtered_z_mm.toFixed(1):'–';$('vzValue').textContent=Number.isFinite(s.vz_mm_s)?s.vz_mm_s.toFixed(0):'–';$('intensityValue').textContent=Number.isFinite(s.commanded_intensity)?s.commanded_intensity.toFixed(3):'–';$('timeValue').textContent=s.elapsed_from_release_ms.toFixed(0);$('modeValue').textContent=(s.control_mode||'UNKNOWN').replaceAll('_',' ');$('outcomeLabel').textContent=sum.status?`${sum.status}: ${sum.reason||''}`:'結果情報なし';$('sampleLabel').textContent=`${index+1} / ${current.length}`;$('timeSlider').value=index;document.querySelectorAll('.phase').forEach((e,i)=>e.classList.toggle('active',i<=phase(s.control_mode,s.elapsed_from_field_ms)));drawSide();drawTop();drawTimeline(); }
+  new ResizeObserver(update).observe(document.querySelector('.views')); installDemo();
+})();
+</script>
+</body>
+</html>

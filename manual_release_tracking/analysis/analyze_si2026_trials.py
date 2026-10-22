@@ -699,13 +699,32 @@ def _resample_success_series(
     initial_value: float | None = None,
     previous_value: bool = False,
 ):
-    usable = samples[["elapsed_from_release_ms", column]].dropna().copy()
+    return _resample_series(
+        samples,
+        time_grid_ms,
+        column,
+        time_column="elapsed_from_release_ms",
+        initial_value=initial_value,
+        previous_value=previous_value,
+    )
+
+
+def _resample_series(
+    samples: pd.DataFrame,
+    time_grid_ms: np.ndarray,
+    column: str,
+    *,
+    time_column: str,
+    initial_value: float | None = None,
+    previous_value: bool = False,
+):
+    usable = samples[[time_column, column]].dropna().copy()
     if initial_value is not None:
         usable = pd.concat(
             [
                 pd.DataFrame(
                     {
-                        "elapsed_from_release_ms": [0.0],
+                        time_column: [0.0],
                         column: [float(initial_value)],
                     }
                 ),
@@ -714,14 +733,14 @@ def _resample_success_series(
             ignore_index=True,
         )
     usable = (
-        usable.groupby("elapsed_from_release_ms", as_index=False)[column]
+        usable.groupby(time_column, as_index=False)[column]
         .mean()
-        .sort_values("elapsed_from_release_ms")
+        .sort_values(time_column)
     )
     if usable.empty:
         return np.full_like(time_grid_ms, np.nan, dtype=float)
 
-    time_ms = usable["elapsed_from_release_ms"].to_numpy(dtype=float)
+    time_ms = usable[time_column].to_numpy(dtype=float)
     values = usable[column].to_numpy(dtype=float)
     result = np.full_like(time_grid_ms, np.nan, dtype=float)
     covered = (time_grid_ms >= time_ms[0]) & (time_grid_ms <= time_ms[-1])
@@ -731,6 +750,117 @@ def _resample_success_series(
     else:
         result[covered] = np.interp(time_grid_ms[covered], time_ms, values)
     return result
+
+
+def plot_outcome_braking_profiles(
+    trials: pd.DataFrame,
+    timeseries: pd.DataFrame,
+    output_directory: Path,
+):
+    """Compare field-aligned vertical speed and intensity by capture outcome."""
+    selected = eligible_trials(trials)
+    selected = selected[selected["status"].isin(["success", "failure"])].copy()
+    time_grid_ms = np.arange(0.0, 400.0 + 2.0, 2.0)
+    profiles: dict[tuple[str, str], np.ndarray] = {}
+
+    for status in ("success", "failure"):
+        rows = selected[selected["status"] == status]
+        for column in ("vz_mm_s", "commanded_intensity"):
+            values = []
+            for trial_id in rows["trial_id"]:
+                samples = timeseries[timeseries["trial_id"] == trial_id].copy()
+                samples = samples.sort_values("elapsed_from_field_ms")
+                samples = samples[samples["elapsed_from_field_ms"] >= 0.0]
+                values.append(
+                    _resample_series(
+                        samples,
+                        time_grid_ms,
+                        column,
+                        time_column="elapsed_from_field_ms",
+                        previous_value=(column == "commanded_intensity"),
+                    )
+                )
+            profiles[(status, column)] = np.asarray(values, dtype=float)
+
+    def summarize(matrix: np.ndarray):
+        count = np.sum(np.isfinite(matrix), axis=0)
+        median = np.full(matrix.shape[1], np.nan, dtype=float)
+        q1 = np.full(matrix.shape[1], np.nan, dtype=float)
+        q3 = np.full(matrix.shape[1], np.nan, dtype=float)
+        for index in np.flatnonzero(count > 0):
+            values = matrix[:, index]
+            values = values[np.isfinite(values)]
+            median[index] = np.median(values)
+            q1[index], q3[index] = np.percentile(values, [25.0, 75.0])
+        return count, median, q1, q3
+
+    colors = {"success": "#1b9e77", "failure": "#d73027"}
+    labels = {"success": "Success", "failure": "Failure"}
+    output = pd.DataFrame({"time_from_field_onset_ms": time_grid_ms})
+    summaries = {}
+    for status in ("success", "failure"):
+        for column in ("vz_mm_s", "commanded_intensity"):
+            summary = summarize(profiles[(status, column)])
+            summaries[(status, column)] = summary
+            count, median, q1, q3 = summary
+            prefix = f"{status}_{column}"
+            output[f"{prefix}_median"] = median
+            output[f"{prefix}_q1"] = q1
+            output[f"{prefix}_q3"] = q3
+            output[f"{prefix}_n"] = count
+    output.to_csv(output_directory / "outcome_braking_profiles.csv", index=False)
+
+    def draw(column: str, ylabel: str, output_name: str, *, zero_line=False):
+        figure, axis = plt.subplots(figsize=(8.0, 4.8), constrained_layout=True)
+        for status in ("success", "failure"):
+            count, median, q1, q3 = summaries[(status, column)]
+            color = colors[status]
+            axis.fill_between(
+                time_grid_ms,
+                q1,
+                q3,
+                color=color,
+                alpha=0.16,
+                linewidth=0.0,
+            )
+            axis.plot(
+                time_grid_ms,
+                median,
+                color=color,
+                linewidth=2.4,
+                label=(
+                    f"{labels[status]} "
+                    f"($n={int(np.nanmax(count))}$ trials)"
+                ),
+            )
+        axis.axvline(
+            100.0,
+            color="#555555",
+            linestyle="--",
+            linewidth=1.3,
+            label="Nominal braking time (100 ms)",
+        )
+        if zero_line:
+            axis.axhline(0.0, color="black", linewidth=0.8, alpha=0.7)
+        axis.set_xlim(0.0, 400.0)
+        axis.set_xlabel("Time from acoustic-field onset [ms]", fontsize=15)
+        axis.set_ylabel(ylabel, fontsize=15)
+        axis.tick_params(axis="both", labelsize=13)
+        axis.grid(True, alpha=0.22)
+        axis.legend(loc="best", fontsize=10)
+        _save_figure(figure, output_directory / output_name)
+
+    draw(
+        "vz_mm_s",
+        "Measured $z$ velocity [mm/s]",
+        "success_failure_z_velocity_profile",
+        zero_line=True,
+    )
+    draw(
+        "commanded_intensity",
+        "Commanded intensity ratio",
+        "success_failure_braking_intensity_profile",
+    )
 
 
 def plot_successful_trials_mean_response(
@@ -2323,6 +2453,11 @@ def build_all_outputs(
         output_directory,
     )
     plot_successful_z_trajectories(
+        enriched,
+        timeseries,
+        output_directory,
+    )
+    plot_outcome_braking_profiles(
         enriched,
         timeseries,
         output_directory,

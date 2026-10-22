@@ -118,6 +118,8 @@ class MoonFragmentMission:
 
     def _on_space(self, _event):
         if self.state == "INTRO":
+            self._set_state("STORY_DISCOVERY")
+        elif self.state.startswith("STORY_"):
             self._set_state("READY")
         elif self.state == "READY":
             self._set_state("COUNTDOWN")
@@ -163,6 +165,12 @@ class MoonFragmentMission:
     def _tick(self):
         now = time.monotonic()
         self._consume_capture_events()
+        if self.state == "STORY_DISCOVERY" and now - self.state_started_at >= 2.6:
+            self._set_state("STORY_LOADING")
+        elif self.state == "STORY_LOADING" and now - self.state_started_at >= 2.8:
+            self._set_state("STORY_ACCIDENT")
+        elif self.state == "STORY_ACCIDENT" and now - self.state_started_at >= 3.0:
+            self._set_state("READY")
         if self.state == "COUNTDOWN" and now - self.state_started_at >= 3.6:
             self._set_state("WAIT_RELEASE")
         if (
@@ -267,6 +275,37 @@ class MoonFragmentMission:
         c.create_line(x + 48 * scale, y, x + 85 * scale, y - 30 * scale,
                       fill="#b9c7e8", width=10)
 
+    def _draw_moon_surface(self, width: int, height: int):
+        horizon = height * 0.72
+        self.canvas.create_polygon(
+            0, horizon,
+            width * 0.18, horizon - 28,
+            width * 0.36, horizon + 5,
+            width * 0.55, horizon - 22,
+            width * 0.76, horizon + 2,
+            width, horizon - 35,
+            width, height,
+            0, height,
+            fill="#858ba4",
+            outline="#cdd5e8",
+            width=2,
+        )
+        for cx, cy, radius in (
+            (0.14, 0.84, 55),
+            (0.38, 0.78, 32),
+            (0.68, 0.88, 68),
+            (0.88, 0.77, 38),
+        ):
+            self.canvas.create_oval(
+                cx * width - radius,
+                cy * height - radius * 0.35,
+                cx * width + radius,
+                cy * height + radius * 0.35,
+                fill="#696f87",
+                outline="#aeb7ce",
+                width=2,
+            )
+
     def _draw_fireworks(self, width: int, height: int, elapsed: float):
         for cx, cy, color, phase in self.fireworks:
             age = max(0.0, (elapsed - phase) % 1.8)
@@ -289,22 +328,71 @@ class MoonFragmentMission:
         elapsed = now - self.state_started_at
 
         if self.state == "INTRO":
-            self._draw_spaceship(width * 0.72, height * 0.29, 0.9)
-            self._draw_fragment(width * 0.67, height * 0.52, 45)
-            self._text(width * 0.5, height * 0.12, "月のかけら救出ミッション", size=42, color=GOLD)
+            self._draw_moon_surface(width, height)
+            self._draw_spaceship(width * 0.74, height * 0.31, 0.82)
+            self._draw_fragment(width * 0.34, height * 0.67, 38)
+            self._text(width * 0.5, height * 0.11, "月のかけら救出ミッション", size=42, color=GOLD)
             self._text(
                 width * 0.5,
-                height * 0.70,
-                "宇宙船から月のかけらが落ちそう！\n"
-                "見えない超音波ネットで助けよう",
-                size=28,
+                height * 0.49,
+                "20XX年、月面探査隊は\n"
+                "ふしぎに光る石を発見しました",
+                size=27,
             )
-            self._text(width * 0.5, height * 0.90, "SPACEキーでミッション開始", size=19, color=CYAN)
+            self._text(width * 0.5, height * 0.92, "SPACEキーで物語をスタート", size=19, color=CYAN)
+
+        elif self.state == "STORY_DISCOVERY":
+            self._draw_moon_surface(width, height)
+            robot_x = width * 0.24 + min(width * 0.14, elapsed * width * 0.055)
+            self._draw_robot(robot_x, height * 0.67, 0.72)
+            glow = 42 + 7 * math.sin(now * 5.0)
+            self.canvas.create_oval(
+                width * 0.57 - glow,
+                height * 0.68 - glow,
+                width * 0.57 + glow,
+                height * 0.68 + glow,
+                outline=GOLD,
+                width=3,
+            )
+            self._draw_fragment(width * 0.57, height * 0.68, 33)
+            self._text(width * 0.5, height * 0.13, "月面探査隊が光る石を発見！", size=38, color=GOLD)
+            self._text(width * 0.5, height * 0.27, "これは貴重な『月のかけら』かもしれない", size=25)
+            self._text(width * 0.92, height * 0.94, "SPACEでスキップ", size=14, color=CYAN, anchor="e")
+
+        elif self.state == "STORY_LOADING":
+            self._draw_moon_surface(width, height)
+            self._draw_spaceship(width * 0.73, height * 0.39, 0.85)
+            progress = min(1.0, elapsed / 2.2)
+            fragment_x = width * (0.38 + 0.31 * progress)
+            fragment_y = height * (0.69 - 0.28 * progress)
+            self._draw_fragment(fragment_x, fragment_y, 32)
+            self._draw_robot(width * 0.34, height * 0.68, 0.68)
+            self._text(width * 0.5, height * 0.13, "地球の研究所へ届けよう", size=39, color=GREEN)
+            self._text(width * 0.5, height * 0.25, "月のかけらを宇宙船に積み込みます", size=25)
+            self._text(width * 0.92, height * 0.94, "SPACEでスキップ", size=14, color=CYAN, anchor="e")
+
+        elif self.state == "STORY_ACCIDENT":
+            shake = math.sin(now * 22.0) * min(12.0, elapsed * 10.0)
+            ship_x = width * 0.57 + shake
+            ship_y = height * 0.39 + math.sin(now * 17.0) * 5
+            self._draw_spaceship(ship_x, ship_y, 0.92, flame=True)
+            fall = min(height * 0.27, elapsed * height * 0.09)
+            self._draw_fragment(ship_x + 55, ship_y + 68 + fall, 35)
+            if int(elapsed * 4) % 2 == 0:
+                self._text(width * 0.5, height * 0.12, "！緊急事態！", size=44, color="#ff7891")
+            self._text(
+                width * 0.5,
+                height * 0.72,
+                "宇宙船が大きく揺れて、月のかけらが落ちそう！\n"
+                "見えない超音波ネットで助けよう",
+                size=27,
+            )
+            self._text(width * 0.92, height * 0.94, "SPACEでスキップ", size=14, color=CYAN, anchor="e")
 
         elif self.state == "READY":
             self._draw_spaceship(width * 0.73, height * 0.25, 0.75)
             self._draw_fragment(width * 0.5, height * 0.48 + math.sin(now * 2) * 5, 55)
-            self._text(width * 0.5, height * 0.13, "救出準備完了", size=45, color=GREEN)
+            self._text(width * 0.5, height * 0.13, "あなたの出番！ 救出準備完了", size=42, color=GREEN)
             self._text(width * 0.5, height * 0.68, "球体を持って、合図を待ってね", size=27)
             self._text(width * 0.5, height * 0.77, "手を離すまで超音波は OFF", size=24, color=CYAN)
             self._text(width * 0.5, height * 0.91, "SPACEキーでカウントダウン", size=18, color=GOLD)
