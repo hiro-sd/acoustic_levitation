@@ -30,12 +30,6 @@ def stm_rotating(center, radius, point_num, total_steps):
     foci = [center + radius * np.array([np.cos(a), np.sin(a), 0.0]) for a in angles_all]
     return make_single_focus_stm(foci, 1)
 
-# SOEMのエラーハンドラ
-# def err_handler(slave: int, status: Status) -> None:
-#     print(f"slave [{slave}]: {status}")
-#     if status == Status.Lost():
-#         os._exit(-1)
-
 if __name__ == "__main__":
     with AutdController.open(autd_arrangement) as autd:
         firmware_version = autd.read_firmware_version()

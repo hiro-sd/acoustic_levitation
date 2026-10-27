@@ -34,12 +34,6 @@ def stm_alternately(center: np.ndarray, radius: float, point_num: int):
     )
     return make_single_focus_stm(foci, 100.0)
 
-# SOEMのエラーハンドラ
-# def err_handler(slave: int, status: Status) -> None:
-#     print(f"slave [{slave}]: {status}")
-#     if status == Status.Lost():
-#         os._exit(-1)
-
 if __name__ == "__main__":
     with AutdController.open(autd_arrangement) as autd:
         firmware_version = autd.read_firmware_version()

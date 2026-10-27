@@ -15,12 +15,6 @@ from tracking.core.autd_sender import make_autd_arrangement, make_constant_modul
 
 autd_arrangement = make_autd_arrangement()
 
-# SOEMのエラーハンドラ
-# def err_handler(slave: int, status: Status) -> None:
-#     print(f"slave [{slave}]: {status}")
-#     if status == Status.Lost():
-#         os._exit(-1)
-
 # 円形の静的多焦点音場を形成するファイル
 if __name__ == "__main__":
     with AutdController.open(autd_arrangement) as autd:

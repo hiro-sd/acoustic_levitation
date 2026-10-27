@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 
 from .config import AppConfig
+from .radius_prior import SphereRadiusPrior
 from .vision import clamp_roi, track_ball_cv
 
 
@@ -21,10 +22,14 @@ class BallDetection:
 class RoiBallTracker:
     """Owns the adaptive ROI state for one camera."""
 
-    def __init__(self, width: int, height: int, cfg: AppConfig):
+    def __init__(self, width: int, height: int, cfg: AppConfig, *, refine_upper_arc=False):
         self.width = int(width)
         self.height = int(height)
         self.cfg = cfg
+        self.refine_upper_arc = bool(refine_upper_arc)
+        self.radius_model = (
+            SphereRadiusPrior() if self.refine_upper_arc and cfg.z_stabilize_radius else None
+        )
         self.roi_cx = self.width // 2
         self.roi_cy = self.height // 2
         self.roi_size = int(cfg.roi_init_size)
@@ -38,9 +43,14 @@ class RoiBallTracker:
             self.height,
             self.cfg,
         )
-        detection, _ = track_ball_cv(frame, roi, self.cfg)
+        detection, _ = track_ball_cv(
+            frame, roi, self.cfg, refine_upper_arc=self.refine_upper_arc,
+            radius_model=self.radius_model,
+        )
 
         if detection is None:
+            if self.radius_model is not None:
+                self.radius_model.missing()
             self.roi_size = int(
                 min(self.cfg.roi_max_size, self.roi_size * self.cfg.roi_expand_on_lost)
             )

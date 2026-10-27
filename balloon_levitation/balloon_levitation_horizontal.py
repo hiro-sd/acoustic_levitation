@@ -17,12 +17,6 @@ from tracking.core.autd_sender import make_autd_arrangement, make_constant_modul
 # AUTDの配置
 autd_arrangement = make_autd_arrangement()
 
-# SOEMのエラーハンドラ
-# def err_handler(slave: int, status: Status) -> None:
-#     print(f"slave [{slave}]: {status}")
-#     if status == Status.Lost():
-#         os._exit(-1)
-
 if __name__ == "__main__":
     with AutdController.open(autd_arrangement) as autd:
         firmware_version = autd.read_firmware_version()

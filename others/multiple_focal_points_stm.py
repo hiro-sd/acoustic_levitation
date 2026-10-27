@@ -15,12 +15,6 @@ from tracking.core.autd_sender import make_autd_arrangement, make_constant_modul
 
 autd_arrangement = make_autd_arrangement()
 
-# SOEMのエラーハンドラ
-# def err_handler(slave: int, status: Status) -> None:
-#     print(f"slave [{slave}]: {status}")
-#     if status == Status.Lost():
-#         os._exit(-1)
-
 # FociSTMでn焦点を作成する関数
 def multiple_foci_stm(center, radius, point_num, n):
     frames = [
