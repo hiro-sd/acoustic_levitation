@@ -94,15 +94,6 @@ def parse_args():
         action="store_true",
         help="Disable the new trial-oriented logger.",
     )
-    parser.add_argument(
-        "--static-multi-focus",
-        action="store_true",
-        help=(
-            "Experimental eight-simultaneous-focus field instead of the "
-            "default single-focus circular STM. Reuses the STM force model "
-            "without recalibration for a preliminary trial."
-        ),
-    )
     args = parser.parse_args()
     if args.extra_delay_ms < 0.0:
         parser.error("--extra-delay-ms must be non-negative")
@@ -112,13 +103,6 @@ def parse_args():
         parser.error("--observation-sec must be at least --success-hold-sec")
     if args.target_valid_trials <= 0:
         parser.error("--target-valid-trials must be positive")
-    if args.static_multi_focus:
-        if args.condition_id == "baseline":
-            args.condition_id = "static_multi_focus_circle"
-        if args.paper_data_dir == "./manual_release_tracking/si2026_data":
-            args.paper_data_dir = (
-                "./manual_release_tracking/si2026_data_static_multi_focus"
-            )
     return args
 
 
@@ -285,32 +269,6 @@ if __name__ == "__main__":
     cfg.si2026_target_valid_trials = args.target_valid_trials
     cfg.si2026_operator = args.operator
     cfg.si2026_notes = args.notes
-
-    if args.static_multi_focus:
-        # Preliminary A/B trial only: deliberately reuse the STM force model.
-        # Its inferred force and saturation flags are not calibrated for the
-        # eight-focus pattern and must not be interpreted as measured force.
-        cfg.autd_field_mode = "static_multi_focus_circle"
-        experiment_directory = Path(args.paper_data_dir)
-        cfg.log_csv_path = str(experiment_directory / "auto_release_log.csv")
-        cfg.auto_release_capture_log_path = str(
-            experiment_directory / "auto_release_capture_events.csv"
-        )
-        cfg.auto_release_delay_log_path = str(
-            experiment_directory / "auto_release_delay_measurements.csv"
-        )
-        cfg.auto_release_trajectory_log_path = str(
-            experiment_directory / "auto_release_trajectory_log.csv"
-        )
-        cfg.si2026_notes = (
-            f"{args.notes} | STATIC MULTI-FOCUS PILOT: "
-            "uncalibrated STM force model reused"
-        ).strip(" |")
-        print(
-            "[WARNING] Eight simultaneous foci with the UNCALIBRATED STM "
-            "force model. Planned force, saturation, and stopping estimates "
-            "are not validated for this field. Start with a few guarded trials."
-        )
 
     # R remains a fallback. Automatic mode starts from the first explicit
     # XY-camera separation after GRASPED; contact return cancels it.

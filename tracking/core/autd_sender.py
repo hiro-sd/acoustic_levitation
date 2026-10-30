@@ -7,19 +7,11 @@ from pathlib import Path
 
 import numpy as np
 
-from autd3.commands import FociStm, Modulation, Pattern, SetOutputMask
+from autd3.commands import FociStm, Modulation, SetOutputMask
 from autd3.geometry import Autd3, Geometry
-from autd3.units import Hz, m, s
-from autd3.value import ControlPoint, ControlPoints, Intensity, Nearest, SamplingConfig
+from autd3.units import Hz
+from autd3.value import ControlPoint, ControlPoints, Nearest, SamplingConfig
 from autd3_modulation import constant, modulation_buffer
-from autd3_pattern import wavelength
-from autd3_pattern_holo import (
-    AmplitudeTarget,
-    GspatOption,
-    IntensityConstraint,
-    Pa,
-    gspat,
-)
 
 from .config import AppConfig
 from .models import HomePosition
@@ -66,42 +58,6 @@ def make_circle_offsets(cfg: AppConfig, radius: float | None = None):
         ],
         dtype=np.float32,
     )
-
-
-def make_static_multi_focus_pattern(
-    cfg: AppConfig,
-    geometry: Geometry,
-    center: np.ndarray,
-    offsets: np.ndarray,
-):
-    """
-    円周上に複数焦点を同時生成する静的な多焦点ゲインを作る。
-
-    FociStmは「単焦点を時間的に8点周回」させるのに対し、
-    このモードではGSPATで「8点を同時に存在」させる。
-    """
-    foci = [
-        AmplitudeTarget(
-            center + offsets[i],
-            float(cfg.multi_focus_pressure_pa) * Pa,
-        )
-        for i in range(offsets.shape[0])
-    ]
-
-    phases = geometry.phase_buffer()
-    intensities = geometry.intensity_buffer()
-    gspat(
-        geometry,
-        foci,
-        wavelength(340.0 * m / s),
-        GspatOption(
-            repeat=int(cfg.multi_focus_gspat_repeat),
-            constraint=IntensityConstraint.Clamp(Intensity.MIN, Intensity.MAX),
-        ),
-        phases,
-        intensities,
-    )
-    return Pattern(phases, intensities)
 
 
 def make_circular_output_mask(
@@ -549,7 +505,6 @@ class AutdSender:
 
     def _loop(self):
         print("[THREAD] AUTD Control Thread Started.")
-        print(f"[AUTD] field_mode={self.cfg.autd_field_mode}")
 
         fps_start_time = time.perf_counter()
         fps_frame_count = 0
@@ -579,67 +534,29 @@ class AutdSender:
                 )
                 foci = center_vec[None, :] + stm_offsets
 
-                if self.cfg.autd_field_mode == "stm_circle":
-                    stm_cycle_frequency_hz = float(self.cfg.stm_freq_hz)
-                    if target.focus_dwell_counts is not None:
-                        # FociStm's frequency is the frequency of one complete
-                        # cycle, not the per-focus update rate.  A weighted
-                        # pattern contains more slots than the normal 8-point
-                        # STM, so lower only its cycle frequency to retain the
-                        # existing slot period and the current Silencer setup.
-                        stm_cycle_frequency_hz = (
-                            cycle_frequency_preserving_slot_rate(
-                                base_cycle_frequency_hz=self.cfg.stm_freq_hz,
-                                base_point_num=len(self.circle_offsets),
-                                total_slots=len(stm_offsets),
-                            )
-                        )
-                    stm = FociStm(
-                        Nearest(stm_cycle_frequency_hz * Hz),
-                        [
-                            ControlPoints([ControlPoint(foci[i])])
-                            for i in range(foci.shape[0])
-                        ],
-                    )
-                    datagram, sent_intensity_ratio = (
-                        self._combine_stm_with_intensity_if_needed(stm, target)
-                    )
-
-                elif self.cfg.autd_field_mode == "static_multi_focus_circle":
-                    if target.focus_dwell_counts is not None:
-                        raise ValueError(
-                            "focus_dwell_counts is supported only by stm_circle"
-                        )
-                    pattern = make_static_multi_focus_pattern(
-                        self.cfg,
-                        self.geometry,
-                        center_vec,
-                        self.circle_offsets,
-                    )
-                    intensity_ratio = (
-                        self.cfg.static_intensity_ratio
-                        if target.intensity_ratio is None
-                        else target.intensity_ratio
-                    )
-                    datagram, sent_intensity_ratio = (
-                        self._combine_stm_with_intensity_if_needed(
-                            pattern,
-                            TargetCommand(
-                                x=target.x,
-                                y=target.y,
-                                z=target.z,
-                                enqueued_time_sec=target.enqueued_time_sec,
-                                intensity_ratio=intensity_ratio,
-                            ),
+                stm_cycle_frequency_hz = float(self.cfg.stm_freq_hz)
+                if target.focus_dwell_counts is not None:
+                    # FociStm's frequency is the frequency of one complete
+                    # cycle, not the per-focus update rate. A weighted pattern
+                    # contains more slots than the normal 8-point STM, so
+                    # retain the existing slot period and Silencer setup.
+                    stm_cycle_frequency_hz = (
+                        cycle_frequency_preserving_slot_rate(
+                            base_cycle_frequency_hz=self.cfg.stm_freq_hz,
+                            base_point_num=len(self.circle_offsets),
+                            total_slots=len(stm_offsets),
                         )
                     )
-
-                else:
-                    raise ValueError(
-                        "Unknown cfg.autd_field_mode: "
-                        f"{self.cfg.autd_field_mode!r}. "
-                        "Use 'stm_circle' or 'static_multi_focus_circle'."
-                    )
+                stm = FociStm(
+                    Nearest(stm_cycle_frequency_hz * Hz),
+                    [
+                        ControlPoints([ControlPoint(foci[i])])
+                        for i in range(foci.shape[0])
+                    ],
+                )
+                datagram, sent_intensity_ratio = (
+                    self._combine_stm_with_intensity_if_needed(stm, target)
+                )
 
                 t1 = time.perf_counter()
 

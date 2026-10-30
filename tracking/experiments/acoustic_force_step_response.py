@@ -1023,7 +1023,6 @@ def main():
         default_z=400.0,
         static_intensity_ratio=args.baseline_intensity,
         stm_freq_hz=100.0,
-        autd_field_mode="stm_circle",
         enable_stereo_triangulation=True,
         use_stereo_position_for_control=True,
         stereo_camera_to_autd_npz="./tracking/calibration/stereo_camera_to_autd.npz",

@@ -57,9 +57,6 @@ def _fmt(value, digits=3):
 def run_xy_force_characterization(cfg: AppConfig):
     """Measure lateral acceleration from a short weighted-dwell STM pulse."""
 
-    if cfg.autd_field_mode != "stm_circle":
-        raise ValueError("XY force characterization requires stm_circle")
-
     camera_runtime = start_camera_runtime(cfg)
     if camera_runtime is None:
         return
@@ -668,7 +665,6 @@ if __name__ == "__main__":
         default_z=400.0,
         static_intensity_ratio=0.6,
         stm_freq_hz=100.0,
-        autd_field_mode="stm_circle",
         enable_stereo_triangulation=True,
         use_stereo_position_for_control=True,
         stereo_camera_to_autd_npz=(
