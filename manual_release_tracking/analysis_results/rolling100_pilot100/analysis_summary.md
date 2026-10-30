@@ -7,7 +7,7 @@
 - The 213 excluded attempts comprised 180 post-release regrasp exclusions, 22 release-motion-gate timeouts, 7 post-release motion-fit timeouts, and 4 manually rejected false releases.
 - Failure categories among the 46 eligible failures were: lower/upper Z-workspace departure 28 (60.9%), regrasp/contact 16 (34.8%), and tracking/estimation loss 2 (4.3%).
 
-For context, the earlier fixed-deadline 100 ms pilot yielded 7/50 (14.0%), whereas the earlier rolling-force 120 ms pilot yielded 36/50 (72.0%). The present 54/100 result therefore confirms that reverting the force law recovered much of the fixed-deadline regression, but the 100 ms condition did not reproduce the earlier 120 ms pilot rate. These sessions were not randomized concurrent conditions, so this is a progress comparison rather than a causal test of braking duration.
+For context, the earlier fixed-deadline 100 ms pilot yielded 7/50 (14.0%), whereas the earlier rolling-force 120 ms pilot yielded 36/50 (72.0%). The present 54/100 result is descriptively between those rates. These sessions were not randomized concurrent conditions and differed in release kinematics and other settings, so the difference cannot be attributed to the force law or braking duration alone.
 
 ## Capture transient
 

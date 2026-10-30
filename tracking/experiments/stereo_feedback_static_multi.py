@@ -33,7 +33,8 @@ if __name__ == "__main__":
         # use_output_mask=True,
         # output_mask_radius_mm=170.0,
 
-        # log_csv_path="./tracking/stability_log_stereo_feedback_static_multi.csv",
+        # Keep comparison data separate from the ordinary STM stability log.
+        log_csv_path="./tracking/stability_log_stereo_feedback_static_multi.csv",
     )
 
     run_tracking_app(cfg)
