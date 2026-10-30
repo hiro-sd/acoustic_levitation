@@ -181,6 +181,7 @@ cython_debug/
 tracking/datasets/train/images/
 tracking/datasets/valid/images/
 tracking/datasets/test/images/
+tracking/diagnostics
 
 # calibration imgs
 tracking/calibration/stereo_images

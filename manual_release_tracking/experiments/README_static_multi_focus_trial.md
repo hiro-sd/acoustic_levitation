@@ -12,7 +12,7 @@ AUTDとカメラを接続した実機で、球の下に受け皿を置いて試�
 ## 1. PID保持を先に確認
 
 ```powershell
-.\venv\Scripts\python.exe tracking\experiments\stereo_feedback_static_multi.py
+.\venv_autd3\Scripts\python.exe tracking\experiments\stereo_feedback_static_multi.py
 ```
 
 EnterでPID開始、Lでログ記録、Escで終了。多焦点のログは
@@ -23,7 +23,7 @@ EnterでPID開始、Lでログ記録、Escで終了。多焦点のログは
 ## 2. 少数の落下捕捉試行
 
 ```powershell
-.\venv\Scripts\python.exe manual_release_tracking\experiments\mediapipe_auto_release_hold.py --static-multi-focus --target-valid-trials 5
+.\venv_autd3\Scripts\python.exe manual_release_tracking\experiments\mediapipe_auto_release_hold.py --static-multi-focus --target-valid-trials 50
 ```
 
 多焦点の既定condition IDは `static_multi_focus_circle`、試行データの
