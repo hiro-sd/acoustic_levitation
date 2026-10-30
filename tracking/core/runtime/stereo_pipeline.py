@@ -43,7 +43,7 @@ class StereoBallPipeline:
     ):
         self.cfg = cfg
         self.tracker_xy = RoiBallTracker(width_xy, height_xy, cfg)
-        self.tracker_z = RoiBallTracker(width_z, height_z, cfg, refine_upper_arc=cfg.z_refine_upper_arc)
+        self.tracker_z = RoiBallTracker(width_z, height_z, cfg)
         self.triangulator = triangulator
         self.camera_to_autd = camera_to_autd
 

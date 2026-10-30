@@ -260,7 +260,7 @@ def run_tracking_app(cfg: AppConfig):
             )
 
             tracker_xy = RoiBallTracker(W_xy, H_xy, cfg)
-            tracker_z = RoiBallTracker(W_z, H_z, cfg, refine_upper_arc=cfg.z_refine_upper_arc)
+            tracker_z = RoiBallTracker(W_z, H_z, cfg)
 
             last_target = Target3D(home.x, home.y, home.z)
 

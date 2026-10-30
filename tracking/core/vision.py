@@ -159,104 +159,7 @@ def clamp_roi(cx, cy, size, w, h, cfg: AppConfig):
     return x1, y1, x2, y2
 
 
-def _upper_arc_points(contour, circle, gray=None):
-    """Extract the central upper silhouette once for both circle fits."""
-    cx, cy, radius = circle
-    points = contour[:, 0].astype(np.float64)
-    # A slightly wider arc on small balls reduces pixel-quantization bias.
-    half_width = max(0.5 * radius, min(0.7 * radius, 16.0))
-    if gray is not None:
-        half_width = 0.7 * radius
-    arc = points[(points[:, 1] < cy) & (np.abs(points[:, 0] - cx) <= half_width)]
-    if len(arc) < 12 or np.ptp(arc[:, 0]) < 0.85 * radius:
-        return np.empty((0, 2))
-    if gray is not None:
-        # Locate the actual silhouette at the local vertical-gradient peak,
-        # rather than at a brightness-dependent integer threshold crossing.
-        # Only nine pixels around the already selected arc are inspected.
-        columns = arc[:, 0].astype(int)
-        rows = arc[:, 1].astype(int)[:, None] + np.arange(-4, 5)
-        rows = np.clip(rows, 1, gray.shape[0] - 2)
-        gradients = (
-            gray[rows + 1, columns[:, None]].astype(float)
-            - gray[rows - 1, columns[:, None]].astype(float)
-        )
-        peaks = np.argmax(gradients, axis=1)
-        indices = np.arange(len(arc))
-        good = (peaks > 0) & (peaks < 8) & (gradients[indices, peaks] > 5)
-        if np.count_nonzero(good) < max(12, 0.8 * len(arc)):
-            return np.empty((0, 2))
-        indices, peaks = indices[good], peaks[good]
-        left = gradients[indices, peaks - 1]
-        mid = gradients[indices, peaks]
-        right = gradients[indices, peaks + 1]
-        denominator = left - 2 * mid + right
-        subpixel = np.divide(0.5 * (left - right), denominator,
-                             out=np.zeros_like(mid), where=np.abs(denominator) > 1e-6)
-        arc = np.column_stack((columns[good], rows[indices, peaks] + np.clip(subpixel, -0.5, 0.5)))
-    return arc
-
-
-def _refine_upper_arc(contour, circle, radius_prior=None, gray=None, arc_points=None):
-    """Fit current silhouette pixels, optionally constraining sphere size.
-
-    The radius prior removes the ill-conditioned curvature estimate from the
-    position fit. The central arc avoids lateral fingers and the lower light
-    boundary. Without a prior, preserve the flattened-cap eligibility checks.
-    """
-    cx, cy, radius = circle
-    _, top, width, height = cv2.boundingRect(contour)
-    if radius < 10 or (radius_prior is None and height >= 1.6 * radius) or width < 1.7 * radius:
-        return circle
-    arc = _upper_arc_points(contour, circle, gray) if arc_points is None else arc_points
-    if len(arc) < 12:
-        return circle
-    max_radius_ratio = 1.5 if gray is not None else 1.3
-    if radius_prior is None:
-        origin = arc.mean(axis=0)
-        p = arc - origin
-        matrix = np.column_stack((2 * p, np.ones(len(p))))
-        fit, _, rank, singular = np.linalg.lstsq(matrix, np.sum(p * p, axis=1), rcond=None)
-        if rank < 3 or singular[-1] <= 0 or singular[0] / singular[-1] > 1e4:
-            return circle
-        fitted_center = fit[:2] + origin
-        radius_squared = fit[2] + np.dot(fit[:2], fit[:2])
-        if radius_squared <= 0:
-            return circle
-        fitted_radius = float(np.sqrt(radius_squared))
-    else:
-        fitted_radius = float(radius_prior)
-        if not 0.8 * radius <= fitted_radius <= max_radius_ratio * radius:
-            return circle
-        fitted_center = np.array((cx, top + fitted_radius), dtype=float)
-        # Fit only the center to current pixels. Robust radial residuals prevent
-        # a few contaminated arc pixels from dominating this small fit.
-        for _ in range(3):
-            delta = fitted_center - arc
-            distances = np.maximum(np.linalg.norm(delta, axis=1), 1e-6)
-            errors = distances - fitted_radius
-            weights = np.sqrt(np.minimum(1.0, 0.8 / np.maximum(np.abs(errors), 1e-6)))
-            jacobian = delta / distances[:, None]
-            step, _, rank, _ = np.linalg.lstsq(
-                jacobian * weights[:, None], -errors * weights, rcond=None
-            )
-            if rank < 2 or np.linalg.norm(step) > 0.3 * radius:
-                return circle
-            fitted_center += step
-    fx, fy = map(float, fitted_center)
-    residual = np.sqrt(np.mean((np.linalg.norm(arc - fitted_center, axis=1) - fitted_radius) ** 2))
-    if (
-        not 0.8 * radius <= fitted_radius <= max_radius_ratio * radius
-        or abs(fx - cx) > 0.2 * radius
-        or not (-0.2 if radius_prior is not None else 0.1) * radius <= fy - cy <= (0.95 if gray is not None else 0.8) * radius
-        or abs(fy - fitted_radius - top) > max(1.5, 0.04 * radius)
-        or residual > max(0.8, 0.02 * radius)
-    ):
-        return circle
-    return fx, fy, fitted_radius
-
-
-def track_ball_cv(frame_rgb: np.ndarray, roi_rect, cfg: AppConfig, *, refine_upper_arc=False, radius_model=None):
+def track_ball_cv(frame_rgb: np.ndarray, roi_rect, cfg: AppConfig):
     """
     ROI内で白い球を検出する。
     戻り値:
@@ -280,8 +183,7 @@ def track_ball_cv(frame_rgb: np.ndarray, roi_rect, cfg: AppConfig, *, refine_upp
     bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel, iterations=1)
     bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-    chain = cv2.CHAIN_APPROX_NONE if refine_upper_arc else cv2.CHAIN_APPROX_SIMPLE
-    contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, chain)
+    contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     if not contours:
         return None, bw
@@ -290,8 +192,6 @@ def track_ball_cv(frame_rgb: np.ndarray, roi_rect, cfg: AppConfig, *, refine_upp
     roi_cy = (y2 - y1) / 2.0
 
     best = None
-    best_circle = None
-    best_radius_observation = None
     best_score = -1e18
 
     for cnt in contours:
@@ -305,37 +205,8 @@ def track_ball_cv(frame_rgb: np.ndarray, roi_rect, cfg: AppConfig, *, refine_upp
             continue
 
         circularity = 4 * np.pi * (area / (perimeter * perimeter))
-        circle = None
-        corrected = False
-        radius_observation = None
-        if refine_upper_arc:
-            (cx_circle, cy_circle), radius = cv2.minEnclosingCircle(cnt)
-            initial = (cx_circle, cy_circle, radius)
-            # Preserve the previous single-frame implementation when the new
-            # per-camera radius model is disabled (also useful for comparison).
-            edge_gray = gray if radius_model is not None else None
-            arc_points = _upper_arc_points(cnt, initial, edge_gray) if edge_gray is not None else None
-            circle = _refine_upper_arc(cnt, initial, gray=edge_gray, arc_points=arc_points)
-            corrected = circle != initial
-            _, _, _, height = cv2.boundingRect(cnt)
-            if corrected or height >= 1.6 * radius:
-                radius_observation = circle[2]
-            if radius_model is not None and radius_model.radius is not None:
-                stable = _refine_upper_arc(
-                    cnt, initial, radius_model.radius, gray=edge_gray, arc_points=arc_points
-                )
-                # Do not alternate between a constrained center and the biased
-                # bright-region center when the current arc becomes unreliable.
-                if stable == initial:
-                    continue
-                circle = stable
-                corrected = True
         if circularity < 0.6:
-            # A thin bright cap can fail the former circularity test even though
-            # its upper silhouette supports a sphere. Do not relax this test
-            # for a flat finger or an unverified circular extrapolation.
-            if not corrected:
-                continue
+            continue
 
         M = cv2.moments(cnt)
         if M["m00"] <= 1e-6:
@@ -350,24 +221,11 @@ def track_ball_cv(frame_rgb: np.ndarray, roi_rect, cfg: AppConfig, *, refine_upp
         if score > best_score:
             best_score = score
             best = cnt
-            best_circle = circle
-            best_radius_observation = radius_observation
 
     if best is None:
         return None, bw
 
     (xc, yc), r = cv2.minEnclosingCircle(best)
-    if refine_upper_arc:
-        initial = (xc, yc, r)
-        xc, yc, r = best_circle
-        # The inferred lower silhouette must still fit in the available ROI.
-        if best_circle != initial and (
-            xc - r < 0 or yc - r < 0 or xc + r >= x2 - x1 or yc + r >= y2 - y1
-        ):
-            return None, bw
-
-    if radius_model is not None:
-        radius_model.observe(best_radius_observation)
 
     return (float(x1 + xc), float(y1 + yc), float(r)), bw
 

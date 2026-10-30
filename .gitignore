@@ -201,6 +201,3 @@ manual_release_tracking/new_100_ms_pilot100/
 
 # Runtime logs from the optical acoustic-force step-response experiment
 tracking/acoustic_force_data/
-
-# Offline ball-detection diagnostics
-tracking/diagnostics/

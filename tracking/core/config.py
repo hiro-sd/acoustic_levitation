@@ -41,10 +41,6 @@ class AppConfig:
     blur_ksize: int = 5
     min_area_px: int = 200
     max_area_px: int = 200000
-    # Horizontal/Z camera: recover the sphere from a flattened bright cap.
-    # Camera/WB settings and XY detection remain unchanged.
-    z_refine_upper_arc: bool = True
-    z_stabilize_radius: bool = True
 
     # roi settings
     roi_init_size: int = 240

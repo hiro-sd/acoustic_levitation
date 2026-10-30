@@ -532,7 +532,7 @@ def run_manual_release_app(cfg: AppConfig, auto_release_trigger=None):
             )
 
             tracker_xy = RoiBallTracker(W_xy, H_xy, cfg)
-            tracker_z = RoiBallTracker(W_z, H_z, cfg, refine_upper_arc=cfg.z_refine_upper_arc)
+            tracker_z = RoiBallTracker(W_z, H_z, cfg)
 
             last_target = Target3D(home.x, home.y, home.z)
 
